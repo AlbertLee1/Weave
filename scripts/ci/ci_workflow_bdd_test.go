@@ -428,6 +428,94 @@ func TestBDD_CLIStatusDocReflectsActionAggregateObjectSetCommands(t *testing.T) 
 	}
 }
 
+func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
+	root := repoRoot(t)
+	statusDoc := readFile(t, filepath.Join(root, "docs", "PRD-Weave-OSv2-深度复刻-V2.md"))
+	mcpDocs := readFile(t, filepath.Join(root, "docs", "mcp.md"))
+	mcpServer := readFile(t, filepath.Join(root, "pkg", "mcp", "server.go"))
+	prompts := readFile(t, filepath.Join(root, "pkg", "mcp", "prompts.go"))
+	resources := readFile(t, filepath.Join(root, "pkg", "mcp", "resources.go"))
+	bridgeMain := readFile(t, filepath.Join(root, "cmd", "weave-mcp", "main.go"))
+	httpBridge := readFile(t, filepath.Join(root, "cmd", "weave-mcp", "http_bridge.go"))
+
+	for _, claim := range []string{
+		"prompts/resources 为 stub",
+		"`weave-mcp` 是存根",
+		"**Gap-D4 — MCP prompts / resources / sampling**\n- 现状：stub。",
+		"**Gap-D5 — weave-mcp stdio 真可用**\n- 现状：stub，不接 DB。",
+	} {
+		if strings.Contains(statusDoc, claim) {
+			t.Errorf("OSv2 status doc still contains stale MCP claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`docs/mcp.md`",
+		"`pkg/mcp/prompts.go`",
+		"`pkg/mcp/resources.go`",
+		"`cmd/weave-mcp/http_bridge.go`",
+		"`WEAVE_MCP_URL`",
+		"`prompts/list`",
+		"`prompts/get`",
+		"`resources/list`",
+		"`resources/read`",
+		"`weave://objecttype/<ontology>/<objectType>`",
+		"stdio HTTP bridge",
+		"remaining local-standalone gap",
+	} {
+		if !strings.Contains(statusDoc, required) {
+			t.Errorf("OSv2 status doc must describe live MCP contract fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		"`cmd/weave-mcp` binary (stdio HTTP bridge)",
+		"`WEAVE_MCP_URL`",
+		"`prompts/list` | List prompts synthesized from OMS ActionType metadata",
+		"`prompts/get` | Render one ActionType prompt with supplied arguments",
+		"`resources/list` | List ontologies, ObjectTypes, and temporary ObjectSets as MCP resources",
+		"`resources/read` | Return the schema for an ontology, ObjectType, or stored ObjectSet definition",
+		"`weave://objecttype/<ontology>/<objectType>`",
+	} {
+		if !strings.Contains(mcpDocs, required) {
+			t.Errorf("docs/mcp.md must describe live MCP contract fragment %q", required)
+		}
+	}
+
+	for _, required := range []string{
+		`case "prompts/list":`,
+		`case "prompts/get":`,
+		`case "resources/list":`,
+		`case "resources/read":`,
+		`"resources": map[string]any{"listChanged": false, "subscribe": false}`,
+		`"prompts":   map[string]any{"listChanged": false}`,
+	} {
+		if !strings.Contains(mcpServer, required) {
+			t.Errorf("pkg/mcp/server.go must dispatch or advertise MCP fragment %q", required)
+		}
+	}
+	for _, required := range []string{"handlePromptsList", "handlePromptsGet", "ListActionTypes", "GetActionTypeByAPIName"} {
+		if !strings.Contains(prompts, required) {
+			t.Errorf("pkg/mcp/prompts.go must expose prompts fragment %q", required)
+		}
+	}
+	for _, required := range []string{"handleResourcesList", "handleResourcesRead", "ListOntologies", "ListObjectTypes", "weave://objecttype"} {
+		if !strings.Contains(resources, required) {
+			t.Errorf("pkg/mcp/resources.go must expose resources fragment %q", required)
+		}
+	}
+	for _, required := range []string{"WEAVE_MCP_URL", "RunHTTPBridge", "bridgeAuthOptionsFromEnv"} {
+		if !strings.Contains(bridgeMain, required) {
+			t.Errorf("cmd/weave-mcp/main.go must wire bridge fragment %q", required)
+		}
+	}
+	for _, required := range []string{"RunHTTPBridge", `http.MethodPost`, "Authorization", "X-Weave-API-Key"} {
+		if !strings.Contains(httpBridge, required) {
+			t.Errorf("cmd/weave-mcp/http_bridge.go must expose bridge fragment %q", required)
+		}
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)

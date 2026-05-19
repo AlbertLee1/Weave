@@ -18,8 +18,8 @@ Kickoff evidence:
 
 Current stories:
 - SELF-453 Correct realtime subscription status documentation: passes.
-- SELF-454 Correct CLI capability status documentation: pending.
-- SELF-455 Correct MCP status matrix stub claims: pending.
+- SELF-454 Correct CLI capability status documentation: passes.
+- SELF-455 Correct MCP status matrix stub claims: passes.
 
 Codebase Patterns:
 - OSv2 operator docs with live protocol claims can be guarded from scripts/ci BDD tests that read docs and reject stale stub language while requiring the implemented contract fragments.
@@ -80,3 +80,24 @@ Codebase Patterns:
   - CLI status docs should treat `cmd/weave-cli/cli_us304_test.go` as the command-contract anchor for action/aggregate/objectset coverage.
   - The shipped ObjectSet CLI commands are `load` and `create-temporary`; `objectset run` is at most a future convenience alias, not the current contract.
 - Result: SELF-454 marked `passes: true`; SELF-455 remains open for later Ralph iterations.
+
+## Tue May 19 18:57:26 CST 2026 - SELF-455
+- What was implemented:
+  - Added a `scripts/ci` BDD docs-contract test that rejects stale MCP stub claims in `docs/PRD-Weave-OSv2-深度复刻-V2.md`.
+  - Updated the OSv2 status document so MCP rows and gap notes describe live `prompts/list`, `prompts/get`, `resources/list`, `resources/read`, and the `weave-mcp` stdio HTTP bridge.
+  - Reframed Gap-D4/D5 and US-080 around remaining sampling/resource-subscribe, production auth/deploy polish, and local-standalone bootstrapping gaps instead of missing prompts/resources/stdio bridge entry points.
+- TDD red:
+  - `go test ./scripts/ci -run TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge -count=1` failed before the doc update because the status doc still said `prompts/resources` were stubs, called `weave-mcp` a stub, and lacked the live MCP contract fragments from `docs/mcp.md`, `pkg/mcp/prompts.go`, `pkg/mcp/resources.go`, and `cmd/weave-mcp/http_bridge.go`.
+- Verification:
+  - `go test ./scripts/ci -run TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge -count=1` passed.
+  - `go test ./pkg/mcp ./cmd/weave-mcp -count=1` passed.
+  - `git diff --check` passed.
+- Files changed:
+  - docs/PRD-Weave-OSv2-深度复刻-V2.md
+  - scripts/ci/ci_workflow_bdd_test.go
+  - scripts/ralph/prd.json
+  - scripts/ralph/progress.txt
+- Learnings for future iterations:
+  - MCP status docs should point to `docs/mcp.md` as the external contract and to `pkg/mcp/prompts.go` / `pkg/mcp/resources.go` for the live prompts/resources implementation.
+  - `cmd/weave-mcp` should be described as a `WEAVE_MCP_URL` stdio HTTP bridge today; the remaining gap is local standalone dependency bootstrapping, not stdio usability.
+- Result: SELF-455 marked `passes: true`; all stories in the current PRD are now passing.

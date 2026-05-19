@@ -50,7 +50,7 @@
       "phase": "OSv2 MCP Operator Experience",
       "active": true,
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Update the OSv2 status document so MCP status rows and gap notes align with the live prompts/resources contract and stdio HTTP bridge already documented in docs/mcp.md.",
       "bdd_acceptance": [
