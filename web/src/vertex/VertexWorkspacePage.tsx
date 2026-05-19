@@ -766,6 +766,7 @@ function VertexWorkspaceForRid({ rid, isNew }: { rid: string; isNew: boolean }) 
           properties: {},
           ontologyApiName: obj.ontologyApiName,
           objectType: obj.objectType,
+          primaryKey: obj.primaryKey,
         });
       }
       return next;

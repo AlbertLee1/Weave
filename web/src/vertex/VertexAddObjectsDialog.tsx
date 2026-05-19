@@ -37,6 +37,7 @@ export interface AddedObjectInput {
   label: string;
   ontologyApiName: string;
   objectType: string;
+  primaryKey?: string;
 }
 
 function pickLabel(obj: WireObject, titleProperty: string): string {
@@ -46,6 +47,14 @@ function pickLabel(obj: WireObject, titleProperty: string): string {
   if (typeof obj.__primaryKey === 'string' && obj.__primaryKey !== '') return obj.__primaryKey;
   if (typeof obj.__primaryKey === 'number') return String(obj.__primaryKey);
   return obj.__rid;
+}
+
+function pickPrimaryKey(obj: WireObject): string | undefined {
+  if (typeof obj.__primaryKey === 'string' && obj.__primaryKey !== '') {
+    return obj.__primaryKey;
+  }
+  if (typeof obj.__primaryKey === 'number') return String(obj.__primaryKey);
+  return undefined;
 }
 
 export function VertexAddObjectsDialog({
@@ -115,6 +124,7 @@ export function VertexAddObjectsDialog({
         label: pickLabel(o, titleProperty),
         ontologyApiName,
         objectType: type,
+        primaryKey: pickPrimaryKey(o),
       }));
     onAdd(picked);
     onClose();

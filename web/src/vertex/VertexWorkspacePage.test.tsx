@@ -1427,6 +1427,7 @@ describe('VertexWorkspacePage add objects dialog (VTX-027)', () => {
   // implementation for these tests so each request resolves to the
   // appropriate body shape.
   function setupRoutedFetch(graphPayload: unknown) {
+    const objectGets: string[] = [];
     const fiveAirports = Array.from({ length: 5 }, (_, i) => ({
       __rid: `ri.airport.NEW${i}`,
       __primaryKey: `NEW${i}`,
@@ -1476,8 +1477,27 @@ describe('VertexWorkspacePage add objects dialog (VTX-027)', () => {
           json: async () => body,
         } as Response;
       }
+      if (url.includes('/api/v2/ontologies/main/objects/Airport/')) {
+        objectGets.push(url);
+        const pk = decodeURIComponent(url.split('/').pop() ?? '');
+        const body = {
+          __rid: `ri.airport.${pk}`,
+          __primaryKey: pk,
+          __apiName: 'Airport',
+          name: `Fresh ${pk}`,
+          status: 'active',
+        };
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => JSON.stringify(body),
+          json: async () => body,
+        } as Response;
+      }
       throw new Error(`unmocked fetch: ${url}`);
     }) as unknown as typeof fetch;
+    return { objectGets };
   }
 
   it('Given_topBarHasAddObjectsButton_When_clicked_Then_dialogOpens', async () => {
@@ -1550,5 +1570,55 @@ describe('VertexWorkspacePage add objects dialog (VTX-027)', () => {
     });
     // Dialog dismissed itself on Add.
     expect(screen.queryByTestId('vertex-add-objects-dialog')).not.toBeInTheDocument();
+  });
+
+  it('Given_userSelectsAddedNode_When_sidebarOpens_Then_fetchesFreshObjectByPrimaryKey', async () => {
+    const calls = setupRoutedFetch({ rid: 'ri.g', name: 'g', version: 1, payload: seedPayload });
+    renderAt('/vertex/ri.g');
+
+    await waitFor(() => {
+      expect(loadedGraph).not.toBeNull();
+      expect(loadedGraph!.order).toBe(2);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-topbar-add-objects'));
+    });
+    await screen.findByTestId('vertex-add-objects-dialog');
+
+    await waitFor(() => {
+      expect((screen.getByTestId('vertex-add-objects-type') as HTMLSelectElement).value).toBe('Airport');
+    });
+
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('vertex-add-objects-search'), {
+        target: { value: 'New' },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('vertex-add-objects-row-ri.airport.NEW0')).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vertex-add-objects-row-ri.airport.NEW0'));
+      fireEvent.click(screen.getByTestId('vertex-add-objects-add'));
+    });
+
+    await waitFor(() => {
+      expect(loadedGraph!.hasNode('ri.airport.NEW0')).toBe(true);
+    });
+
+    await act(async () => {
+      capturedHandlers.clickNode?.({
+        node: 'ri.airport.NEW0',
+        event: { original: new MouseEvent('click', { bubbles: true }) },
+      } as unknown);
+    });
+
+    await waitFor(() => {
+      expect(calls.objectGets).toContain('/api/v2/ontologies/main/objects/Airport/NEW0');
+    });
+    expect(await screen.findByText('Fresh NEW0')).toBeInTheDocument();
   });
 });
