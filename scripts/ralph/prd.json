@@ -29,7 +29,7 @@
       "phase": "Upper-Layer Time Travel Experience",
       "active": true,
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "dependencies": [],
       "description": "Align the Browser page with its historical-mode contract by disabling the export menu while a Time Travel checkpoint is active.",
       "bdd_acceptance": [

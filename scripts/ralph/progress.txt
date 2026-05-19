@@ -18,7 +18,7 @@ Kickoff evidence:
 
 Current stories:
 - SELF-449 Refuse silently capped Browser exports: passes.
-- SELF-450 Block Browser export affordance during Time Travel: pending.
+- SELF-450 Block Browser export affordance during Time Travel: passes.
 
 Codebase Patterns:
 - US-444 full-stack probes should only use test.skip for the shared backend-down portability guard. If the backend is reachable, quiet, missing, 404/503, or shallowly wired service behavior should be an assertion failure guarded by a source-level contract test.
@@ -58,3 +58,26 @@ Codebase Patterns:
 - Learnings for future iterations:
   - Browser export is a trust surface like history and audit timelines: if the client enforces a hard cap, it must fail loudly before download rather than returning a partial artifact.
 - Result: SELF-449 marked `passes: true`; SELF-450 remains open for the next Ralph iteration.
+
+## Tue May 19 17:21:42 CST 2026 - SELF-450
+- What was implemented:
+  - Added ExportButton BDD coverage for a disabled historical-mode export affordance with an explanatory reason and no menu/download side effects.
+  - Added BrowserPage BDD coverage proving Time Travel disables export, clearing Time Travel restores the export menu, and the current search query text is preserved across that transition.
+  - Updated ExportButton to accept `disabled` and `disabledReason`, close/prevent its dropdown while disabled, and expose the reason via title plus screen-reader text.
+  - Updated BrowserPage to pass the Time Travel disabled state into ExportButton.
+- TDD red:
+  - `npm --prefix web test -- --run src/components/browser/__tests__/ExportButton.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` failed as expected before implementation: the new tests found the export button was still enabled while Time Travel was active.
+- Verification:
+  - `npm --prefix web test -- --run src/components/browser/__tests__/ExportButton.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` passed: 2 files, 23 tests.
+  - From `web/`: `npx tsc --noEmit` passed.
+  - `git diff --check` passed.
+- Files changed:
+  - `web/src/components/browser/ExportButton.tsx`
+  - `web/src/components/browser/BrowserPage.tsx`
+  - `web/src/components/browser/__tests__/ExportButton.test.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Learnings for future iterations:
+  - Browser historical mode should gate every artifact-producing affordance, not only live updates and bulk mutation controls.
+- Result: SELF-450 marked `passes: true`; all current PRD stories are now passing.

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import { ExportButton } from '../ExportButton';
 import type { ObjectType } from '../../../api/types';
 
@@ -28,7 +29,7 @@ const objectType: ObjectType = {
   },
 };
 
-function renderButton() {
+function renderButton(props: Partial<ComponentProps<typeof ExportButton>> = {}) {
   return render(
     <ExportButton
       objectType={objectType}
@@ -38,6 +39,7 @@ function renderButton() {
         select: ['id', 'name'],
         hasActiveSearch: false,
       }}
+      {...props}
     />,
   );
 }
@@ -130,5 +132,26 @@ describe('ExportButton', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent('boom');
     });
+  });
+
+  it('disables the export menu with a reason while historical mode is active', () => {
+    renderButton({
+      disabled: true,
+      disabledReason: 'Exports are unavailable while Time Travel is active.',
+    });
+
+    const button = screen.getByTestId('export-button');
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute(
+      'title',
+      'Exports are unavailable while Time Travel is active.',
+    );
+    expect(screen.getByTestId('export-disabled-reason')).toHaveTextContent(
+      'Exports are unavailable while Time Travel is active.',
+    );
+
+    fireEvent.click(button);
+    expect(screen.queryByTestId('export-csv')).not.toBeInTheDocument();
+    expect(exportObjects).not.toHaveBeenCalled();
   });
 });
