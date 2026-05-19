@@ -18,6 +18,10 @@ import us444ColumnMaskSpecSource from '../../../e2e/us444/16-mask.spec.ts?raw';
 import us444CellMaskSpecSource from '../../../e2e/us444/17-cell-mask.spec.ts?raw';
 import us444FunctionPublishSpecSource from '../../../e2e/us444/18-fn-publish.spec.ts?raw';
 import us444FunctionReplaySpecSource from '../../../e2e/us444/19-fn-replay.spec.ts?raw';
+import us444SubscribeSpecSource from '../../../e2e/us444/20-subscribe.spec.ts?raw';
+import us444HelpersSource from '../../../e2e/us444/helpers.ts?raw';
+import us444ReadmeSource from '../../../e2e/us444/README.md?raw';
+import vtx099SystemGraphSpecSource from '../../../e2e/vtx-099-system-graph-render.spec.ts?raw';
 
 describe('Playwright spec contracts', () => {
   it('keeps the Phase 7 SSE reconnect scenario discoverable and deterministic', () => {
@@ -245,5 +249,54 @@ describe('Playwright spec contracts', () => {
     expect(us444CellMaskSpecSource).toContain('cell-mask list endpoint must be wired');
     expect(us444CellMaskSpecSource).toContain('cell-mask create endpoint must be wired');
     expect(us444CellMaskSpecSource).toContain('InvalidCellMask');
+  });
+
+  it('keeps the US-444 subscribe gate tied to the WebSocket subscribe handshake', () => {
+    const source = us444SubscribeSpecSource;
+
+    expect(source).not.toContain('no welcome frame within 3s');
+    expect(source).not.toContain('endpoint unwired or quiet');
+    expect(source).not.toContain('test.skip(firstMessage === null');
+    expect(source).toMatch(/type:\s*['"]subscribe['"]/);
+    expect(source).toMatch(/objectType:\s*['"]customer['"]/);
+    expect(source).toContain("toBe('subscribed')");
+    expect(source).toContain('subscriptionId');
+  });
+
+  it('keeps US-444 helper guidance aligned with mandatory wired-service gates', () => {
+    const sources = [us444HelpersSource, us444ReadmeSource];
+
+    for (const source of sources) {
+      expect(source).toContain('skipWhenBackendDown');
+      expect(source).not.toMatch(/optional feature/i);
+      expect(source).not.toMatch(/404[\s\S]{0,80}503[\s\S]{0,80}skip/i);
+      expect(source).not.toContain('feature surface returns 503/404');
+      expect(source).not.toContain('endpoint unavailable');
+    }
+
+    expect(us444HelpersSource).toMatch(
+      /Reachable backend service failures should be[\s\S]{0,40}asserted in the spec body\./,
+    );
+    expect(us444ReadmeSource).toMatch(
+      /A reachable[\s\S]{0,40}backend with an unwired service endpoint is a test failure\./,
+    );
+  });
+
+  it('keeps the VTX-099 system graph gate wired and skip-free after backend health', () => {
+    const source = vtx099SystemGraphSpecSource;
+
+    expect(source).not.toContain('systemGraphReachable');
+    expect(source).not.toContain('VTX-018 System Graph page not yet wired up');
+    expect(source).not.toMatch(/test\.skip\s*\(\s*!\s*\(\s*await\s+systemGraphReachable/);
+    expect(source).toContain('/api/vertex/v1/graphs/${encodeURIComponent(rid)}');
+    expect(source).toContain('system graph payload must include nodes');
+    expect(source).toContain('system graph payload must include edges');
+    expect(source).toContain("getByTestId('vertex-canvas-host')");
+
+    const skipLines = source.match(/test\.skip[^\n]+/g) ?? [];
+    expect(skipLines).toEqual([
+      "test.skip(!(await backendReachable(request)), 'weave backend not reachable on :9117');",
+      "test.skip(!(await backendReachable(request)), 'weave backend not reachable on :9117');",
+    ]);
   });
 });
