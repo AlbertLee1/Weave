@@ -7,8 +7,8 @@ import (
 )
 
 // MemoryStore is an in-process Store backed by a map[SeriesKey][]Value.
-// It is the default single-machine backend; persistent backends (PostGIS,
-// JSONB) are deferred per the Phase 4 open question in the PRD.
+// It is the degraded-mode fallback used by tests and server boots without a
+// PostgreSQL pool; durable server boots use PgStore.
 type MemoryStore struct {
 	mu     sync.RWMutex
 	series map[SeriesKey][]Value

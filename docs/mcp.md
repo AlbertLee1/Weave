@@ -15,12 +15,34 @@ Two transports are available:
 | Transport | Endpoint | Use case |
 |---|---|---|
 | HTTP | `POST /mcp` on the running Weave server | Remote AI clients, sandboxed agents, CI bots |
-| Stdio | `cmd/weave-mcp` binary (stub) | Local AI clients that spawn an MCP subprocess |
+| Stdio | `cmd/weave-mcp` binary (stdio HTTP bridge) | Local AI clients that spawn an MCP subprocess |
 
-The HTTP transport is the supported MVP path. The stdio binary is a
-stub that demonstrates the framing — full PG/NATS-backed bootstrap is
-tracked separately. For local AI clients today, point them at the HTTP
-endpoint of a running Weave server.
+The HTTP transport is the canonical server surface. The stdio binary is a
+thin bridge for local AI clients: when `WEAVE_MCP_URL` is set, `weave-mcp`
+reads newline-delimited JSON-RPC from stdin, forwards each request to the
+running Weave server's `/mcp` endpoint, and writes the upstream JSON-RPC
+response back to stdout.
+
+Typical local-client configuration:
+
+```json
+{
+  "mcpServers": {
+    "weave": {
+      "command": "/usr/local/bin/weave-mcp",
+      "env": {
+        "WEAVE_MCP_URL": "http://127.0.0.1:9117/mcp",
+        "WEAVE_MCP_TOKEN": "<jwt-or-bearer-access-token>",
+        "WEAVE_MCP_API_KEY": "wvk_..."
+      }
+    }
+  }
+}
+```
+
+`WEAVE_MCP_TOKEN` and its alias `WEAVE_MCP_BEARER` are forwarded as
+`Authorization: Bearer ...`. `WEAVE_MCP_API_KEY` is forwarded as
+`X-Weave-API-Key`. If both are present, the bearer token wins.
 
 ## Protocol
 
@@ -49,9 +71,10 @@ codes (`405`, `204`) are reserved for transport-level conditions.
 | `initialize` | Handshake; returns `protocolVersion`, `capabilities`, and `serverInfo` |
 | `tools/list` | List the registered Weave tools and their input schemas |
 | `tools/call` | Invoke a tool by `name` with an `arguments` object |
-| `prompts/list` | Returns an empty list (Weave does not yet expose prompts) |
-| `resources/list` | List ontologies and temporary ObjectSets as MCP resources |
-| `resources/read` | Return the schema for an ontology or the stored definition for an ObjectSet |
+| `prompts/list` | List prompts synthesized from OMS ActionType metadata |
+| `prompts/get` | Render one ActionType prompt with supplied arguments |
+| `resources/list` | List ontologies, ObjectTypes, and temporary ObjectSets as MCP resources |
+| `resources/read` | Return the schema for an ontology, ObjectType, or stored ObjectSet definition |
 | `ping` | Liveness check; returns `{}` |
 
 Notifications (requests with no `id`) such as `notifications/initialized`
@@ -164,7 +187,10 @@ curl -s -X POST http://localhost:9117/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
 # {"jsonrpc":"2.0","id":1,"result":{
 #    "protocolVersion":"2024-11-05",
-#    "capabilities":{"tools":{"listChanged":false}},
+#    "capabilities":{
+#      "tools":{"listChanged":false},
+#      "prompts":{"listChanged":false},
+#      "resources":{"listChanged":false,"subscribe":false}},
 #    "serverInfo":{"name":"weave-mcp","version":"0.1.0"}}}
 
 # 2. tools/list
@@ -180,6 +206,32 @@ curl -s -X POST http://localhost:9117/mcp \
         "arguments":{}}}'
 ```
 
+## Prompts
+
+`prompts/list` synthesizes one prompt per OMS ActionType across all
+visible ontologies. Prompt names use `ontology__action`, for example
+`northwind__create-order`. Each prompt argument mirrors the ActionType
+parameter declaration so an AI client can collect the same fields it would
+pass to `weave_apply_action`.
+
+```bash
+# prompts/list
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":4,"method":"prompts/list","params":{}}'
+
+# prompts/get
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":5,"method":"prompts/get","params":{
+        "name":"northwind__create-order",
+        "arguments":{"customer":"ALFKI"}}}'
+```
+
+`prompts/get` returns a single user-role text message instructing the
+client model to call `weave_apply_action` with the same ontology,
+ActionType, and parameter values.
+
 ## Authentication
 
 The `/mcp` endpoint is registered in the public route group of
@@ -188,17 +240,21 @@ authentication should put a reverse proxy (or move the route under the
 `api.Use(auth.Middleware(...))` group) so that the existing JWT/RBAC
 checks gate every JSON-RPC call. The MCP server itself never inspects
 credentials — it executes tools against whatever `context.Context` the
-HTTP layer hands it.
+HTTP layer hands it. Local stdio clients can still send auth to the HTTP
+transport through `WEAVE_MCP_TOKEN`, `WEAVE_MCP_BEARER`, or
+`WEAVE_MCP_API_KEY` on the `weave-mcp` bridge.
 
 ## Resources
 
-`resources/list` returns one entry per ontology and one entry per
-temporary ObjectSet (created via `POST .../objectSets/createTemporary`).
-URIs follow the `weave://<kind>/<id>` convention:
+`resources/list` returns one entry per ontology, one entry per ObjectType
+under each ontology, and one entry per temporary ObjectSet created via
+`POST .../objectSets/createTemporary`. URIs follow the
+`weave://<kind>/<id>` convention:
 
 | URI | Returned by `resources/read` |
 |---|---|
 | `weave://ontology/<rid>` | JSON bundle of `ontology` + `objectTypes` + `linkTypes` + `actionTypes` |
+| `weave://objecttype/<ontology>/<objectType>` | JSON bundle of `objectType` + `properties` + `outgoingLinkTypes` |
 | `weave://objectset/<id>` | JSON object with the stored ObjectSet `definition` and `createdAt` |
 
 ```bash
@@ -212,6 +268,12 @@ curl -s -X POST http://localhost:9117/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{
         "uri":"weave://ontology/ri.weave.main.ontology.demo"}}'
+
+# resources/read for an ObjectType
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{
+        "uri":"weave://objecttype/demo/User"}}'
 ```
 
 Reading a resource for an ObjectSet returns the Definition only —
@@ -222,8 +284,9 @@ materialise the rows by POSTing the Definition to
 
 - No JSON Schema validator: argument validation is field presence + a
   primitive type check (string/integer/boolean/object/array).
-- The stdio binary is a stub; it accepts JSON-RPC framing but does not
-  yet bootstrap a live PG/NATS-backed Weave instance.
-- `prompts/list` always returns an empty array.
+- `cmd/weave-mcp` depends on a separately running Weave server when
+  `WEAVE_MCP_URL` is set; it does not bootstrap PG/NATS/Bleve itself.
+- In degraded in-memory mode with no OMS repository, prompts and schema
+  resources are empty because there is no metadata source to enumerate.
 - The action executor receives the request user via the auth middleware,
   so anonymous MCP calls run as the `system` user.

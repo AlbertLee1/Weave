@@ -1,45 +1,45 @@
 {
-  "project": "Weave Self-Iteration Browser Export Contract Tightening",
-  "branchName": "ralph/self-iteration-20260519-170927",
-  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-170927. The previous active PRD belonged to ralph/self-iteration-20260519-160430 and all stories were passing, so it was archived under scripts/ralph/archive/self-iteration-20260519-171304/. No PR CI auto-fix context was present in progress.txt. Kickoff health: latest GitHub main CI run 26087345493 completed green on commit 4eeb507, while Codespaces prebuild 26087344906 was still in progress. Local sampled checks for known fresh-CI risks passed via `go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1` and `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`. Current dogfood findings DOG-003, DOG-004, and DOG-005 already have dedicated regression coverage in the tree, so this PRD focuses on current Browser export and Time Travel trust gaps found during inspection.",
+  "project": "Weave Self-Iteration OSv2 Documentation Contract Refresh",
+  "branchName": "ralph/self-iteration-20260519-175415",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-175415. The previous active PRD belonged to ralph/self-iteration-20260519-170927, so it was archived under scripts/ralph/archive/self-iteration-20260519-175817/. No PR CI auto-fix context was present in the current progress file. Kickoff health: latest GitHub main CI run 26089447836 completed green on commit f637cd4; Codespaces prebuild 26089447094 was still in progress. Local sampled checks for known fresh-CI risks passed via `go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1` and `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`. Current dogfood findings DOG-001 through DOG-005 are represented by current regression coverage and implementation, so this PRD targets high-value OSv2 operator-trust documentation drift found during code/docs inspection.",
   "userStories": [
     {
-      "id": "SELF-449",
-      "name": "Refuse silently capped Browser exports",
-      "phase": "Upper-Layer Browser Export Experience",
+      "id": "SELF-451",
+      "name": "Align MCP operator docs with live bridge contract",
+      "phase": "OSv2 MCP Operator Experience",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Prevent operators from downloading a Browser export that was silently truncated by the 100000-row client hard cap.",
+      "description": "Update the MCP operator documentation so AI-client setup instructions match the current prompts, resources, and stdio HTTP-bridge behavior implemented in pkg/mcp and cmd/weave-mcp.",
       "bdd_acceptance": [
-        "Given a Browser export response advertises a total row count greater than the 100000-row export cap, When the operator exports CSV, JSON, or XLSX, Then the export fails with a clear limit error before any partial file is downloaded.",
-        "Given a paginated Browser export reaches the 100000-row cap and the server still returns a nextPageToken, When the export loop evaluates the page, Then it fails with the same clear limit error instead of returning partial rows.",
-        "Given an export is within the cap, When the operator exports rows, Then the existing CSV, JSON, and XLSX download behavior remains unchanged."
+        "Given the MCP server advertises prompts and resources capabilities, When an operator reads docs/mcp.md, Then the methods table describes prompts/list, prompts/get, resources/list, and resources/read as live surfaces rather than stubs.",
+        "Given cmd/weave-mcp now bridges stdio clients to a running /mcp endpoint when WEAVE_MCP_URL is set, When an operator reads the transport and limitations sections, Then the docs explain bridge mode and no longer describe the binary as only a stub.",
+        "Given resources/list includes ontology, objecttype, and temporary ObjectSet resources, When an operator follows docs/mcp.md, Then the resource URI table includes weave://objecttype/<ontology>/<objectType> and explains the object type schema payload."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/lib/__tests__/exportObjects.test.ts src/components/browser/__tests__/ExportButton.test.tsx`",
-        "From `web/`: `npx tsc --noEmit`",
+        "`go test ./scripts/ci -run TestBDD_MCPDocsReflectLivePromptsResourcesBridge -count=1`",
+        "`go test ./pkg/mcp ./cmd/weave-mcp -count=1`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-450",
-      "name": "Block Browser export affordance during Time Travel",
-      "phase": "Upper-Layer Time Travel Experience",
+      "id": "SELF-452",
+      "name": "Correct GeoTemporal PG-store documentation drift",
+      "phase": "OSv2 GeoTemporal Operator Experience",
       "active": true,
       "priority": 2,
       "passes": true,
       "dependencies": [],
-      "description": "Align the Browser page with its historical-mode contract by disabling the export menu while a Time Travel checkpoint is active.",
+      "description": "Correct stale GeoTemporal docs and package comments that still claim only in-memory storage exists even though PgStore, server PG default wiring, and spatial-temporal query support are implemented.",
       "bdd_acceptance": [
-        "Given Time Travel has pinned an asOf value for the active ontology, When the Browser header renders, Then the Export button is disabled and explains that exports are unavailable in historical mode.",
-        "Given Time Travel is inactive, When the Browser header renders, Then the Export menu remains available with CSV, JSON, and XLSX options.",
-        "Given Time Travel is turned off after being active, When the Browser header re-renders, Then the export affordance is restored without losing the current Browser query state."
+        "Given pkg/geotemporal/pg_store.go and cmd/server/main.go wire a PG-backed GeoTemporal store when PG is available, When a developer reads package comments and operator docs, Then they describe PG as the durable default and memory as degraded mode.",
+        "Given GeoTemporal supports spatial-temporal bbox and time range queries through Store capability checks, When a developer reads the docs, Then the query capability and relevant tests/migrations are referenced accurately.",
+        "Given older OSv2 status docs mention GeoTemporal as memory-only, When the documentation contract runs, Then those stale claims fail until corrected."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/components/browser/__tests__/ExportButton.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx`",
-        "From `web/`: `npx tsc --noEmit`",
+        "`go test ./scripts/ci -run TestBDD_GeoTemporalDocsReflectPGStoreDefault -count=1`",
+        "`go test ./pkg/geotemporal ./cmd/server -run 'Test.*Geotemporal|TestHealth|TestContract' -count=1`",
         "`git diff --check`"
       ]
     }

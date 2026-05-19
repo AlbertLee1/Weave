@@ -6,9 +6,13 @@
 // opaquely as an interface{} so the backend is shape-agnostic; on the wire
 // Foundry serialises positions as GeoJSON Point objects.
 //
-// Only an in-memory implementation ships today; the PostGIS / JSONB backend
-// is intentionally deferred per the Phase 4 scope note in the PRD (open
-// question #3).
+// Production server boots use the PostgreSQL-backed PgStore when cmd/server
+// has a PG pool. PgStore persists rows in geotemporal_values (migration
+// 000205_geotemporal_values.up.sql) and exposes the optional
+// SpatialTemporalQuerier capability through QueryBBoxRange, backed by the
+// spatial/time indexes from 000208_geotemporal_spatial_indexes.up.sql.
+// MemoryStore remains the in-process degraded-mode fallback for tests and
+// server boots without PostgreSQL.
 package geotemporal
 
 import (
