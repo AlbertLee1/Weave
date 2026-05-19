@@ -1,26 +1,27 @@
 # Ralph Progress Log
-Started: Tue May 19 17:09:27 CST 2026
-Branch: ralph/self-iteration-20260519-170927
-State reset: Tue May 19 17:13:04 CST 2026
+Started: Tue May 19 17:54:15 CST 2026
+Branch: ralph/self-iteration-20260519-175415
+State reset: Tue May 19 17:58:17 CST 2026
 
 Archived previous state:
-- scripts/ralph/archive/self-iteration-20260519-171304/prd.json
-- scripts/ralph/archive/self-iteration-20260519-171304/progress.txt
+- scripts/ralph/archive/self-iteration-20260519-175817/prd.json
+- scripts/ralph/archive/self-iteration-20260519-175817/progress.txt
 
 Kickoff evidence:
-- Branch verified: ralph/self-iteration-20260519-170927.
-- Previous PRD branchName was ralph/self-iteration-20260519-160430 and all stories had passes=true, so a new PRD was required.
-- No PR CI auto-fix context was present in the previous progress file.
-- GitHub CI: main CI run 26087345493 completed success for 4eeb507; Codespaces prebuild 26087344906 was still in progress.
+- Branch verified: ralph/self-iteration-20260519-175415.
+- Previous PRD branchName was ralph/self-iteration-20260519-170927, so a new PRD was required.
+- No PR CI auto-fix context was present in the current progress file.
+- GitHub CI: main CI run 26089447836 completed success for f637cd4; Codespaces prebuild 26089447094 was in progress.
 - Known fresh-CI risk check passed: go test ./cmd/server -run 'TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1.
 - Known US-453 streamless response check passed: npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx.
-- Dogfood DOG-003/DOG-004/DOG-005 are already represented by current BDD tests and implementation, so this PRD did not repeat them.
+- Dogfood DOG-001 through DOG-005 are already represented by current BDD tests and implementation, so this PRD did not repeat them.
 
 Current stories:
-- SELF-449 Refuse silently capped Browser exports: passes.
-- SELF-450 Block Browser export affordance during Time Travel: passes.
+- SELF-451 Align MCP operator docs with live bridge contract: passes.
+- SELF-452 Correct GeoTemporal PG-store documentation drift: open.
 
 Codebase Patterns:
+- OSv2 operator docs with live protocol claims can be guarded from scripts/ci BDD tests that read docs and reject stale stub language while requiring the implemented contract fragments.
 - US-444 full-stack probes should only use test.skip for the shared backend-down portability guard. If the backend is reachable, quiet, missing, 404/503, or shallowly wired service behavior should be an assertion failure guarded by a source-level contract test.
 - VTX-099 full-stack probes should only skip when the shared backend health check is down. With a reachable backend, missing System Graph records, empty graph payloads, and failed render surfaces should be assertions guarded by a source-level contract test.
 - US-444 helper and README guidance is source-contracted too: docs may describe skipWhenBackendDown as the portability guard, but must not reintroduce optional 404/503 endpoint skip guidance.
@@ -37,47 +38,24 @@ Codebase Patterns:
 - ExportButton catches exportObjects errors and surfaces them through its role=alert banner.
 - Browser API calls use request(), which injects active branch and Time Travel asOf query params for ontology-scoped paths.
 
-## Tue May 19 17:16:30 CST 2026 - SELF-449
+## Tue May 19 18:01:11 CST 2026 - SELF-451
 - What was implemented:
-  - Added export BDD coverage for totalCount overflow, pagination overflow at the 100000-row cap, and no partial download when the cap is exceeded.
-  - Updated Browser export pagination to reject exports whose advertised totalCount exceeds the cap.
-  - Updated Browser export pagination to reject when rows reach the cap and nextPageToken proves more rows remain.
-  - Kept existing CSV, JSON, and XLSX behavior unchanged for in-cap exports.
+  - Added a scripts/ci BDD docs-contract test that rejects stale MCP stub claims and requires the live prompts/resources/stdio bridge fragments in docs/mcp.md.
+  - Updated docs/mcp.md to describe cmd/weave-mcp as a stdio HTTP bridge when WEAVE_MCP_URL is set, including WEAVE_MCP_TOKEN, WEAVE_MCP_BEARER, and WEAVE_MCP_API_KEY forwarding.
+  - Updated the MCP methods/resources docs for prompts/list, prompts/get, ontology resources, objecttype resources, and temporary ObjectSet resources.
 - TDD red:
-  - `npm --prefix web test -- --run src/lib/__tests__/exportObjects.test.ts` failed as expected before implementation: the new cap tests resolved rows/downloads instead of rejecting.
+  - `go test ./scripts/ci -run TestBDD_MCPDocsReflectLivePromptsResourcesBridge -count=1` failed as expected before doc updates because docs/mcp.md still described weave-mcp and prompts/list as stubs and omitted the live prompts/resources fragments.
 - Verification:
-  - `npm --prefix web test -- --run src/lib/__tests__/exportObjects.test.ts` passed: 1 file, 22 tests.
-  - `npm --prefix web test -- --run src/lib/__tests__/exportObjects.test.ts src/components/browser/__tests__/ExportButton.test.tsx` passed: 2 files, 27 tests.
-  - From `web/`: `npx tsc --noEmit` passed.
+  - `go test ./scripts/ci -run TestBDD_MCPDocsReflectLivePromptsResourcesBridge -count=1` passed.
+  - `go test ./pkg/mcp ./cmd/weave-mcp -count=1` passed.
+  - `go test ./scripts/ci -count=1` passed.
   - `git diff --check` passed.
 - Files changed:
-  - `web/src/lib/exportObjects.ts`
-  - `web/src/lib/__tests__/exportObjects.test.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
+  - docs/mcp.md
+  - scripts/ci/ci_workflow_bdd_test.go
+  - scripts/ralph/prd.json
+  - scripts/ralph/progress.txt
 - Learnings for future iterations:
-  - Browser export is a trust surface like history and audit timelines: if the client enforces a hard cap, it must fail loudly before download rather than returning a partial artifact.
-- Result: SELF-449 marked `passes: true`; SELF-450 remains open for the next Ralph iteration.
-
-## Tue May 19 17:21:42 CST 2026 - SELF-450
-- What was implemented:
-  - Added ExportButton BDD coverage for a disabled historical-mode export affordance with an explanatory reason and no menu/download side effects.
-  - Added BrowserPage BDD coverage proving Time Travel disables export, clearing Time Travel restores the export menu, and the current search query text is preserved across that transition.
-  - Updated ExportButton to accept `disabled` and `disabledReason`, close/prevent its dropdown while disabled, and expose the reason via title plus screen-reader text.
-  - Updated BrowserPage to pass the Time Travel disabled state into ExportButton.
-- TDD red:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/ExportButton.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` failed as expected before implementation: the new tests found the export button was still enabled while Time Travel was active.
-- Verification:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/ExportButton.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx` passed: 2 files, 23 tests.
-  - From `web/`: `npx tsc --noEmit` passed.
-  - `git diff --check` passed.
-- Files changed:
-  - `web/src/components/browser/ExportButton.tsx`
-  - `web/src/components/browser/BrowserPage.tsx`
-  - `web/src/components/browser/__tests__/ExportButton.test.tsx`
-  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Learnings for future iterations:
-  - Browser historical mode should gate every artifact-producing affordance, not only live updates and bulk mutation controls.
-- Result: SELF-450 marked `passes: true`; all current PRD stories are now passing.
+  - MCP resource kind names are lowercase in URIs; the ObjectType resource is `weave://objecttype/<ontologyApiName>/<objectTypeApiName>`.
+  - cmd/weave-mcp does not bootstrap Weave dependencies; the production local-client path is stdio framing bridged to an already running `/mcp` endpoint.
+- Result: SELF-451 marked `passes: true`; SELF-452 remains open for the next Ralph iteration.

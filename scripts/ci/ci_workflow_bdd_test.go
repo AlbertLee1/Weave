@@ -150,6 +150,41 @@ func TestBDD_GoPackageListExcludesWebDependencyTrees(t *testing.T) {
 	}
 }
 
+func TestBDD_MCPDocsReflectLivePromptsResourcesBridge(t *testing.T) {
+	root := repoRoot(t)
+	docs := readFile(t, filepath.Join(root, "docs", "mcp.md"))
+
+	staleClaims := []string{
+		"`cmd/weave-mcp` binary (stub)",
+		"The stdio binary is a stub",
+		"prompts/list` | Returns an empty list",
+		"`prompts/list` always returns an empty array",
+		"Weave does not yet expose prompts",
+	}
+	for _, claim := range staleClaims {
+		if strings.Contains(docs, claim) {
+			t.Errorf("docs/mcp.md still contains stale MCP claim %q", claim)
+		}
+	}
+
+	for _, required := range []string{
+		"`cmd/weave-mcp` binary (stdio HTTP bridge)",
+		"`WEAVE_MCP_URL`",
+		"`WEAVE_MCP_TOKEN`",
+		"`WEAVE_MCP_API_KEY`",
+		"`prompts/list` | List prompts synthesized from OMS ActionType metadata",
+		"`prompts/get` | Render one ActionType prompt with supplied arguments",
+		"`weave://objecttype/<ontology>/<objectType>`",
+		"JSON bundle of `objectType` + `properties` + `outgoingLinkTypes`",
+		"prompts",
+		"resources",
+	} {
+		if !strings.Contains(docs, required) {
+			t.Errorf("docs/mcp.md must describe live MCP contract fragment %q", required)
+		}
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
