@@ -12,11 +12,10 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router';
+import { MemoryRouter } from 'react-router';
 
 import { changeLocale, DEFAULT_LOCALE, i18n, resources, DEFAULT_NAMESPACE } from '../i18n';
 import { VertexGraphWidget } from './VertexGraphWidget';
-import { DiagrammingStubPage } from './DiagrammingStubPage';
 import { LayersDragPanel } from './LayersDragPanel';
 import { MapOpenInVertexButton } from './MapOpenInVertexButton';
 import { ScenarioCopilotButtons } from './ScenarioCopilotButtons';
@@ -83,6 +82,19 @@ describe('Vertex i18n resource registration', () => {
     walk(zhTree!);
     walk(enTree!);
   });
+
+  it('does not retain stale diagramming placeholder keys', () => {
+    const zhTree = (resources['zh-CN'][DEFAULT_NAMESPACE] as Record<string, unknown>).vertex as
+      | Record<string, unknown>
+      | undefined;
+    const enTree = (resources.en[DEFAULT_NAMESPACE] as Record<string, unknown>).vertex as
+      | Record<string, unknown>
+      | undefined;
+    expect(zhTree).toBeTruthy();
+    expect(enTree).toBeTruthy();
+    expect(flatten(zhTree!)).not.toEqual(expect.arrayContaining([expect.stringMatching(/^diagramming\./)]));
+    expect(flatten(enTree!)).not.toEqual(expect.arrayContaining([expect.stringMatching(/^diagramming\./)]));
+  });
 });
 
 describe('VertexGraphWidget — i18n', () => {
@@ -110,33 +122,6 @@ describe('VertexGraphWidget — i18n', () => {
     await waitFor(() => {
       expect(screen.getByTestId('vertex-widget-save').textContent).toBe('保存');
     });
-  });
-});
-
-describe('DiagrammingStubPage — i18n', () => {
-  function renderAt(locale: 'en' | 'zh-CN') {
-    return act(async () => {
-      await changeLocale(locale);
-      render(
-        <MemoryRouter initialEntries={['/vertex/ri.x/diagramming']}>
-          <Routes>
-            <Route path="/vertex/:rid/diagramming" element={<DiagrammingStubPage />} />
-          </Routes>
-        </MemoryRouter>,
-      );
-    });
-  }
-
-  it('English copy includes "Coming soon" + "Back to Graph"', async () => {
-    await renderAt('en');
-    expect(screen.getByTestId('vertex-diagramming-stub').textContent).toContain('Coming soon');
-    expect(screen.getByTestId('vertex-diagramming-back').textContent).toBe('Back to Graph');
-  });
-
-  it('Chinese copy includes 即将上线 + 返回 Graph', async () => {
-    await renderAt('zh-CN');
-    expect(screen.getByTestId('vertex-diagramming-stub').textContent).toContain('即将上线');
-    expect(screen.getByTestId('vertex-diagramming-back').textContent).toContain('返回');
   });
 });
 

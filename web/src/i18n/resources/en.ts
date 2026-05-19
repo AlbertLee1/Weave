@@ -180,12 +180,6 @@ const en = {
       saved: 'Saved',
       loading: 'Loading…',
     },
-    diagramming: {
-      title: 'Diagramming · Coming soon',
-      description:
-        'Diagramming mode is still in beta upstream. Vertex v1 ships with Graph mode only; the route is reserved so future links from external systems do not 404. Track progress in PRD VTX-114.',
-      backToGraph: 'Back to Graph',
-    },
     layers: {
       title: 'Layers',
       dropHere: 'Drop a layer here',

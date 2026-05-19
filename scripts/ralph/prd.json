@@ -1,65 +1,67 @@
 {
-  "project": "Weave Self-Iteration OSv2 Status Contract Refresh",
-  "branchName": "ralph/self-iteration-20260519-192439",
-  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-192439. The previous active PRD belonged to ralph/self-iteration-20260519-184146 and all of its stories already passed, so it was archived under scripts/ralph/archive/self-iteration-20260519-192734/. No PR CI auto-fix context was present in the current progress file. Fresh health check: latest GitHub main CI run 26093754173 completed green on commit 3d51032; Codespaces prebuild 26093753526 was still in progress. Local sampled checks for the known fresh-CI risks passed via `go test ./cmd/server -run 'TestBDD_CIEmbedPackageSurvivesFreshCheckoutWithoutGeneratedWebDist|TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1` and `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`. This PRD targets high-value OSv2 status-document drift found by comparing docs/PRD-Weave-OSv2-深度复刻-V2.md against live code, tests, migrations, and dogfood notes.",
+  "project": "Weave Self-Iteration OSv2 Vertex Contract Refresh",
+  "branchName": "ralph/self-iteration-20260519-201909",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-201909. The previous active PRD belonged to ralph/self-iteration-20260519-192439 and all of its stories already passed, so it was archived under scripts/ralph/archive/self-iteration-20260519-202241/. No PR CI auto-fix context was present in the current progress file. Fresh GitHub main health: latest CI run 26096351095 completed success on commit 5c51315; Codespaces prebuild 26096359892 was still in progress. Local sampled checks for known fresh-CI risks passed via `go test ./scripts/ci -count=1`, `go test ./cmd/server -run 'TestBDD_CIEmbedPackageSurvivesFreshCheckoutWithoutGeneratedWebDist|TestBuildEmbeddingProvider|TestEmbeddedWebDist|TestSPA|TestCI' -count=1`, and `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`. Dogfood issues DOG-002 through DOG-005 are already covered by live tests/code on this branch. This PRD targets small OSv2 upper-layer contract gaps found by comparing live Vertex routes, OpenAPI coverage, SPA routing, and dogfood notes.",
   "userStories": [
     {
-      "id": "SELF-456",
-      "name": "Correct TimeSeries downsample status documentation",
-      "phase": "OSv2 TimeSeries Operator Experience",
+      "id": "SELF-459",
+      "name": "Publish Vertex control-panel OpenAPI contract",
+      "phase": "OSv2 Vertex Operator Experience",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Update the OSv2 status document so TimeSeries coverage reflects the shipped transform endpoint, server-side downsample pushdown, Timescale continuous aggregate path, VictoriaMetrics backend, and Vertex window aggregation surface instead of claiming there is no bucket aggregation or downsample capability.",
+      "description": "Document the already-live `/api/vertex/v1/admin/control-panel` GET/PUT routes in the canonical and embedded OpenAPI specs, and remove the temporary undocumented-route exception so API Playground and SDK generation can discover the Vertex operator knobs.",
       "bdd_acceptance": [
-        "Given pkg/oss registers `/api/v2/ontologies/{ontologyApiName}/timeseries/transform` and the object TimeSeries routes, When an operator reads docs/PRD-Weave-OSv2-深度复刻-V2.md, Then the TimeSeries row no longer says there is no time-bucket aggregation or downsample path.",
-        "Given pkg/timeseries/downsample.go, pg_store.go, and vm_store.go implement DownsampleSpec/DownsamplePoints with avg/sum/min/max/count/first/last, Timescale `timeseries_cagg_5min`, and VictoriaMetrics query_range pushdown, When the status document describes TimeSeries storage and semantics, Then it names those live backends and keeps remaining gaps scoped to deeper OSv2 semantics such as calendar alignment, retention policy, and production tuning.",
-        "Given pkg/oss/handlers_timeseries_transform_us435_test.go and pkg/timeseries/us467_* tests cover pushdown and CAGG behavior, When the docs contract runs, Then stale claims about missing downsample or bucket aggregation fail until corrected."
+        "Given `pkg/vertex/controlpanel/handler.go` registers GET and PUT `/api/vertex/v1/admin/control-panel`, When the server contract test walks chi routes against `api/openapi.yaml`, Then those routes are not allow-listed as undocumented and are present in the spec.",
+        "Given `controlpanel.Config` defines `defaultWindowDays`, `pollingIntervalSec`, `searchAroundMaxNodes`, `searchAroundMaxDepth`, and `missingDataWarningHours`, When the OpenAPI contract is parsed, Then `VertexControlPanelConfig` and the sparse PUT request schema expose the same fields and defaults/operators can inspect the wire shape.",
+        "Given the running server serves the embedded OpenAPI copy from `cmd/server/openapi_spec.yaml`, When the embedded-spec drift test runs, Then it remains byte-identical to `api/openapi.yaml`."
       ],
       "quality_gates": [
-        "`go test ./scripts/ci -run TestBDD_TimeSeriesStatusDocReflectsDownsampleAndBackends -count=1`",
-        "`go test ./pkg/timeseries ./pkg/oss -run 'Test.*TimeSeries|Test.*Downsample|Test.*CAGG|Test.*VertexTimeSeries' -count=1`",
+        "`go test ./cmd/server -run 'TestBDD_VertexControlPanelOpenAPIContract|TestContract_' -count=1`",
+        "`go test ./pkg/vertex/controlpanel -count=1`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-457",
-      "name": "Correct upper-layer experience status documentation",
-      "phase": "OSv2 Upper-Layer Experience",
+      "id": "SELF-460",
+      "name": "Publish Vertex share-link and widget OpenAPI contract",
+      "phase": "OSv2 Vertex Sharing Experience",
       "active": true,
       "priority": 2,
       "passes": true,
-      "dependencies": [],
-      "description": "Update the OSv2 status document so upper-layer experience scope reflects shipped Vertex, Quiver, dashboards, notifications, reactions, and permission-request surfaces instead of treating them as excluded or absent.",
+      "dependencies": [
+        "SELF-459"
+      ],
+      "description": "Document the live Vertex share-link and Workshop widget routes so graph sharing and embedded graph consumers are visible to API Playground and future SDK generation instead of remaining in the undocumented-route allow-list.",
       "bdd_acceptance": [
-        "Given web/src/vertex, pkg/vertex, migrations/000105..000109, and Vertex tests exist, When the status document discusses upper-layer experiences, Then Vertex is described as a shipped graph/scenario workspace surface with remaining depth gaps rather than a non-goal.",
-        "Given pkg/quiver, web/src/components/quiver, dashboards, notifications, reactions, and permissionrequests packages exist, When the status document describes frontend/application scope, Then it names those live surfaces and distinguishes shipped MVPs from deeper OSv2 experience gaps.",
-        "Given the product goal is OSv2 services and upper-layer experiences, When the docs contract runs, Then stale blanket claims that Quiver/Vertex/application layers are not being built fail until corrected."
+        "Given `pkg/vertex/graphsvc/handler.go` registers `/share-links` and `/widget` routes, When the contract test compares chi routes with OpenAPI operations, Then those five routes are present in `api/openapi.yaml` and removed from the undocumented allow-list.",
+        "Given share-link recipients get masked graph payloads and widget GET returns a compact payload, When the OpenAPI schema is parsed, Then response/request schemas describe token creation, revocation, masked graph retrieval, widget compact retrieval, and widget save with `overrideGraphRid`.",
+        "Given `cmd/server/openapi_spec.yaml` is the runtime served spec, When embedded-spec drift is checked, Then it matches the canonical spec byte-for-byte."
       ],
       "quality_gates": [
-        "`go test ./scripts/ci -run TestBDD_UpperLayerStatusDocReflectsLiveExperienceSurfaces -count=1`",
-        "`npm --prefix web test -- --run src/vertex/VertexWorkspacePage.test.tsx src/components/quiver`",
+        "`go test ./cmd/server -run 'TestContract_|TestGraphShare|TestGraphWidget' -count=1`",
+        "`go test ./pkg/vertex/graphsvc -run 'Test.*Share|Test.*Widget' -count=1`",
         "`git diff --check`"
       ]
     },
     {
-      "id": "SELF-458",
-      "name": "Correct audit status documentation",
-      "phase": "OSv2 Governance Experience",
+      "id": "SELF-461",
+      "name": "Fix Vertex diagramming deep-link dead end",
+      "phase": "OSv2 Vertex Workspace Experience",
       "active": true,
       "priority": 3,
       "passes": true,
       "dependencies": [],
-      "description": "Update the OSv2 status document so audit and governance coverage reflects the live audit_events store, admin audit endpoints, hash-chain verification, OMS audit adapter, data-access audit hooks, and auth audit coverage instead of saying audit is limited to action_logs.",
+      "description": "Ensure `/vertex/{rid}/diagramming` does not dead-end on the SPA wildcard or a stale Coming Soon stub now that Vertex workspace graph rendering, layout, and interactions are live.",
       "bdd_acceptance": [
-        "Given pkg/audit, migrations/000020/000061/000062, cmd/server/admin_audit.go, and cmd/weave-audit-verify exist, When the OSv2 status document describes audit logging, Then it no longer says only action_logs exist or metadata/permission/auth changes are unrecorded.",
-        "Given pkg/oms/audited_repository.go and cmd/server/data_access_audit_adapter.go wire metadata and data-access audit paths, When an operator reads governance status, Then it names those live paths and keeps remaining gaps scoped to policy breadth or deployment hardening.",
-        "Given existing audit tests cover admin filtering, retention/export, hash-chain verification, and auth audit behavior, When the docs contract runs, Then stale action-only audit claims fail until corrected."
+        "Given a user opens `/vertex/{rid}/diagramming`, When the SPA route matches, Then the user lands on a live Vertex graph workspace path or a deliberate redirect to `/vertex/{rid}` rather than `NotFoundPage`.",
+        "Given the stale `DiagrammingStubPage` tests still assert `Coming soon`, When the route behavior is updated, Then those assertions are replaced with live workspace/redirect expectations and no user-facing diagramming stub copy remains under `web/src/vertex`.",
+        "Given Vertex i18n coverage currently includes diagramming placeholder text, When the placeholder is retired, Then the i18n key parity test remains green without stale `vertex.diagramming.*` keys."
       ],
       "quality_gates": [
-        "`go test ./scripts/ci -run TestBDD_AuditStatusDocReflectsLiveGovernanceSurfaces -count=1`",
-        "`go test ./pkg/audit ./pkg/oms ./pkg/oss ./cmd/server ./cmd/weave-audit-verify -run 'Test.*Audit|Test.*audit' -count=1`",
+        "`npm --prefix web test -- --run src/vertex/DiagrammingStubPage.test.tsx src/vertex/vertexI18n.test.tsx src/vertex/VertexWorkspacePage.test.tsx`",
+        "`npm --prefix web run typecheck`",
         "`git diff --check`"
       ]
     }

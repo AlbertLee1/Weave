@@ -43,6 +43,8 @@ tags:
       Operator-only administrative endpoints, gated to admin-level roles.
       Covers disruptive actions like rebuilding per-ObjectType Bleve
       indexes from the authoritative object_history tail.
+  - name: Vertex
+    description: Upper-layer graph, scenario, and operator-control surfaces.
 components:
   securitySchemes:
     bearerAuth:
@@ -3316,6 +3318,146 @@ components:
         nextPageToken:
           type: string
           description: Opaque cursor for the next page. Empty when no more pages remain.
+    VertexGraph:
+      type: object
+      description: |
+        Vertex SystemGraph wire shape. The `payload` object carries the
+        serialized workspace state, including layers, edges, positions, time
+        settings, and other graph-specific UI state.
+      required:
+        - rid
+        - ontologyRid
+        - name
+        - version
+        - versioned
+        - payload
+        - createdBy
+        - createdAt
+        - updatedAt
+      properties:
+        rid:
+          type: string
+          description: Resource identifier of the graph.
+        ontologyRid:
+          type: string
+          description: Ontology RID the graph belongs to.
+        name:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        versioned:
+          type: boolean
+          description: Whether full graph saves create version-history rows.
+        payload:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: |
+            Serialized graph workspace. Share-link responses preserve the
+            graph structure while masking layer object property values.
+            Widget responses compact this payload by removing widget-noise
+            keys such as `savedSelections` and `history`.
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    VertexShareLinkCreateResponse:
+      type: object
+      description: Opaque token minted for sharing a Vertex graph.
+      required: [token, graphRid, createdBy, createdAt]
+      properties:
+        token:
+          type: string
+          description: Opaque share token used in `/api/vertex/v1/share-links/{token}/graph`.
+        graphRid:
+          type: string
+          description: Graph RID the token resolves to.
+        createdBy:
+          type: string
+          description: User ID that minted the share token.
+        createdAt:
+          type: string
+          format: date-time
+    VertexWidgetSaveRequest:
+      type: object
+      description: |
+        Workshop vertex_graph widget save payload. `overrideGraphRid` lets a
+        widget persist into a different target graph than the source graph in
+        the URL.
+      required: [payload]
+      additionalProperties: false
+      properties:
+        payload:
+          type: object
+          additionalProperties: true
+          description: Serialized graph payload to persist.
+        overrideGraphRid:
+          type: string
+          description: Optional graph RID to save into instead of the source path RID.
+    VertexControlPanelConfig:
+      type: object
+      description: |
+        Vertex operator-tunable runtime knobs. GET returns these defaults
+        until an admin saves a replacement through PUT.
+      required:
+        - defaultWindowDays
+        - pollingIntervalSec
+        - searchAroundMaxNodes
+        - searchAroundMaxDepth
+        - missingDataWarningHours
+      properties:
+        defaultWindowDays:
+          type: integer
+          minimum: 1
+          default: 30
+          description: Default lookback window, in days, for newly opened Vertex graphs.
+        pollingIntervalSec:
+          type: integer
+          minimum: 1
+          default: 5
+          description: Live-mode polling interval in seconds.
+        searchAroundMaxNodes:
+          type: integer
+          minimum: 1
+          default: 200
+          description: Maximum nodes a Vertex search-around expansion may add.
+        searchAroundMaxDepth:
+          type: integer
+          minimum: 1
+          default: 3
+          description: Maximum search-around traversal depth.
+        missingDataWarningHours:
+          type: integer
+          minimum: 1
+          default: 24
+          description: Hours after which stale time-series data is flagged as missing.
+    VertexControlPanelUpdateRequest:
+      type: object
+      description: |
+        Sparse update for Vertex control-panel config. Omitted fields keep
+        their current values; supplied values must be strictly positive.
+      additionalProperties: false
+      properties:
+        defaultWindowDays:
+          type: integer
+          minimum: 1
+        pollingIntervalSec:
+          type: integer
+          minimum: 1
+        searchAroundMaxNodes:
+          type: integer
+          minimum: 1
+        searchAroundMaxDepth:
+          type: integer
+          minimum: 1
+        missingDataWarningHours:
+          type: integer
+          minimum: 1
     CreateApplicationRequest:
       type: object
       required: [name]
@@ -10928,6 +11070,219 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/vertex/v1/graphs/{rid}/share-links:
+    post:
+      operationId: createVertexShareLink
+      summary: Create a Vertex graph share link
+      description: |
+        Mints an opaque share token for the graph identified by `{rid}`.
+        Only the graph owner or an admin may create share links. Recipients
+        exchange the returned token through
+        `/api/vertex/v1/share-links/{token}/graph`.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Share link created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexShareLinkCreateResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/share-links/{token}:
+    delete:
+      operationId: revokeVertexShareLink
+      summary: Revoke a Vertex graph share link
+      description: |
+        Revokes a previously minted share token. The token creator or an
+        admin may revoke the link; repeated revocation is safe from the
+        caller's perspective once the token is known.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: token
+          required: true
+          description: Opaque share token.
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Share link revoked.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/share-links/{token}/graph:
+    get:
+      operationId: getVertexGraphViaShareLink
+      summary: Fetch a shared Vertex graph
+      description: |
+        Resolves a share token to its graph. The response preserves graph
+        structure while masking layer object property values so recipients can
+        inspect topology without seeing raw property data. Revoked tokens
+        return 410 Gone.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: token
+          required: true
+          description: Opaque share token.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Masked shared graph.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraph"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "410":
+          description: Share link has been revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/graphs/{rid}/widget:
+    get:
+      operationId: getVertexGraphWidget
+      summary: Get a compact Vertex graph for a Workshop widget
+      description: |
+        Returns the graph in the same wire shape as a normal Vertex graph
+        read, but compacts the payload for embedded widgets by stripping
+        widget-noise keys such as `savedSelections` and `history` while
+        preserving layers, edges, and positions.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Compact graph payload for an embedded widget.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraph"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/graphs/{rid}/widget/save:
+    post:
+      operationId: saveVertexGraphWidget
+      summary: Save a Vertex graph from an embedded widget
+      description: |
+        Persists the widget's current graph payload. When `overrideGraphRid`
+        is present, the save lands on that target graph instead of the source
+        graph from the URL.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Source Vertex graph RID.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VertexWidgetSaveRequest"
+      responses:
+        "200":
+          description: Updated target graph.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexGraph"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/vertex/v1/admin/control-panel:
+    get:
+      operationId: getVertexControlPanel
+      summary: Get Vertex control-panel configuration
+      description: |
+        Returns the current Vertex runtime knobs. When no admin has saved
+        a config yet, the server returns the canonical defaults from
+        `controlpanel.DefaultConfig`.
+      tags: [Vertex]
+      responses:
+        "200":
+          description: Current Vertex control-panel config.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexControlPanelConfig"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      operationId: updateVertexControlPanel
+      summary: Update Vertex control-panel configuration
+      description: |
+        Updates one or more Vertex runtime knobs. The request body is
+        sparse: omitted fields retain their previous value. Requires an
+        admin role.
+      tags: [Vertex, Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VertexControlPanelUpdateRequest"
+      responses:
+        "200":
+          description: Updated Vertex control-panel config.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VertexControlPanelConfig"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v2/actions/{rid}/impact:
     get:
       operationId: getActionImpact
