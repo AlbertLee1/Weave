@@ -1,29 +1,107 @@
 {
-  "project": "Weave Self-Iteration Vertex Web Scenario Run Contract Repair",
-  "branchName": "ralph/self-iteration-20260520-002052",
-  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260520-002052. The previous active PRD had all stories passing and was archived under scripts/ralph/archive/self-iteration-20260520-123219/. Fresh GitHub health at 2026-05-20 12:32 CST: latest main CI run 26109104836 completed success and latest branch pull_request CI run 26141075643 completed success. A newer LLM review auto-fix context requested changes because web scenario-run helpers/tests still preserve stale terminal POST semantics and the stream REST fallback does not parse the mounted VertexScenarioRun record shape. This PRD fixes only those review-blocking findings before adding any new OSv2-related capability work.",
+  "project": "Weave parallel2 self-iteration",
+  "branchName": "ralph/self-iteration-20260520-134952",
+  "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
   "userStories": [
     {
-      "id": "SELF-473",
-      "name": "Repair web scenario-run contract drift",
-      "phase": "LLM Review Repair",
-      "active": true,
+      "id": "P2A-001",
+      "title": "Reject malformed stream ingest edits before publish",
       "priority": 1,
-      "passes": true,
-      "dependencies": [],
-      "description": "Align the web scenario-run helper tests and stream fallback with the mounted scenario-run contract: POST /api/vertex/v1/scenarios/{scenarioRid}/runs accepts a run as 202 {runRid,status}; terminal state comes from GET /runs/{runRid}; the stream fallback parses VertexScenarioRun.rid/status without misreporting pending, running, or canceled states.",
-      "bdd_acceptance": [
-        "Given the mounted run start route returns 202 {runRid,status}, When the web scenario-run helper parses the response, Then it preserves the accepted run RID and status instead of expecting durationMs or a terminal scenario payload.",
-        "Given a started run, When the web helper needs terminal state, Then it builds the mounted GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid} route and leaves terminal parsing to the run-record polling helper.",
-        "Given the stream fallback polls a mounted VertexScenarioRun record with {rid,status:'succeeded'}, When the record is terminal success, Then it emits a completed event using rid as scenarioRunRid.",
-        "Given the stream fallback polls a mounted VertexScenarioRun record with {rid,status:'failed',error}, When the record is terminal failure, Then it emits a failed event using rid and the server error.",
-        "Given the stream fallback polls a mounted VertexScenarioRun record with pending, running, or canceled status, When the status is not succeeded or failed, Then it returns null rather than inventing a failed event."
+      "area": "backend/API/funnel ingest",
+      "problem": "The stream ingest API validates request size and metadata, but malformed edit envelopes with an empty or unknown edit type, missing primary key, or incomplete link edit identity can still reach the publisher. That turns caller-visible success into delayed consumer failure or DLQ handling instead of a deterministic API rejection.",
+      "userStory": "As an ontology data operator, I want stream ingest to fail fast on malformed edit envelopes so accepted ingest batches are well-formed before they enter the funnel.",
+      "bddAcceptance": [
+        "Given a stream ingest request with an edit type outside CREATE, MODIFY, DELETE, LINK_CREATE, and LINK_DELETE, when the request is posted, then the API returns 400 InvalidEdit and does not publish a batch.",
+        "Given a stream ingest request with a CREATE, MODIFY, or DELETE edit missing primaryKey, when the request is posted, then the API returns 400 InvalidEdit and does not publish a batch.",
+        "Given a stream ingest request with a LINK_CREATE or LINK_DELETE edit missing linkTypeRid or targetPrimaryKey, when the request is posted, then the API returns 400 InvalidEdit and does not publish a batch.",
+        "Given a valid CREATE ingest edit, when the request is posted, then the existing source tagging, URL objectType coercion, and success response are preserved."
       ],
-      "quality_gates": [
-        "`npm test -- scenarioRun.test.ts scenarioRunAsync.test.ts scenarioRunStream.test.ts` from web/",
-        "`npm run typecheck` from web/",
-        "`git diff --check`"
-      ]
+      "dependencies": [
+        "pkg/oss/stream_ingest.go",
+        "pkg/oss/stream_ingest_test.go",
+        "pkg/funnel/types.go"
+      ],
+      "passes": true,
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260520-134952-A"
+    },
+    {
+      "id": "P2A-002",
+      "title": "Support JSON-RPC batch envelopes in MCP transports",
+      "priority": 2,
+      "area": "backend/MCP",
+      "problem": "The MCP server currently parses only a single JSON-RPC request per HTTP body or stdio line, so a standards-compliant JSON-RPC batch envelope is treated as an invalid single request.",
+      "userStory": "As an MCP client, I want Weave to process JSON-RPC batch envelopes so multiple tool/resource calls can be sent efficiently while notifications still omit responses.",
+      "bddAcceptance": [
+        "Given an HTTP MCP POST body containing a batch with initialize, tools/list, and a notification, when it is handled, then the response is a JSON array containing only the two request responses.",
+        "Given a stdio MCP line containing the same batch, when it is handled, then one output line contains the response array.",
+        "Given an empty JSON-RPC batch, when it is handled, then Weave returns a JSON-RPC InvalidRequest error."
+      ],
+      "dependencies": [
+        "pkg/mcp/protocol.go",
+        "pkg/mcp/http_transport.go",
+        "pkg/mcp/stdio_transport.go"
+      ],
+      "passes": true,
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260520-134952-A"
+    },
+    {
+      "id": "P2A-003",
+      "title": "Make MCP HTTP body-limit failures transport-level",
+      "priority": 3,
+      "area": "backend/MCP",
+      "problem": "The MCP HTTP transport comments reserve non-200 responses for transport-level failures such as content too large, but oversized bodies are currently encoded as JSON-RPC InvalidRequest with HTTP 200.",
+      "userStory": "As an MCP client, I want oversized HTTP requests to receive a transport-level rejection so I can distinguish protocol errors from request-size enforcement.",
+      "bddAcceptance": [
+        "Given a POST /mcp request body larger than the configured limit, when it is handled, then the response status is 413 and no JSON-RPC success envelope is emitted.",
+        "Given valid JSON below the limit, when it is handled, then existing JSON-RPC status and response behavior remain unchanged."
+      ],
+      "dependencies": [
+        "pkg/mcp/http_transport.go",
+        "pkg/mcp/http_transport_test.go"
+      ],
+      "passes": true,
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260520-134952-A"
+    },
+    {
+      "id": "P2B-001",
+      "title": "Repair React 19 realtime subscription ref handling",
+      "asA": "browser operator using live object and ObjectSet views",
+      "iWant": "WebSocket and SSE subscription hooks to keep latest callbacks without mutating refs during render",
+      "soThat": "realtime browser dogfood remains compatible with React 19 lint/compiler rules while preserving callback freshness across rerenders",
+      "priority": "high",
+      "dependencies": [
+        "web/src/hooks/useWebSocketSubscription.ts",
+        "web/src/hooks/useObjectSetSubscription.ts",
+        "web/src/hooks/__tests__/useWebSocketSubscription.test.ts",
+        "web/src/hooks/__tests__/useObjectSetSubscription.test.ts"
+      ],
+      "acceptanceCriteria": [
+        {
+          "given": "a WebSocket subscription is mounted and then rerendered with a new onEvent callback without reconnecting",
+          "when": "the existing socket receives an objectChanged frame",
+          "then": "only the latest callback receives the event"
+        },
+        {
+          "given": "an ObjectSet SSE subscription is mounted and then rerendered with a new onEvent callback without reconnecting",
+          "when": "the existing EventSource receives a message",
+          "then": "only the latest callback receives the event"
+        },
+        {
+          "given": "React 19 hook lint rules are run against both realtime subscription hooks",
+          "when": "ESLint analyzes the files",
+          "then": "it reports no react-hooks/refs render-time ref mutation errors"
+        }
+      ],
+      "verification": [
+        "npm --prefix web test -- --run src/hooks/__tests__/useWebSocketSubscription.test.ts src/hooks/__tests__/useObjectSetSubscription.test.ts",
+        "cd web && npx eslint src/hooks/useWebSocketSubscription.ts src/hooks/useObjectSetSubscription.ts"
+      ],
+      "passes": true,
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260520-134952-B"
     }
   ]
 }
