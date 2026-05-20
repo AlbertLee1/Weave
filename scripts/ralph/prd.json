@@ -1,64 +1,27 @@
 {
-  "project": "Weave Self-Iteration Vertex Upper-Layer Metadata Refresh",
-  "branchName": "ralph/self-iteration-20260519-230504",
-  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260519-230504. The previous active PRD belonged to ralph/self-iteration-20260519-215825 and all of its stories already passed, so it was archived under scripts/ralph/archive/self-iteration-20260519-230855/. No PR CI auto-fix context was present in the active progress file. Fresh GitHub health at 2026-05-19 23:07 CST: latest main CI run 26105215653 on 91985d2 completed success, latest main Codespaces prebuild 26105216657 was still in progress, and the previous branch PR CI run 26103928834 completed success. Local sampled checks for known fresh-CI and dogfood risks passed via `go test ./cmd/server -run 'TestBDD_WebEmbedDoesNotRequireGeneratedDist|TestContract_' -count=1`, `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx src/components/explorer/__tests__/PropertiesTable.dog005.bdd.test.tsx`, and `go test ./pkg/oss ./pkg/oms -run 'TestBDD_StreamIngest|TestBDD_ImportOntology|TestBDD_CreateObjectType|Test.*DOG|Test.*dog' -count=1`. This PRD targets narrow Vertex upper-layer gaps that affect object analysis fidelity rather than broad platform expansion.",
+  "project": "Weave Self-Iteration Vertex Web Scenario Run Contract Repair",
+  "branchName": "ralph/self-iteration-20260520-002052",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260520-002052. The previous active PRD had all stories passing and was archived under scripts/ralph/archive/self-iteration-20260520-123219/. Fresh GitHub health at 2026-05-20 12:32 CST: latest main CI run 26109104836 completed success and latest branch pull_request CI run 26141075643 completed success. A newer LLM review auto-fix context requested changes because web scenario-run helpers/tests still preserve stale terminal POST semantics and the stream REST fallback does not parse the mounted VertexScenarioRun record shape. This PRD fixes only those review-blocking findings before adding any new OSv2-related capability work.",
   "userStories": [
     {
-      "id": "SELF-465",
-      "name": "Preserve Vertex added-object primary keys",
-      "phase": "OSv2 Vertex Workspace Experience",
+      "id": "SELF-473",
+      "name": "Repair web scenario-run contract drift",
+      "phase": "LLM Review Repair",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "When users add OSS objects into a Vertex graph, preserve the selected object's primary key so the selection sidebar can fetch fresh properties, time-series, and activity for newly added nodes instead of degrading to stale or empty local metadata.",
+      "description": "Align the web scenario-run helper tests and stream fallback with the mounted scenario-run contract: POST /api/vertex/v1/scenarios/{scenarioRid}/runs accepts a run as 202 {runRid,status}; terminal state comes from GET /runs/{runRid}; the stream fallback parses VertexScenarioRun.rid/status without misreporting pending, running, or canceled states.",
       "bdd_acceptance": [
-        "Given the Add Objects dialog receives OSS search rows with `__rid`, `__primaryKey`, and a title property, When the user checks rows and clicks Add, Then the `onAdd` payload carries each row's `primaryKey` alongside rid, label, ontology, and object type.",
-        "Given a Vertex workspace graph has newly added nodes from the dialog, When the user selects one of those nodes, Then the Properties tab calls `/api/v2/ontologies/{ontology}/objects/{objectType}/{primaryKey}` with the preserved primary key and renders the fresh object value.",
-        "Given an OSS row omits `__primaryKey`, When it is added, Then the dialog falls back to the current label/rid behavior without throwing."
+        "Given the mounted run start route returns 202 {runRid,status}, When the web scenario-run helper parses the response, Then it preserves the accepted run RID and status instead of expecting durationMs or a terminal scenario payload.",
+        "Given a started run, When the web helper needs terminal state, Then it builds the mounted GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid} route and leaves terminal parsing to the run-record polling helper.",
+        "Given the stream fallback polls a mounted VertexScenarioRun record with {rid,status:'succeeded'}, When the record is terminal success, Then it emits a completed event using rid as scenarioRunRid.",
+        "Given the stream fallback polls a mounted VertexScenarioRun record with {rid,status:'failed',error}, When the record is terminal failure, Then it emits a failed event using rid and the server error.",
+        "Given the stream fallback polls a mounted VertexScenarioRun record with pending, running, or canceled status, When the status is not succeeded or failed, Then it returns null rather than inventing a failed event."
       ],
       "quality_gates": [
-        "`npm --prefix web test -- --run src/vertex/VertexAddObjectsDialog.test.tsx src/vertex/VertexWorkspacePage.test.tsx`",
-        "`git diff --check`"
-      ]
-    },
-    {
-      "id": "SELF-466",
-      "name": "Resolve Vertex overlay time-series sparklines",
-      "phase": "OSv2 Vertex Workspace Experience",
-      "active": true,
-      "priority": 2,
-      "passes": true,
-      "dependencies": [
-        "SELF-465"
-      ],
-      "description": "Replace the Vertex node overlay's time-series glyph placeholder with the same mini-sparkline behavior used by the selection sidebar when object metadata is available.",
-      "bdd_acceptance": [
-        "Given a visible Vertex node has a time-series extended label and object metadata, When the overlay renders, Then it requests that property's stream points and draws a deterministic mini-sparkline from numeric values.",
-        "Given stream points are missing, non-numeric, or object metadata is unavailable, When the overlay renders, Then it keeps a clear pending marker and does not throw.",
-        "Given many graph nodes exist but only a subset is visible, When the overlay virtualizes cards, Then time-series requests are limited to rendered cards."
-      ],
-      "quality_gates": [
-        "`npm --prefix web test -- --run src/vertex/VertexNodeOverlay.test.tsx src/vertex/VertexWorkspacePage.test.tsx`",
-        "`git diff --check`"
-      ]
-    },
-    {
-      "id": "SELF-467",
-      "name": "Surface Vertex scenario run routes in server contract",
-      "phase": "OSv2 Vertex Scenario Execution API",
-      "active": true,
-      "priority": 3,
-      "passes": true,
-      "dependencies": [],
-      "description": "Audit the existing Vertex scenario-run package against server wiring and OpenAPI so the scenario execution lifecycle is either mounted and documented or explicitly gated by a focused contract test.",
-      "bdd_acceptance": [
-        "Given `pkg/vertex/scenarioruns` exposes start, cancel, and get handlers, When the server contract test walks registered routes, Then the intended public scenario-run routes are covered by either OpenAPI operations or an explicit non-mounted wiring assertion.",
-        "Given scenario-run routes are mounted, When the OpenAPI contract is parsed, Then request and response schemas describe run RID, scenario RID, status, attempts, checkpoints, and cancellation behavior.",
-        "Given scenario-run dependencies are not yet production-wired, When the contract test runs, Then it fails with a precise actionable message rather than silently leaving the package as unreachable code."
-      ],
-      "quality_gates": [
-        "`go test ./cmd/server ./pkg/vertex/scenarioruns -run 'TestBDD_VertexScenarioRun|TestContract_' -count=1`",
+        "`npm test -- scenarioRun.test.ts scenarioRunAsync.test.ts scenarioRunStream.test.ts` from web/",
+        "`npm run typecheck` from web/",
         "`git diff --check`"
       ]
     }

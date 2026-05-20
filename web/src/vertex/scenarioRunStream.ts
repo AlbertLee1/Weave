@@ -1,17 +1,17 @@
-// scenarioRunStream — resilient SSE client for Scenario Runs (VTX-115).
+// scenarioRunStream — guarded SSE client for Scenario Runs (VTX-115).
 //
 // Wraps EventSource with:
 //   1. automatic reconnect on transport error
 //   2. Last-Event-Id header carried across reconnects so the server can
 //      replay from the last delivered event
 //   3. a terminal fallback: if reconnect keeps failing, GET
-//      /api/vertex/v1/scenarios/{rid}/run/{jobId} returns the final
+//      /api/vertex/v1/scenarios/{rid}/runs/{runRid} returns the final
 //      record so the UI is never stuck "in progress" forever
 //
-// The actual SSE endpoint and replay support are owned by VTX-044.
-// This module is the client contract — it activates as soon as the
-// server implements it. Until then `pollFinalState` keeps the UI
-// honest by falling through to a single REST status check.
+// The actual SSE endpoint and replay support are not mounted in the
+// current server/OpenAPI contract. Callers must explicitly opt in before
+// this helper opens EventSource; default use throws so UI wiring cannot
+// accidentally hit a 404 stream route.
 
 export type RunEvent =
   | { kind: 'progress'; percent: number }
@@ -22,7 +22,7 @@ export type RunEvent =
 
 export interface ScenarioRunStreamOptions {
   scenarioRid: string;
-  jobId?: string;
+  runRid?: string;
   /** Inject for tests. Default: window.EventSource. */
   EventSourceCtor?: typeof EventSource;
   /** Inject for tests. Default: globalThis.fetch. */
@@ -31,6 +31,8 @@ export interface ScenarioRunStreamOptions {
   maxReconnects?: number;
   /** Base backoff in ms; doubled on each retry up to 10s. */
   backoffMs?: number;
+  /** Test/future-server escape hatch until /runs/{runRid}/stream is mounted. */
+  allowUnimplementedStreamRoute?: boolean;
 }
 
 interface Handle {
@@ -51,6 +53,9 @@ interface MinimalEventSource {
 // objects. The iterable ends after a terminal event (completed/failed)
 // or after maxReconnects exhausts and pollFinalState returns.
 export function openScenarioRunStream(opts: ScenarioRunStreamOptions): Handle {
+  if (!opts.allowUnimplementedStreamRoute) {
+    throw new Error('Vertex scenario-run stream route is not mounted; use polling');
+  }
   const maxReconnects = opts.maxReconnects ?? 5;
   const backoffMs = opts.backoffMs ?? 1000;
   const EventSourceCtor = opts.EventSourceCtor ?? (globalThis as { EventSource: typeof EventSource }).EventSource;
@@ -87,7 +92,10 @@ export function openScenarioRunStream(opts: ScenarioRunStreamOptions): Handle {
 
   function connect(attempt: number) {
     if (closed) return;
-    const urlBase = `/api/vertex/v1/scenarios/${encodeURIComponent(opts.scenarioRid)}/run`;
+    const scenarioPath = `/api/vertex/v1/scenarios/${encodeURIComponent(opts.scenarioRid)}`;
+    const urlBase = opts.runRid
+      ? `${scenarioPath}/runs/${encodeURIComponent(opts.runRid)}/stream`
+      : `${scenarioPath}/runs/stream`;
     const url = lastEventId ? `${urlBase}?lastEventId=${encodeURIComponent(lastEventId)}` : urlBase;
     const next = new EventSourceCtor(url) as unknown as MinimalEventSource;
     es = next;
@@ -153,17 +161,26 @@ export async function pollFinalState(
   opts: ScenarioRunStreamOptions,
   fetchImpl: typeof fetch,
 ): Promise<RunEvent | null> {
-  if (!opts.jobId) return null;
+  if (!opts.runRid) return null;
   try {
     const res = await fetchImpl(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(opts.scenarioRid)}/run/${encodeURIComponent(opts.jobId)}`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(opts.scenarioRid)}/runs/${encodeURIComponent(opts.runRid)}`,
     );
     if (!res.ok) return null;
-    const body = (await res.json()) as { status: 'succeeded' | 'failed'; scenarioRunRid: string; error?: string };
+    const body = (await res.json()) as {
+      rid?: string;
+      status: 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled';
+      error?: string;
+    };
     if (body.status === 'succeeded') {
-      return { kind: 'completed', scenarioRunRid: body.scenarioRunRid };
+      if (!body.rid) return null;
+      return { kind: 'completed', scenarioRunRid: body.rid };
     }
-    return { kind: 'failed', scenarioRunRid: body.scenarioRunRid, error: body.error ?? 'failed' };
+    if (body.status === 'failed') {
+      if (!body.rid) return null;
+      return { kind: 'failed', scenarioRunRid: body.rid, error: body.error ?? 'failed' };
+    }
+    return null;
   } catch {
     return null;
   }

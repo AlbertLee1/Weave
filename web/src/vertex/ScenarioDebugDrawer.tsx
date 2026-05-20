@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { ScenarioRunRecord } from '../features/vertex/scenarioPane/scenarioRunAsync';
 import '../i18n';
 
 export interface ScenarioRunDebug {
@@ -19,18 +20,68 @@ export interface ScenarioRunDebug {
 }
 
 export interface ScenarioDebugDrawerProps {
+  scenarioRid?: string | null;
   scenarioRunRid: string | null;
   onClose: () => void;
-  fetcher?: (rid: string) => Promise<ScenarioRunDebug>;
+  fetcher?: (input: ScenarioDebugFetchInput) => Promise<ScenarioRunDebug>;
 }
 
-async function defaultFetcher(rid: string): Promise<ScenarioRunDebug> {
-  const res = await fetch(`/api/vertex/v1/scenario-runs/${encodeURIComponent(rid)}/debug`);
-  if (!res.ok) throw new Error(`debug fetch failed: ${res.status}`);
-  return (await res.json()) as ScenarioRunDebug;
+export interface ScenarioDebugFetchInput {
+  scenarioRid: string | null | undefined;
+  scenarioRunRid: string;
 }
 
-export function ScenarioDebugDrawer({ scenarioRunRid, onClose, fetcher = defaultFetcher }: ScenarioDebugDrawerProps) {
+export class ScenarioRunDebugNotFoundError extends Error {
+  constructor() {
+    super('Scenario run not found');
+    this.name = 'ScenarioRunDebugNotFoundError';
+  }
+}
+
+function requireScenarioRid(scenarioRid: string | null | undefined): string {
+  if (typeof scenarioRid !== 'string' || scenarioRid.trim().length === 0) {
+    throw new Error('scenarioRid is required to fetch scenario run debug');
+  }
+  return scenarioRid.trim();
+}
+
+function mapRunRecordToDebug(record: ScenarioRunRecord): ScenarioRunDebug {
+  const checkpoint = record.checkpoint;
+  const attempts = Object.entries(checkpoint?.attemptsById ?? {});
+  const error = record.error ?? checkpoint?.error;
+  const functionLogs = [
+    `status=${record.status}`,
+    checkpoint?.lastActivity ? `lastActivity=${checkpoint.lastActivity}` : null,
+    ...attempts.map(([activityId, count]) => `${activityId} attempts=${count}`),
+    error ? `error=${error}` : null,
+    checkpoint?.updatedAt ? `updatedAt=${checkpoint.updatedAt}` : null,
+  ].filter((line): line is string => line !== null);
+  return {
+    scenarioRunRid: record.rid,
+    inputSnapshot: record,
+    functionLogs,
+    partialEdits: [],
+  };
+}
+
+async function defaultFetcher(input: ScenarioDebugFetchInput): Promise<ScenarioRunDebug> {
+  const scenarioRid = requireScenarioRid(input.scenarioRid);
+  const res = await fetch(
+    `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(input.scenarioRunRid)}`,
+  );
+  if (res.status === 404) {
+    throw new ScenarioRunDebugNotFoundError();
+  }
+  if (!res.ok) throw new Error(`scenario run fetch failed: ${res.status}`);
+  return mapRunRecordToDebug((await res.json()) as ScenarioRunRecord);
+}
+
+export function ScenarioDebugDrawer({
+  scenarioRid,
+  scenarioRunRid,
+  onClose,
+  fetcher = defaultFetcher,
+}: ScenarioDebugDrawerProps) {
   const { t } = useTranslation();
   const [data, setData] = useState<ScenarioRunDebug | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +93,9 @@ export function ScenarioDebugDrawer({ scenarioRunRid, onClose, fetcher = default
       return;
     }
     let cancelled = false;
-    fetcher(scenarioRunRid)
+    setData(null);
+    setError(null);
+    fetcher({ scenarioRid, scenarioRunRid })
       .then((d) => {
         if (!cancelled) {
           setData(d);
@@ -50,12 +103,15 @@ export function ScenarioDebugDrawer({ scenarioRunRid, onClose, fetcher = default
         }
       })
       .catch((e) => {
-        if (!cancelled) setError(String(e));
+        if (!cancelled) {
+          setData(null);
+          setError(e instanceof Error ? e.message : String(e));
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [scenarioRunRid, fetcher]);
+  }, [scenarioRid, scenarioRunRid, fetcher]);
 
   if (!scenarioRunRid) return null;
 
@@ -103,16 +159,20 @@ export function ScenarioDebugDrawer({ scenarioRunRid, onClose, fetcher = default
               {t('vertex.debug.partialEdits', { count: data.partialEdits.length })}
             </h3>
             <ol className="list-decimal pl-5">
-              {data.partialEdits.map((e, i) => (
-                <li key={i} className="mb-1">
-                  <span className="font-mono">{e.op}</span>
-                  {e.objectId && <span> · {e.objectId}</span>}
-                  {e.property && <span> · {e.property}</span>}
-                  {e.newValue !== undefined && (
-                    <span className="ml-1 text-zinc-500">= {JSON.stringify(e.newValue)}</span>
-                  )}
-                </li>
-              ))}
+              {data.partialEdits.length === 0 ? (
+                <li>{t('vertex.debug.noPartialEdits')}</li>
+              ) : (
+                data.partialEdits.map((e, i) => (
+                  <li key={i} className="mb-1">
+                    <span className="font-mono">{e.op}</span>
+                    {e.objectId && <span> · {e.objectId}</span>}
+                    {e.property && <span> · {e.property}</span>}
+                    {e.newValue !== undefined && (
+                      <span className="ml-1 text-zinc-500">= {JSON.stringify(e.newValue)}</span>
+                    )}
+                  </li>
+                ))
+              )}
             </ol>
           </section>
         </div>

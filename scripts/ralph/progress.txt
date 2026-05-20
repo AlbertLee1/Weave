@@ -1,76 +1,68 @@
 # Ralph Progress Log
-Started: Tue May 19 23:05:04 CST 2026
-Branch: ralph/self-iteration-20260519-230504
+Started: Wed May 20 12:32:19 CST 2026
 
-## Cycle Setup
-- Archived stale PRD/progress from branch `ralph/self-iteration-20260519-215825` to `scripts/ralph/archive/self-iteration-20260519-230855/` because all stories were already marked `passes: true`.
-- No `PR CI auto-fix context` was present in the active progress file.
-- GitHub health inspected with `gh run list --limit 8 --json ...`: main CI run `26105215653` on `91985d2` completed success; main Codespaces prebuild `26105216657` was in progress; previous branch PR CI `26103928834` completed success.
-- Local known-risk checks passed:
-  - `go test ./cmd/server -run 'TestBDD_WebEmbedDoesNotRequireGeneratedDist|TestContract_' -count=1`
-  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx src/components/explorer/__tests__/PropertiesTable.dog005.bdd.test.tsx`
-  - `go test ./pkg/oss ./pkg/oms -run 'TestBDD_StreamIngest|TestBDD_ImportOntology|TestBDD_CreateObjectType|Test.*DOG|Test.*dog' -count=1`
+Archived previous passing PRD:
+- scripts/ralph/archive/self-iteration-20260520-123219/prd.json
+- scripts/ralph/archive/self-iteration-20260520-123219/progress.txt
+
+Fresh health evidence:
+- main: `gh run list --branch main --limit 5` showed latest CI run 26109104836 success and latest Codespaces prebuild 26109104180 success.
+- branch: `gh run list --branch ralph/self-iteration-20260520-002052 --limit 8` showed latest pull_request CI run 26141075643 success.
+- local inspection: `dogfood-output/weave-webui-dogfood-20260517.md` remains the latest web dogfood output; no newer dogfood-output file targets this review blocker.
+
+LLM review auto-fix evidence:
+- PR: https://github.com/AlbertLee1/Weave/pull/39
+- Branch: ralph/self-iteration-20260520-002052
+- Reviewed HEAD: 25cfd23ae809
+- Review status: request_changes
+- Summary: Request changes: the main SDKs mostly follow start-and-poll, but web scenario-run helpers/tests still preserve stale terminal-response semantics and the stream REST fallback is not aligned with the mounted run-record schema.
+- Blocking findings:
+```json
+[
+  {
+    "severity": "warning",
+    "file": "web/src/features/vertex/scenarioPane/scenarioRun.ts",
+    "line": 305,
+    "issue": "The sync scenario-run helper still models POST /api/vertex/v1/scenarios/{rid}/runs as a terminal 200 response with {status:'success', durationMs, scenario}. The same helper's request builder now targets the mounted /runs start route, whose contract is 202 {runRid,status} followed by GET /runs/{runRid} polling. Any caller using this helper against the real route will parse the accepted response as malformed instead of polling, and the BDD test at scenarioRun.test.ts:474 still documents the impossible 200 OK flow.",
+    "suggestion": "Replace or quarantine the old sync terminal response helpers. Make the web run flow parse the 202 start response and poll GET /runs/{runRid} until terminal, or route callers through scenarioRunAsync. Update scenarioRun.test.ts to cover the real start-and-poll contract instead of a mocked 200 success payload."
+  },
+  {
+    "severity": "warning",
+    "file": "web/src/vertex/scenarioRunStream.ts",
+    "line": 176,
+    "issue": "pollFinalState now calls the mounted GET /runs/{runRid} route, but it reads body.runRid/body.scenarioRunRid. The documented/server VertexScenarioRun record uses rid, so the fallback returns null for real terminal records. It also treats any non-'succeeded' status as failed, which would misreport valid pending/running/canceled records.",
+    "suggestion": "Parse the mounted run-record shape: use body.rid for the run RID, return completed only for succeeded, failed only for failed (and handle canceled explicitly or return null), and leave pending/running as null. Update scenarioRunStream.test.ts fixtures to use {rid, status} from the OpenAPI contract."
+  }
+]
+```
+- Required repair: fix only the stale sync scenario-run helper/tests and `pollFinalState` run-record parsing described above.
+
+Codebase Patterns:
+- CI pins golangci-lint in `.github/workflows/ci.yml` and uses `only-new-issues: true`; local reproductions should use the same pinned version when the binary is not installed.
+- Go SDK Vertex scenario-run routes are covered in `sdk/go/vertex_test.go` and should stay aligned with `/api/vertex/v1/scenarios/{scenarioRid}/runs`.
+- Mounted Vertex scenario-run server contract is start/poll/cancel only: `POST /api/vertex/v1/scenarios/{scenarioRid}/runs`, `GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}`, and `POST /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}/cancel`.
+- OpenAPI schemas `VertexScenarioRunStartResponse` and `VertexScenarioRun` define start as `{runRid,status}` and terminal polling as the persisted run record.
 
 ## Selected Story
-- `SELF-465` — Preserve Vertex added-object primary keys.
-- `SELF-466` — Resolve Vertex overlay time-series sparklines.
-- `SELF-467` — Surface Vertex scenario run routes in server contract.
+- `SELF-473` - Repair web scenario-run contract drift.
 
-## SELF-465 Evidence
-- RED: `npm --prefix web test -- --run src/vertex/VertexAddObjectsDialog.test.tsx src/vertex/VertexWorkspacePage.test.tsx` failed as expected before implementation.
-  - `VertexAddObjectsDialog.test.tsx` received `[undefined, ...]` for `primaryKey` instead of `A0..A4`.
-  - `VertexWorkspacePage.test.tsx` selected `ri.airport.NEW0` but `calls.objectGets` stayed empty, proving the sidebar could not fetch `/api/v2/ontologies/main/objects/Airport/NEW0`.
-- GREEN: after carrying `__primaryKey` through `AddedObjectInput` and `addedSummariesByRid`, the same command passed with 2 test files and 41 tests.
-- Files changed:
-  - `web/src/vertex/VertexAddObjectsDialog.tsx`
-  - `web/src/vertex/VertexAddObjectsDialog.test.tsx`
-  - `web/src/vertex/VertexWorkspacePage.tsx`
-  - `web/src/vertex/VertexWorkspacePage.test.tsx`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-
-## SELF-466 Evidence
-- RED: `npm --prefix web test -- --run src/vertex/VertexNodeOverlay.test.tsx src/vertex/VertexWorkspacePage.test.tsx` failed as expected before implementation.
-  - `VertexNodeOverlay.test.tsx` saw zero `useTimeSeriesPoints` calls for visible time-series labels, no `vertex-node-overlay-series-sparkline` test id, and zero hook calls for the visible-card virtualization case.
-  - `VertexWorkspacePage.test.tsx` only fetched `/api/vertex/v1/graphs/...`; it never POSTed to `/api/v2/ontologies/main/objects/Airport/JFK_PK/timeseries/temperatureSeries/streamPoints`.
-- GREEN: after passing `objectsByRid` into `VertexNodeOverlay`, resolving the time-series property from the label key, and rendering finite numeric stream values through a shared mini-sparkline, the same command passed with 2 test files and 46 tests.
-- Regression check: `npm --prefix web test -- --run src/vertex/VertexSelectionSidebar.test.tsx` passed with 1 test file and 11 tests after extracting `VertexMiniSparkline`.
-- Typecheck/hygiene: `npm --prefix web run typecheck` passed, `git diff --check` passed, and `jq empty scripts/ralph/prd.json` passed.
-- Files changed:
-  - `web/src/vertex/VertexMiniSparkline.tsx`
-  - `web/src/vertex/VertexNodeOverlay.tsx`
-  - `web/src/vertex/VertexNodeOverlay.test.tsx`
-  - `web/src/vertex/VertexSelectionSidebar.tsx`
-  - `web/src/vertex/VertexWorkspacePage.tsx`
-  - `web/src/vertex/VertexWorkspacePage.test.tsx`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-
-## SELF-467 Evidence
-- Root cause: `pkg/vertex/scenarioruns` already exposed chi handlers for start, cancel, and get, but `cmd/server.NewFullRouter` never mounted them and `api/openapi.yaml` had no scenario-run operations or schemas.
-- RED: `go test ./cmd/server -run TestBDD_VertexScenarioRunOpenAPIContract -count=1` failed as expected.
-  - Missing chi routes: `POST /api/vertex/v1/scenarios/{scenarioRid}/runs`, `POST /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}/cancel`, and `GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}`.
-  - Missing OpenAPI operations for the same three routes.
-- GREEN: after adding the focused server contract, mounting `scenarioruns.NewHandler(buildScenarioRunService(deps)).RegisterRoutes(api)`, adding `scenarioruns.NewMemoryRepo`, and documenting scenario-run routes/schemas in both OpenAPI copies, the same focused test passed.
+## SELF-473 Evidence
+- Root cause: the web single-function scenario-run helper still documented and parsed POST `/api/vertex/v1/scenarios/{scenarioRid}/runs` as a terminal 200-style response with `{durationMs,scenario}`, while the mounted route accepts the run as `202 {runRid,status}` and requires GET `/runs/{runRid}` for terminal state. The stream fallback was already polling the mounted GET route, but it read stale `runRid`/`scenarioRunRid` response fields instead of the OpenAPI/server `VertexScenarioRun.rid` field and collapsed every non-`succeeded` status into failure.
+- RED:
+  - `npm test -- scenarioRun.test.ts scenarioRunStream.test.ts` from `web/` failed as expected: 9 failures. `scenarioRun.test.ts` lacked `parseScenarioRunAcceptedResponse`/`buildGetRunScenarioRequest`; `scenarioRunStream.test.ts` returned `null` for `{rid,status:'succeeded'|'failed'}` fixtures.
+- GREEN:
+  - `web/src/features/vertex/scenarioPane/scenarioRun.ts` now exposes accepted-response parsing for `202 {runRid,status}` and a mounted GET `/runs/{runRid}` request builder. The stale terminal POST parser/types/comments were removed from the helper and tests.
+  - `web/src/vertex/scenarioRunStream.ts` now parses `VertexScenarioRun.rid`, returns completed only for `succeeded`, failed only for `failed`, and returns `null` for `pending`, `running`, and `canceled`.
 - Verification:
-  - `go test ./cmd/server ./pkg/vertex/scenarioruns -run 'TestBDD_VertexScenarioRun|TestContract_' -count=1` passed.
-  - `go test ./pkg/vertex/scenarioruns -count=1` passed.
-  - `go test ./cmd/server -run 'TestOpenAPISpec_|TestContract_' -count=1` passed.
-  - `jq empty scripts/ralph/prd.json` passed.
+  - `npm test -- scenarioRun.test.ts scenarioRunStream.test.ts` from `web/` passed: 2 files, 62 tests.
+  - `npm test -- scenarioRun.test.ts scenarioRunAsync.test.ts scenarioRunStream.test.ts` from `web/` passed: 3 files, 144 tests.
+  - `npm run typecheck` from `web/` passed.
   - `git diff --check` passed.
 - Files changed:
-  - `api/openapi.yaml`
-  - `cmd/server/contract_test.go`
-  - `cmd/server/main.go`
-  - `cmd/server/openapi_spec.yaml`
-  - `pkg/vertex/scenarioruns/mem_repo.go`
+  - `web/src/features/vertex/scenarioPane/scenarioRun.ts`
+  - `web/src/features/vertex/scenarioPane/scenarioRun.test.ts`
+  - `web/src/vertex/scenarioRunStream.ts`
+  - `web/src/vertex/scenarioRunStream.test.ts`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
-
-## Codebase Patterns
-- Vertex workspace tests mock `@react-sigma/core` in `web/src/vertex/VertexWorkspacePage.test.tsx` and fire captured Sigma handlers directly for selection/context-menu behavior.
-- Vertex Add Objects dialog result rows come from OSS search `WireObject` rows; `__primaryKey` is already selected from the backend and should be carried through page state when downstream tabs need fresh OSS calls.
-- For transient Vertex objects added outside the saved graph payload, keep `VertexObjectSummary` metadata complete enough for existing sidebar hooks (`useGetObject`, `useObjectActivity`, `useTimeSeriesPoints`) to work exactly like payload-resident nodes.
-- Vertex overlay virtualization happens before React card rows mount; keeping `useTimeSeriesPoints` inside rendered time-series rows naturally limits stream-point requests to onscreen cards.
-- Vertex time-series extended-label property names are currently encoded in `ExtendedLabel.key` as `timeSeries:<property>:<index>`; both sidebar and overlay can resolve stream-point requests from that key until the label type grows an explicit property field.
-- Vertex scenario-run server contracts should assert both sides of reachability: chi route registration in `NewFullRouter` and matching OpenAPI operations/schemas. Degraded route mounting can use dependency-unavailable implementations when the contract must remain discoverable before durable production execution is wired.
+- Reusable learning: web scenario-run helpers should treat POST `/runs` as start-only. Any terminal UI transition must be driven by the persisted run record from GET `/runs/{runRid}`; stream fallbacks must parse the same `VertexScenarioRun` shape as the mounted REST endpoint.

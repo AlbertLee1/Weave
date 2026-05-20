@@ -32,10 +32,20 @@ class FakeEventSource {
 }
 
 describe('openScenarioRunStream (VTX-115)', () => {
+  it('throws by default because no scenario-run stream route is mounted', () => {
+    expect(() =>
+      openScenarioRunStream({
+        scenarioRid: 'ri.vertex.main.scenario.s1',
+        EventSourceCtor: FakeEventSource as unknown as typeof EventSource,
+      }),
+    ).toThrow(/stream route is not mounted/i);
+  });
+
   it('iterates events and terminates after a completed event', async () => {
     const handle = openScenarioRunStream({
       scenarioRid: 'ri.vertex.main.scenario.s1',
       EventSourceCtor: FakeEventSource as unknown as typeof EventSource,
+      allowUnimplementedStreamRoute: true,
     });
     const es = FakeEventSource.last!;
     es.pushEvent({ kind: 'progress', percent: 25 } satisfies RunEvent, 'evt-1');
@@ -54,6 +64,7 @@ describe('openScenarioRunStream (VTX-115)', () => {
       scenarioRid: 'ri.vertex.main.scenario.s1',
       EventSourceCtor: FakeEventSource as unknown as typeof EventSource,
       backoffMs: 10,
+      allowUnimplementedStreamRoute: true,
     });
     const first = FakeEventSource.last!;
     first.pushEvent({ kind: 'progress', percent: 10 }, 'evt-A');
@@ -73,15 +84,16 @@ describe('openScenarioRunStream (VTX-115)', () => {
   it('falls back to pollFinalState after maxReconnects exhausts', async () => {
     vi.useFakeTimers();
     const fetchImpl = vi.fn(async () =>
-      new Response(JSON.stringify({ status: 'succeeded', scenarioRunRid: 'r-final' }), { status: 200 }),
+      new Response(JSON.stringify({ status: 'succeeded', rid: 'r-final' }), { status: 200 }),
     );
     const handle = openScenarioRunStream({
       scenarioRid: 'ri.vertex.main.scenario.s1',
-      jobId: 'job-1',
+      runRid: 'run-1',
       EventSourceCtor: FakeEventSource as unknown as typeof EventSource,
       fetchImpl: fetchImpl as unknown as typeof fetch,
       maxReconnects: 1,
       backoffMs: 10,
+      allowUnimplementedStreamRoute: true,
     });
 
     FakeEventSource.last!.pushError();
@@ -93,7 +105,9 @@ describe('openScenarioRunStream (VTX-115)', () => {
 
     const got: RunEvent[] = [];
     for await (const e of handle.events) got.push(e);
-    expect(fetchImpl).toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      `/api/vertex/v1/scenarios/${encodeURIComponent('ri.vertex.main.scenario.s1')}/runs/${encodeURIComponent('run-1')}`,
+    );
     expect(got.length).toBe(1);
     expect(got[0].kind).toBe('completed');
     vi.useRealTimers();
@@ -101,7 +115,7 @@ describe('openScenarioRunStream (VTX-115)', () => {
 });
 
 describe('pollFinalState', () => {
-  it('returns null when no jobId is supplied', async () => {
+  it('returns null when no runRid is supplied', async () => {
     const r = await pollFinalState(
       { scenarioRid: 's' },
       vi.fn() as unknown as typeof fetch,
@@ -111,12 +125,38 @@ describe('pollFinalState', () => {
 
   it('maps a succeeded REST response to a completed event', async () => {
     const fetchImpl = vi.fn(async () =>
-      new Response(JSON.stringify({ status: 'succeeded', scenarioRunRid: 'r-final' }), { status: 200 }),
+      new Response(JSON.stringify({ status: 'succeeded', rid: 'r-final' }), { status: 200 }),
     );
     const r = await pollFinalState(
-      { scenarioRid: 's', jobId: 'j' },
+      { scenarioRid: 's', runRid: 'j' },
       fetchImpl as unknown as typeof fetch,
     );
+    expect(fetchImpl).toHaveBeenCalledWith('/api/vertex/v1/scenarios/s/runs/j');
     expect(r).toEqual({ kind: 'completed', scenarioRunRid: 'r-final' });
   });
+
+  it('maps a failed REST response to a failed event', async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ status: 'failed', rid: 'r-final', error: 'model failed' }), { status: 200 }),
+    );
+    const r = await pollFinalState(
+      { scenarioRid: 's', runRid: 'j' },
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(r).toEqual({ kind: 'failed', scenarioRunRid: 'r-final', error: 'model failed' });
+  });
+
+  it.each(['pending', 'running', 'canceled'] as const)(
+    'returns null for non-success-or-failure REST status %s',
+    async (status) => {
+      const fetchImpl = vi.fn(async () =>
+        new Response(JSON.stringify({ status, rid: 'r-final' }), { status: 200 }),
+      );
+      const r = await pollFinalState(
+        { scenarioRid: 's', runRid: 'j' },
+        fetchImpl as unknown as typeof fetch,
+      );
+      expect(r).toBeNull();
+    },
+  );
 });

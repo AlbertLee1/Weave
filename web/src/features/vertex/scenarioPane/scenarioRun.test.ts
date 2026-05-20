@@ -8,6 +8,7 @@ import {
   applyScenarioRunStart,
   applyScenarioRunSuccess,
   assertScenarioRunnable,
+  buildGetRunScenarioRequest,
   buildRunScenarioRequest,
   createScenarioRunMap,
   createScenarioRunState,
@@ -17,8 +18,8 @@ import {
   hasRunnablePayload,
   immutableScenario,
   isScenarioRunning,
+  parseScenarioRunAcceptedResponse,
   parseScenarioRunErrorResponse,
-  parseScenarioRunSuccessResponse,
   resolveRunButtonState,
   setScenarioRunState,
   validateScenarioRunRequest,
@@ -26,6 +27,7 @@ import {
 
 const scenarioRid = 'ri.vertex.main.scenario.s-1';
 const otherRid = 'ri.vertex.main.scenario.s-2';
+const runRid = 'ri.vertex.main.scenario-run.r-1';
 
 function mutableScenario(rid = scenarioRid): ScenarioRef {
   return { rid, name: 'Scenario A', immutable: false };
@@ -125,7 +127,7 @@ describe('VTX-043 Scenario run request builder', () => {
     const req = buildRunScenarioRequest({ scenarioRid });
     expect(req.method).toBe('POST');
     expect(req.path).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/run`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs`,
     );
     expect(req.body).toEqual({});
   });
@@ -134,7 +136,7 @@ describe('VTX-043 Scenario run request builder', () => {
     const ridWithSpecial = 'ri.vertex.main.scenario.s/with space';
     const req = buildRunScenarioRequest({ scenarioRid: ridWithSpecial });
     expect(req.path).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(ridWithSpecial)}/run`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(ridWithSpecial)}/runs`,
     );
   });
 
@@ -377,55 +379,49 @@ describe('VTX-043 Run status icon / tooltip', () => {
 });
 
 describe('VTX-043 Run response parsing', () => {
-  it('given_success_response_when_parse_then_returns_durationMs_and_immutable_true', () => {
-    const parsed = parseScenarioRunSuccessResponse({
-      status: 'success',
-      durationMs: 3210,
-      scenario: { rid: scenarioRid, name: 'Scenario A', immutable: true },
+  it('given_accepted_start_response_when_parse_then_returns_runRid_and_status', () => {
+    const parsed = parseScenarioRunAcceptedResponse({
+      status: 'pending',
+      runRid,
     });
     expect(parsed).toEqual({
-      durationMs: 3210,
-      scenario: { rid: scenarioRid, name: 'Scenario A', immutable: true },
+      status: 'pending',
+      runRid,
     });
   });
 
-  it('given_success_response_missing_immutable_when_parse_then_forces_immutable_true', () => {
-    // 后端 contract：sync run 200 OK 必然 freeze scenario；前端兜底以防
-    // 后端漏写字段。
-    const parsed = parseScenarioRunSuccessResponse({
-      status: 'success',
-      durationMs: 1000,
-      scenario: { rid: scenarioRid, name: 'Scenario A' },
+  it('given_running_start_response_when_parse_then_returns_running_status', () => {
+    const parsed = parseScenarioRunAcceptedResponse({
+      status: 'running',
+      runRid,
     });
-    expect(parsed.scenario.immutable).toBe(true);
+    expect(parsed.status).toBe('running');
   });
 
-  it('given_success_response_missing_durationMs_when_parse_then_throws', () => {
+  it('given_accepted_response_missing_runRid_when_parse_then_throws', () => {
     expect(() =>
-      parseScenarioRunSuccessResponse({
-        status: 'success',
-        scenario: { rid: scenarioRid, name: 'Scenario A' },
-      } as unknown as Parameters<typeof parseScenarioRunSuccessResponse>[0]),
-    ).toThrow(/durationMs/);
+      parseScenarioRunAcceptedResponse({
+        status: 'pending',
+      } as unknown as Parameters<typeof parseScenarioRunAcceptedResponse>[0]),
+    ).toThrow(/runRid/);
   });
 
-  it('given_success_response_missing_scenario_when_parse_then_throws', () => {
+  it('given_accepted_response_with_blank_runRid_when_parse_then_throws', () => {
     expect(() =>
-      parseScenarioRunSuccessResponse({
-        status: 'success',
-        durationMs: 1000,
-      } as unknown as Parameters<typeof parseScenarioRunSuccessResponse>[0]),
-    ).toThrow(/scenario/);
-  });
-
-  it('given_negative_durationMs_when_parse_then_throws', () => {
-    expect(() =>
-      parseScenarioRunSuccessResponse({
-        status: 'success',
-        durationMs: -100,
-        scenario: { rid: scenarioRid, name: 'Scenario A' },
+      parseScenarioRunAcceptedResponse({
+        status: 'pending',
+        runRid: '   ',
       }),
-    ).toThrow(/durationMs/);
+    ).toThrow(/runRid/);
+  });
+
+  it('given_accepted_response_with_terminal_status_when_parse_then_throws', () => {
+    expect(() =>
+      parseScenarioRunAcceptedResponse({
+        status: 'success',
+        runRid,
+      } as unknown as Parameters<typeof parseScenarioRunAcceptedResponse>[0]),
+    ).toThrow(/status/);
   });
 
   it('given_error_response_with_message_when_parseError_then_returns_message', () => {
@@ -472,9 +468,9 @@ describe('VTX-043 immutable transition helper', () => {
 });
 
 describe('VTX-043 end-to-end sync run flow', () => {
-  // 模拟 spec BDD #1 / #2 / #3 的完整路径：用户点 Run → 状态变 running →
-  // 200 OK → 状态变 success + scenario freeze；以及 error 路径。
-  it('given_scenario_with_action_and_override_when_run_success_then_scenario_marked_immutable_and_duration_recorded', () => {
+  // 模拟已挂载合同：用户点 Run → POST /runs 返回 202 {runRid,status} →
+  // GET /runs/{runRid} polling 返回终态；以及 error 路径。
+  it('given_scenario_with_action_and_override_when_run_accepted_then_poll_route_is_used_for_terminal_state', () => {
     let scenario: ScenarioRef = mutableScenario();
     let runMap = createScenarioRunMap();
     const t0 = 1700000000000;
@@ -486,27 +482,36 @@ describe('VTX-043 end-to-end sync run flow', () => {
     const req = buildRunScenarioRequest({ scenarioRid: scenario.rid });
     expect(req.method).toBe('POST');
     expect(req.path).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(scenario.rid)}/run`,
+      `/api/vertex/v1/scenarios/${encodeURIComponent(scenario.rid)}/runs`,
     );
 
     // 3. UI 标记 running
     runMap = applyScenarioRunStart(runMap, scenario.rid, t0);
     expect(getScenarioRunStatus(runMap, scenario.rid)).toBe('running');
 
-    // 4. 后端返回 200 OK + parse
-    const success = parseScenarioRunSuccessResponse({
-      status: 'success',
-      durationMs: 1850,
-      scenario: { rid: scenario.rid, name: scenario.name, immutable: true },
+    // 4. 后端返回 202 Accepted + parse
+    const accepted = parseScenarioRunAcceptedResponse({
+      status: 'pending',
+      runRid,
+    });
+    expect(accepted).toEqual({ status: 'pending', runRid });
+
+    // 5. 终态来自 mounted GET /runs/{runRid} polling，而不是 POST 响应。
+    const getReq = buildGetRunScenarioRequest({
+      scenarioRid: scenario.rid,
+      runRid: accepted.runRid,
+    });
+    expect(getReq).toEqual({
+      method: 'GET',
+      path: `/api/vertex/v1/scenarios/${encodeURIComponent(scenario.rid)}/runs/${encodeURIComponent(runRid)}`,
     });
 
-    // 5. apply success + freeze scenario
-    runMap = applyScenarioRunSuccess(runMap, scenario.rid, success.durationMs);
-    scenario = immutableScenario(success.scenario);
+    // 6. poll helper 返回 terminal record 后，UI helper 才可标 success + freeze.
+    runMap = applyScenarioRunSuccess(runMap, scenario.rid, 1850);
+    scenario = immutableScenario(scenario);
     expect(getScenarioRunStatus(runMap, scenario.rid)).toBe('success');
     expect(scenario.immutable).toBe(true);
 
-    // 6. tooltip 显示执行耗时
     expect(getScenarioRunStatusTooltip(runMap, scenario.rid)).toBe(
       'Run completed in 1.9 s',
     );

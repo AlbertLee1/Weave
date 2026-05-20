@@ -1,0 +1,27 @@
+{
+  "project": "Weave Self-Iteration CI Repair",
+  "branchName": "ralph/self-iteration-20260520-002052",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260520-002052. The previous active PRD had all stories passing and was archived under scripts/ralph/archive/self-iteration-20260520-013645/. Fresh GitHub health at 2026-05-20 01:35 CST: latest main CI run 26109104836 completed success and latest main Codespaces prebuild 26109104180 completed success. The latest branch pull_request CI run 26113686224 completed failure in the Go golangci-lint step. Local reproduction with the CI-pinned linter version failed on the same two new gocritic issues in sdk/go/vertex.go, so this PRD stays focused on repairing branch CI before adding new OSv2 capability work.",
+  "userStories": [
+    {
+      "id": "SELF-471",
+      "name": "Clear Go SDK Vertex lint regressions",
+      "phase": "Fresh CI Health",
+      "active": true,
+      "priority": 1,
+      "passes": true,
+      "dependencies": [],
+      "description": "Repair the branch PR CI failure by clearing the new gocritic findings in the Go Vertex SDK while preserving the mounted scenario-run route behavior added by the previous stories.",
+      "bdd_acceptance": [
+        "Given CI runs golangci-lint v2.11.4 with gocritic enabled, When it scans the Go SDK package, Then sdk/go/vertex.go has no import shadow finding for the URL package.",
+        "Given the Go SDK performs a JSON GET request, When the request has no body, Then it uses the standard http.NoBody sentinel expected by the lint contract.",
+        "Given Vertex scenario-run SDK route tests run, When the lint-only repair is applied, Then the scenario run, polling, and route contract behavior remains unchanged."
+      ],
+      "quality_gates": [
+        "`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m ./sdk/go`",
+        "`go test ./sdk/go -run TestScenarios -count=1`",
+        "`git diff --check`"
+      ]
+    }
+  ]
+}

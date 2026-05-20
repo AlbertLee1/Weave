@@ -54,11 +54,9 @@ def main() -> int:
     overlaid = client.objects.get("aviation", "Airport", "JFK", scenario_id=scenario["rid"])
     print(f"overlaid JFK.capacity = {overlaid.get('properties', {}).get('capacity')}")
 
-    # Step 7 — run the scenario, streaming SSE events.
-    for event in client.vertex.scenarios.run(scenario["rid"], streaming=True):
-        print(f"  run-event: {event}")
-        if event.get("kind") in {"completed", "failed"}:
-            break
+    # Step 7 — start the scenario run and poll until a terminal record.
+    run = client.vertex.scenarios.run(scenario["rid"])
+    print(f"scenario run {run.get('rid')} ended with {run.get('status')}")
 
     # Step 8 — apply (commented by default; uncomment to merge into main).
     # client.vertex.scenarios.apply_to_main(scenario["rid"])

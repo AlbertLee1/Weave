@@ -205,6 +205,7 @@ const zhCN = {
       inputSnapshot: '输入快照',
       functionLogs: '函数日志 ({{count}})',
       partialEdits: '部分编辑 ({{count}})',
+      noPartialEdits: '运行记录中没有部分编辑',
     },
     scenarioPane: {
       run: '运行',

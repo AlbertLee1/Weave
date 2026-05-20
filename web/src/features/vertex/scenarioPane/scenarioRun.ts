@@ -1,29 +1,30 @@
-// VTX-043 — Scenario Run（同步路径，单 Function）的纯逻辑层。
+// VTX-043 — Scenario Run（单 Function start-and-poll 路径）的纯逻辑层。
 //
 // 调研报告 §4.4 / 附录 B：用户在 Scenario Pane 点 Run，前端 POST
-// /api/vertex/v1/scenarios/{rid}/run。后端 fork ontology + 跑 function +
-// 把 edits 写入 scenario_edits，200 OK 返回 {durationMs, scenario:
-// {..., immutable:true}}。前端把 scenario 列状态变绿 ✓ + 显示执行耗时
-// + 标记 scenario.immutable=true。function 抛错则返回 error payload，
-// 前端列状态变红 × + tooltip 显示错误消息（scenario 不冻结，让用户改
-// 完 override 重试）。
+// /api/vertex/v1/scenarios/{rid}/runs。已挂载后端合同返回 202
+// {runRid,status}；终态由 GET /runs/{runRid} polling 返回 persisted run
+// record。前端收到终态 success 后把 scenario 列状态变绿 ✓ + 显示执行
+// 耗时 + 标记 scenario.immutable=true。function 抛错则返回 error payload，
+// 前端列状态变红 × + tooltip 显示错误消息。
 //
 // 本模块交付：
 //   - 每个 scenario 一份 ScenarioRunState（status / startedAt /
 //     durationMs / error），map 形 Record<scenarioRid, state>
 //   - 状态机迁移 helper：applyScenarioRunStart / Success / Error
-//   - POST /run 请求构造 buildRunScenarioRequest
-//   - 响应解析 parseScenarioRunSuccessResponse / parseScenarioRunErrorResponse
+//   - POST /runs 请求构造 buildRunScenarioRequest
+//   - 202 响应解析 parseScenarioRunAcceptedResponse
+//   - GET /runs/{runRid} 请求构造 buildGetRunScenarioRequest
+//   - error payload 解析 parseScenarioRunErrorResponse
 //   - preflight 校验 validateScenarioRunRequest +
 //     assertScenarioRunnable（throws ScenarioRunNotEditableError）
 //   - Run 按钮 enabled/disabled 决策 resolveRunButtonState
 //   - status icon / tooltip 派生 getScenarioRunStatusIcon /
 //     getScenarioRunStatusTooltip
-//   - immutable 转换 immutableScenario —— 200 OK 后把 scenario freeze
+//   - immutable 转换 immutableScenario —— terminal success 后把 scenario freeze
 //
-// React 接线层负责发 fetch、把 response 喂给 parse* + apply* helper、
-// 在 Run 列单元格里按 status 渲染 spinner/✓/×/—、tooltip 显示 duration
-// 或错误消息。
+// React 接线层负责发 fetch、把 accepted response 喂给 parse* helper、
+// 再交给 polling helper 读取 terminal record；Run 列单元格按 status 渲染
+// spinner/✓/×/—，tooltip 显示 duration 或错误消息。
 
 import type { ScenarioRef } from './scenarioPane';
 
@@ -44,10 +45,14 @@ export interface RunScenarioApiRequest {
   body: Record<string, never>;
 }
 
-export interface RunScenarioSuccessResponse {
-  status: 'success';
-  durationMs: number;
-  scenario: ScenarioRef;
+export interface RunScenarioStatusApiRequest {
+  method: 'GET';
+  path: string;
+}
+
+export interface RunScenarioAcceptedResponse {
+  status: 'pending' | 'running';
+  runRid: string;
 }
 
 export interface RunScenarioErrorResponse {
@@ -55,9 +60,9 @@ export interface RunScenarioErrorResponse {
   message?: string;
 }
 
-export interface ParsedRunScenarioSuccess {
-  durationMs: number;
-  scenario: ScenarioRef;
+export interface ParsedRunScenarioAccepted {
+  status: RunScenarioAcceptedResponse['status'];
+  runRid: string;
 }
 
 export interface ParsedRunScenarioError {
@@ -199,14 +204,30 @@ export interface BuildRunScenarioRequestInput {
   scenarioRid: string;
 }
 
+export interface BuildGetRunScenarioRequestInput {
+  scenarioRid: string;
+  runRid: string;
+}
+
 export function buildRunScenarioRequest(
   input: BuildRunScenarioRequestInput,
 ): RunScenarioApiRequest {
   const scenarioRid = requireNonBlank(input.scenarioRid, 'scenarioRid');
   return {
     method: 'POST',
-    path: `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/run`,
+    path: `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs`,
     body: {},
+  };
+}
+
+export function buildGetRunScenarioRequest(
+  input: BuildGetRunScenarioRequestInput,
+): RunScenarioStatusApiRequest {
+  const scenarioRid = requireNonBlank(input.scenarioRid, 'scenarioRid');
+  const runRid = requireNonBlank(input.runRid, 'runRid');
+  return {
+    method: 'GET',
+    path: `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}`,
   };
 }
 
@@ -302,28 +323,23 @@ export function getScenarioRunStatusTooltip(
   return `Run completed in ${formatDuration(state.durationMs)}`;
 }
 
-// parseScenarioRunSuccessResponse —— 后端 200 OK payload contract：
-// {status:'success', durationMs:number, scenario:{rid,name,immutable?}}。
-// scenario.immutable 缺失视为 true（sync run 200 OK 必然 freeze），防
-// 后端字段漂移。
-export function parseScenarioRunSuccessResponse(
-  response: RunScenarioSuccessResponse,
-): ParsedRunScenarioSuccess {
-  if (typeof response.durationMs !== 'number' || !Number.isFinite(response.durationMs)) {
-    throw new Error('durationMs is required');
+// parseScenarioRunAcceptedResponse —— mounted POST /runs contract:
+// 202 Accepted {status:'pending'|'running', runRid}. Terminal success/failure
+// must come from GET /runs/{runRid}, not the POST response.
+export function parseScenarioRunAcceptedResponse(
+  response: RunScenarioAcceptedResponse,
+): ParsedRunScenarioAccepted {
+  if (typeof response.runRid !== 'string') {
+    throw new Error('runRid is required');
   }
-  if (response.durationMs < 0) {
-    throw new Error('durationMs must be non-negative');
+  const runRid = response.runRid.trim();
+  if (runRid.length === 0) {
+    throw new Error('runRid is required');
   }
-  if (!response.scenario || typeof response.scenario.rid !== 'string') {
-    throw new Error('scenario is required');
+  if (response.status !== 'pending' && response.status !== 'running') {
+    throw new Error('status must be pending or running');
   }
-  const scenario: ScenarioRef = {
-    rid: response.scenario.rid,
-    name: response.scenario.name,
-    immutable: response.scenario.immutable === false ? false : true,
-  };
-  return { durationMs: response.durationMs, scenario };
+  return { status: response.status, runRid };
 }
 
 export function parseScenarioRunErrorResponse(
@@ -333,7 +349,7 @@ export function parseScenarioRunErrorResponse(
   return { message: raw.length > 0 ? raw : 'Scenario run failed' };
 }
 
-// immutableScenario —— 200 OK 后把 scenario.immutable 翻为 true 的
+// immutableScenario —— terminal success 后把 scenario.immutable 翻为 true 的
 // 工具函数。返回新对象，不 mutate 入参。
 export function immutableScenario(scenario: ScenarioRef): ScenarioRef {
   return { ...scenario, immutable: true };

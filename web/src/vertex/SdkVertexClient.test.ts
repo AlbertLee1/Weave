@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { VertexClient, type RunEvent } from '../../../sdk/typescript/src/vertex';
+import {
+  VertexClient,
+  VertexScenarioRunPollingAbortedError,
+  VertexScenarioRunPollingTimeoutError,
+} from '../../../sdk/typescript/src/vertex';
 
 function mockJSONFetch(body: unknown, init: ResponseInit = {}) {
   return vi.fn<typeof fetch>(async () =>
@@ -7,24 +11,6 @@ function mockJSONFetch(body: unknown, init: ResponseInit = {}) {
       status: 200,
       headers: { 'content-type': 'application/json' },
       ...init,
-    }),
-  );
-}
-
-function mockSSEFetch(events: RunEvent[]) {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(ctl) {
-      for (const e of events) {
-        ctl.enqueue(encoder.encode(`data: ${JSON.stringify(e)}\n\n`));
-      }
-      ctl.close();
-    },
-  });
-  return vi.fn<typeof fetch>(async () =>
-    new Response(stream, {
-      status: 200,
-      headers: { 'content-type': 'text/event-stream' },
     }),
   );
 }
@@ -50,29 +36,206 @@ describe('VertexClient (VTX-108)', () => {
     expect((call[1] as RequestInit).method).toBe('POST');
   });
 
-  it('scenarios.run returns a ScenarioRun when streaming is not requested', async () => {
-    const fetchImpl = mockJSONFetch({
-      scenarioRunRid: 'ri.vertex.main.scenario-run.r1',
-      status: 'succeeded',
-      durationMs: 123,
-    });
+  it('scenarios.startRun returns the accepted run RID from the mounted POST route', async () => {
+    const fetchImpl = mockJSONFetch(
+      {
+        runRid: 'ri.vertex.main.scenario-run.r1',
+        status: 'pending',
+      },
+      { status: 202 },
+    );
     const client = new VertexClient({ baseUrl: 'http://x', fetch: fetchImpl as unknown as typeof fetch });
-    const r = await client.scenarios.run('ri.vertex.main.scenario.s1');
-    expect((r as { status: string }).status).toBe('succeeded');
+    const accepted = await client.scenarios.startRun('ri.vertex.main.scenario.s1');
+    expect(accepted).toEqual({
+      runRid: 'ri.vertex.main.scenario-run.r1',
+      status: 'pending',
+    });
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'http://x/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs',
+    );
+    expect((fetchImpl.mock.calls[0][1] as RequestInit).method).toBe('POST');
   });
 
-  it('scenarios.run returns an AsyncIterable when streaming is requested', async () => {
-    const fetchImpl = mockSSEFetch([
-      { kind: 'progress', percent: 25 },
-      { kind: 'progress', percent: 100 },
-      { kind: 'completed', scenarioRunRid: 'ri.vertex.main.scenario-run.r2' },
-    ]);
+  it('scenarios.run starts the run and polls the mounted GET route until a terminal record', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            runRid: 'ri.vertex.main.scenario-run.r1',
+            status: 'pending',
+          }),
+          { status: 202 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            rid: 'ri.vertex.main.scenario-run.r1',
+            scenarioRid: 'ri.vertex.main.scenario.s1',
+            status: 'pending',
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            rid: 'ri.vertex.main.scenario-run.r1',
+            scenarioRid: 'ri.vertex.main.scenario.s1',
+            status: 'succeeded',
+            checkpoint: {
+              runRid: 'ri.vertex.main.scenario-run.r1',
+              scenarioRid: 'ri.vertex.main.scenario.s1',
+              status: 'succeeded',
+              attemptsById: { score: 1 },
+              updatedAt: '2026-05-20T00:00:00Z',
+            },
+          }),
+          { status: 200 },
+        ),
+      );
     const client = new VertexClient({ baseUrl: 'http://x', fetch: fetchImpl as unknown as typeof fetch });
-    const iter = (await client.scenarios.run('ri.vertex.main.scenario.s1', { streaming: true })) as AsyncIterable<RunEvent>;
-    const collected: RunEvent[] = [];
-    for await (const ev of iter) collected.push(ev);
-    expect(collected.length).toBe(3);
-    expect(collected[2].kind).toBe('completed');
+    const result = await client.scenarios.run('ri.vertex.main.scenario.s1', {
+      intervalMs: 0,
+      timeoutMs: 1000,
+    });
+
+    expect(result.status).toBe('succeeded');
+    expect(result.rid).toBe('ri.vertex.main.scenario-run.r1');
+    expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([
+      'http://x/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs',
+      'http://x/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs/ri.vertex.main.scenario-run.r1',
+      'http://x/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs/ri.vertex.main.scenario-run.r1',
+    ]);
+    expect((fetchImpl.mock.calls[0][1] as RequestInit).headers).not.toMatchObject({
+      accept: 'text/event-stream',
+    });
+    expect((fetchImpl.mock.calls[1][1] as RequestInit).method).toBe('GET');
+  });
+
+  it('scenarios.run rejects streaming because no scenario-run stream route is mounted', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const client = new VertexClient({ baseUrl: 'http://x', fetch: fetchImpl as unknown as typeof fetch });
+
+    await expect(
+      client.scenarios.run('ri.vertex.main.scenario.s1', { streaming: true }),
+    ).rejects.toThrow(/streaming.*not mounted/i);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('scenarios.waitForRun polls the documented GET run route until a terminal failed record', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            rid: 'ri.vertex.main.scenario-run.r1',
+            scenarioRid: 'ri.vertex.main.scenario.s1',
+            status: 'pending',
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            rid: 'ri.vertex.main.scenario-run.r1',
+            scenarioRid: 'ri.vertex.main.scenario.s1',
+            status: 'failed',
+            error: 'scoring failed',
+            checkpoint: {
+              runRid: 'ri.vertex.main.scenario-run.r1',
+              scenarioRid: 'ri.vertex.main.scenario.s1',
+              status: 'failed',
+              attemptsById: { score: 3 },
+              error: 'scoring failed',
+              updatedAt: '2026-05-20T00:00:00Z',
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+    const client = new VertexClient({ baseUrl: 'http://x', fetch: fetchImpl as unknown as typeof fetch });
+
+    const result = await client.scenarios.waitForRun(
+      'ri.vertex.main.scenario.s1',
+      'ri.vertex.main.scenario-run.r1',
+      { intervalMs: 0, timeoutMs: 1000 },
+    );
+
+    expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([
+      'http://x/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs/ri.vertex.main.scenario-run.r1',
+      'http://x/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs/ri.vertex.main.scenario-run.r1',
+    ]);
+    expect((fetchImpl.mock.calls[0][1] as RequestInit).method).toBe('GET');
+    expect(result.status).toBe('failed');
+    expect(result.error).toBe('scoring failed');
+    expect(result.checkpoint?.attemptsById?.score).toBe(3);
+  });
+
+  it('scenarios.waitForRun returns canceled terminal records without assuming success', async () => {
+    const fetchImpl = mockJSONFetch({
+      rid: 'ri.vertex.main.scenario-run.r1',
+      scenarioRid: 'ri.vertex.main.scenario.s1',
+      status: 'canceled',
+      error: 'operator canceled',
+      checkpoint: {
+        runRid: 'ri.vertex.main.scenario-run.r1',
+        scenarioRid: 'ri.vertex.main.scenario.s1',
+        status: 'canceled',
+        attemptsById: {},
+        error: 'operator canceled',
+        updatedAt: '2026-05-20T00:00:00Z',
+      },
+    });
+    const client = new VertexClient({ baseUrl: 'http://x', fetch: fetchImpl as unknown as typeof fetch });
+
+    const result = await client.scenarios.waitForRun(
+      'ri.vertex.main.scenario.s1',
+      'ri.vertex.main.scenario-run.r1',
+      { intervalMs: 0 },
+    );
+
+    expect(result.status).toBe('canceled');
+    expect(result.error).toBe('operator canceled');
+  });
+
+  it('scenarios.waitForRun reports timeout and abort without leaking timers', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      new Response(
+        JSON.stringify({
+          rid: 'ri.vertex.main.scenario-run.r1',
+          scenarioRid: 'ri.vertex.main.scenario.s1',
+          status: 'running',
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = new VertexClient({ baseUrl: 'http://x', fetch: fetchImpl as unknown as typeof fetch });
+
+    const timedOut = client.scenarios.waitForRun('ri.vertex.main.scenario.s1', 'ri.vertex.main.scenario-run.r1', {
+      intervalMs: 1000,
+      timeoutMs: 25,
+    });
+    const timedOutExpectation = expect(timedOut).rejects.toBeInstanceOf(VertexScenarioRunPollingTimeoutError);
+    await vi.advanceTimersByTimeAsync(25);
+    await timedOutExpectation;
+    expect(vi.getTimerCount()).toBe(0);
+
+    const controller = new AbortController();
+    const aborted = client.scenarios.waitForRun('ri.vertex.main.scenario.s1', 'ri.vertex.main.scenario-run.r1', {
+      intervalMs: 1000,
+      timeoutMs: 60_000,
+      signal: controller.signal,
+    });
+    const abortedExpectation = expect(aborted).rejects.toBeInstanceOf(VertexScenarioRunPollingAbortedError);
+    await vi.advanceTimersByTimeAsync(1);
+    controller.abort();
+    await abortedExpectation;
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
   });
 
   it('scenarios.applyToMain POSTs to /apply and returns the new ontologyCommit', async () => {

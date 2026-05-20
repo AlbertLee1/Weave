@@ -2,19 +2,16 @@
 
 Adds ``client.vertex.scenarios.create / run / apply_to_main`` plus a
 ``scenario_id`` parameter on :meth:`weave_client.objects.ObjectsAPI.get`.
-``run()`` returns a generator that yields progress dicts parsed from the
-server's SSE stream, matching the BDD acceptance criteria in PRD VTX-109.
-
-The Vertex endpoints themselves are owned by VTX-044 in another stream;
-this module is a thin pass-through that documents the contract and works
-the moment the server side ships.
+``run()`` starts a scenario run and polls the persisted run record until it
+reaches a terminal status. The mounted server contract returns
+``{"runRid": "...", "status": "pending"}`` from ``POST /runs``; clients then
+read ``GET /runs/{runRid}``.
 """
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.request
-from typing import Any, Dict, Generator, Iterable, Optional, TYPE_CHECKING
+import time
+import urllib.parse
+from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:  # avoid runtime circular import
     from .client import Client
@@ -56,90 +53,89 @@ class ScenariosAPI:
         self,
         scenario_rid: str,
         *,
-        streaming: bool = True,
-    ) -> "Generator[Dict[str, Any], None, None] | Dict[str, Any]":
+        streaming: bool = False,
+        poll_interval: float = 1.0,
+        timeout: Optional[float] = 60.0,
+        sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> Dict[str, Any]:
         """Run a scenario.
 
-        When ``streaming=True`` (the default), returns a generator yielding
-        SSE event dicts (``{"kind": "progress", "percent": 25}`` etc.).
-        When ``streaming=False``, blocks for the terminal Run record and
-        returns it as a dict.
+        Blocks for the terminal Run record by starting the run and polling the
+        mounted ``GET /runs/{runRid}`` route. Streaming is rejected until a
+        stream endpoint is mounted and documented.
         """
-        path = f"/api/vertex/v1/scenarios/{scenario_rid}/run"
-        if not streaming:
-            return self._client._request("POST", path, json_body={}) or {}
-        return _sse_generator(self._client.base_url + path, headers=self._client._headers())
+        if streaming:
+            raise NotImplementedError("vertex.scenarios.run streaming is not mounted; use polling")
+        accepted = self.start_run(scenario_rid)
+        run_rid = str(accepted.get("runRid", "")).strip()
+        if not run_rid:
+            raise RuntimeError("vertex.scenarios.run start response missing runRid")
+        return self.wait_for_run(
+            scenario_rid,
+            run_rid,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            sleep=sleep,
+            monotonic=monotonic,
+        )
 
+    def start_run(self, scenario_rid: str) -> Dict[str, Any]:
+        """Start a scenario run and return ``{"runRid", "status"}``."""
+        path = f"/api/vertex/v1/scenarios/{scenario_rid}/runs"
+        return self._client._request("POST", path, json_body={}) or {}
 
-def _sse_generator(url: str, *, headers: Dict[str, str]) -> Generator[Dict[str, Any], None, None]:
-    """Open url, POST empty body, parse SSE event blocks into dicts.
+    def get_run(self, scenario_rid: str, run_rid: str) -> Dict[str, Any]:
+        """Fetch a persisted scenario-run record."""
+        path = _scenario_run_record_path(scenario_rid, run_rid)
+        return self._client._request("GET", path, json_body=None) or {}
 
-    This intentionally does not run through Transport.request: SSE needs a
-    streaming response and Transport.request consumes the body eagerly.
-    """
-    req = urllib.request.Request(
-        url=url,
-        data=b"{}",
-        method="POST",
-        headers={**headers, "Accept": "text/event-stream", "Content-Type": "application/json"},
-    )
-    try:
-        resp = urllib.request.urlopen(req)
-    except urllib.error.HTTPError as e:  # pragma: no cover - server may 404 in dev
-        raise RuntimeError(f"vertex.scenarios.run: {e.code} {e.reason}")
-    buf = ""
-    try:
-        for chunk in iter(lambda: resp.read(4096), b""):
-            buf += chunk.decode("utf-8", errors="replace")
-            while True:
-                idx = buf.find("\n\n")
-                if idx == -1:
-                    break
-                block = buf[:idx]
-                buf = buf[idx + 2 :]
-                data_lines = [
-                    line[len("data:") :].lstrip()
-                    for line in block.splitlines()
-                    if line.startswith("data:")
-                ]
-                if not data_lines:
-                    continue
-                try:
-                    yield json.loads("\n".join(data_lines))
-                except json.JSONDecodeError:
-                    continue
-    finally:
-        resp.close()
+    def wait_for_run(
+        self,
+        scenario_rid: str,
+        run_rid: str,
+        *,
+        poll_interval: float = 1.0,
+        timeout: Optional[float] = 60.0,
+        sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> Dict[str, Any]:
+        """Poll a scenario run until it reaches a terminal status.
 
-
-# ---------------------------------------------------------------------------
-# Test helper — drives the generator off an injected raw iterable so the unit
-# test suite can hit the parser without a live server. Not part of the public
-# API; kept lower-cased to discourage external use.
-# ---------------------------------------------------------------------------
-
-
-def _parse_sse_stream(raw_chunks: Iterable[bytes]) -> Generator[Dict[str, Any], None, None]:
-    buf = ""
-    for chunk in raw_chunks:
-        buf += chunk.decode("utf-8", errors="replace")
+        Returns failed and canceled terminal records as-is so callers can inspect
+        ``error`` and ``checkpoint`` details instead of treating completion as
+        success-only.
+        """
+        deadline = None if timeout is None else monotonic() + max(0.0, timeout)
+        interval = max(0.0, poll_interval)
         while True:
-            idx = buf.find("\n\n")
-            if idx == -1:
-                break
-            block = buf[:idx]
-            buf = buf[idx + 2 :]
-            data_lines = [
-                line[len("data:") :].lstrip()
-                for line in block.splitlines()
-                if line.startswith("data:")
-            ]
-            if not data_lines:
-                continue
-            try:
-                yield json.loads("\n".join(data_lines))
-            except json.JSONDecodeError:
-                continue
+            if deadline is not None and monotonic() >= deadline:
+                raise TimeoutError(f"vertex.scenarios.wait_for_run timed out after {timeout} seconds")
+            run = self.get_run(scenario_rid, run_rid)
+            if _is_terminal_run_status(str(run.get("status", ""))):
+                return run
+            if deadline is not None:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"vertex.scenarios.wait_for_run timed out after {timeout} seconds")
+                delay = min(interval, remaining)
+            else:
+                delay = interval
+            if delay > 0:
+                sleep(delay)
+
+
+def _scenario_run_record_path(scenario_rid: str, run_rid: str) -> str:
+    return (
+        "/api/vertex/v1/scenarios/"
+        + urllib.parse.quote(scenario_rid, safe="")
+        + "/runs/"
+        + urllib.parse.quote(run_rid, safe="")
+    )
+
+
+def _is_terminal_run_status(status: str) -> bool:
+    return status in {"succeeded", "failed", "canceled"}
 
 
 __all__ = ["VertexAPI", "ScenariosAPI"]
