@@ -50,31 +50,36 @@ func (t *StdioTransport) Run(ctx context.Context) error {
 		if len(line) == 0 {
 			continue
 		}
-		req, parseErr := ParseRequest(line)
+		envelope, parseErr := ParseRequestEnvelope(line)
 		if parseErr != nil {
 			// Sniff out any id from the raw bytes so the response can echo it.
-			var sniff struct {
-				ID json.RawMessage `json:"id"`
-			}
-			_ = json.Unmarshal(line, &sniff)
-			rpcErr, _ := parseErr.(*RPCError)
-			code := CodeParseError
-			msg := parseErr.Error()
-			if rpcErr != nil {
-				code = rpcErr.Code
-				msg = rpcErr.Message
-			}
-			if err := t.writeResponse(NewErrorResponse(sniff.ID, code, msg, nil)); err != nil {
+			code, msg := rpcErrorCodeAndMessage(parseErr)
+			if err := t.writeResponse(NewErrorResponse(sniffRequestID(line), code, msg, nil)); err != nil {
 				return err
 			}
 			continue
 		}
-		resp := t.srv.Handle(ctx, req)
-		if resp == nil {
-			// Notification: no reply line.
+
+		responses := make([]*Response, 0, len(envelope.Items))
+		for _, item := range envelope.Items {
+			if item.Error != nil {
+				responses = append(responses, item.Error)
+				continue
+			}
+			resp := t.srv.Handle(ctx, item.Request)
+			if resp != nil {
+				responses = append(responses, resp)
+			}
+		}
+		if len(responses) == 0 {
+			// Notification-only envelopes produce no reply line.
 			continue
 		}
-		if err := t.writeResponse(resp); err != nil {
+		payload := any(responses[0])
+		if envelope.Batch {
+			payload = responses
+		}
+		if err := t.writeJSONLine(payload); err != nil {
 			return err
 		}
 	}
@@ -88,7 +93,11 @@ func (t *StdioTransport) Run(ctx context.Context) error {
 // Each response is followed by a newline so the peer can use a line
 // scanner symmetric to ours.
 func (t *StdioTransport) writeResponse(resp *Response) error {
-	buf, err := json.Marshal(resp)
+	return t.writeJSONLine(resp)
+}
+
+func (t *StdioTransport) writeJSONLine(payload any) error {
+	buf, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal response: %w", err)
 	}
