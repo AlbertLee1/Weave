@@ -218,6 +218,11 @@ func (h *StreamIngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		req.Edits[i].ObjectType = objectType
 	}
 
+	if apiErr := validateIngestEditEnvelope(req.Edits); apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
+	}
+
 	if h.metadataValidator != nil {
 		if apiErr := h.metadataValidator.ValidateIngestEdits(r.Context(), ontology, objectType, req.Edits); apiErr != nil {
 			apierror.WriteJSON(w, apiErr)
@@ -241,5 +246,42 @@ func (h *StreamIngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	httputil.WriteJSON(w, http.StatusOK, StreamIngestResponse{
 		BatchID:   batch.ID,
 		EditCount: len(batch.Edits),
+	})
+}
+
+func validateIngestEditEnvelope(edits []funnel.Edit) *apierror.APIError {
+	for i, edit := range edits {
+		fieldPrefix := fmt.Sprintf("edits[%d]", i)
+		switch edit.Type {
+		case funnel.EditTypeCreate, funnel.EditTypeModify, funnel.EditTypeDelete,
+			funnel.EditTypeLinkCreate, funnel.EditTypeLinkDelete:
+		default:
+			return invalidIngestEdit(fieldPrefix+".type",
+				fmt.Sprintf("%s.type must be one of CREATE, MODIFY, DELETE, LINK_CREATE, LINK_DELETE", fieldPrefix))
+		}
+
+		if edit.PrimaryKey == "" {
+			return invalidIngestEdit(fieldPrefix+".primaryKey",
+				fmt.Sprintf("%s.primaryKey is required", fieldPrefix))
+		}
+
+		if edit.Type == funnel.EditTypeLinkCreate || edit.Type == funnel.EditTypeLinkDelete {
+			if edit.LinkTypeRID == "" {
+				return invalidIngestEdit(fieldPrefix+".linkTypeRid",
+					fmt.Sprintf("%s.linkTypeRid is required", fieldPrefix))
+			}
+			if edit.TargetPrimaryKey == "" {
+				return invalidIngestEdit(fieldPrefix+".targetPrimaryKey",
+					fmt.Sprintf("%s.targetPrimaryKey is required", fieldPrefix))
+			}
+		}
+	}
+	return nil
+}
+
+func invalidIngestEdit(field, reason string) *apierror.APIError {
+	return apierror.NewInvalidParameter("InvalidEdit", map[string]string{
+		"field":  field,
+		"reason": reason,
 	})
 }
