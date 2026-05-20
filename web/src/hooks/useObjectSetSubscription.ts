@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 
 // US-501: events carry both the legacy view ({eventType, object}) and
 // the US-459 canonical view ({seq, type, rid, properties}) so consumers
@@ -54,16 +54,19 @@ export function useObjectSetSubscription(
   // Keep onEvent in a ref so reconnect logic always calls the latest
   // callback without triggering an effect re-run.
   const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
 
   const onStatusChangeRef = useRef(onStatusChange);
-  onStatusChangeRef.current = onStatusChange;
 
   // Track the last event ID for replay on reconnect.
   const lastEventIdRef = useRef<string>('');
 
   // Track backoff state across reconnections.
   const backoffRef = useRef(1000);
+
+  useLayoutEffect(() => {
+    onEventRef.current = onEvent;
+    onStatusChangeRef.current = onStatusChange;
+  }, [onEvent, onStatusChange]);
 
   const buildUrl = useCallback(
     (lastEventId: string) => {
