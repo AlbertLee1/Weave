@@ -13,7 +13,7 @@ The end-to-end flow:
 4. Append an edit to the Scenario
 5. Read the object with `X-Scenario-Id` (overlaid view)
 6. Aggregate across the Scenario
-7. Run the Scenario (SSE stream)
+7. Run the Scenario (start + poll)
 8. Apply the Scenario to main (or discard)
 
 Companion code lives at [`vertex-quickstart.py`](./vertex-quickstart.py).
@@ -115,10 +115,11 @@ curl -X POST "http://localhost:9117/api/vertex/v1/scenarios/$SCENARIO_RID/runs" 
   -H "Authorization: Bearer $API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{}'
-# Returns:
+# Start returns:
 #   {"runRid":"ri.vertex.main.scenario-run.<uuid>","status":"pending"}
 
 RUN_RID="ri.vertex.main.scenario-run.<uuid>"
+# Poll until status is succeeded, failed, or canceled:
 curl "http://localhost:9117/api/vertex/v1/scenarios/$SCENARIO_RID/runs/$RUN_RID" \
   -H "Authorization: Bearer $API_KEY"
 ```
@@ -162,9 +163,9 @@ c._request("POST", f"/api/vertex/v1/scenarios/{scen['rid']}/edits", json_body={
 overlaid = c.objects.get("aviation", "Airport", "JFK", scenario_id=scen["rid"])
 assert overlaid["properties"]["capacity"] == 50
 
-# Step 7 — run with SSE
-for event in c.vertex.scenarios.run(scen["rid"], streaming=True):
-    print(event)
+# Step 7 — run and wait for the terminal record
+run = c.vertex.scenarios.run(scen["rid"])
+print(run)
 
 # Step 8 — apply
 c.vertex.scenarios.apply_to_main(scen["rid"])
@@ -182,11 +183,8 @@ const scen = await v.scenarios.create({
   parentOntologyCommit: 'head',
 });
 
-// Stream Run events
-const events = await v.scenarios.run(scen.rid, { streaming: true });
-for await (const ev of events as AsyncIterable<RunEvent>) {
-  console.log(ev);
-}
+const run = await v.scenarios.run(scen.rid);
+console.log(run.status);
 
 await v.scenarios.applyToMain({ scenarioRid: scen.rid });
 ```
@@ -198,10 +196,8 @@ c := weavesdk.New("http://localhost:9117", os.Getenv("API_KEY"))
 scen, _ := c.Vertex.Scenarios.Create(ctx, weavesdk.ScenarioCreateInput{
     CaseStudyRID: caseStudyRID, Name: "snowstorm", ParentOntologyCommit: "head",
 })
-ch, _ := c.Vertex.Scenarios.Run(ctx, scen.RID, nil)
-for ev := range ch {
-    fmt.Println(ev.Kind)
-}
+run, _ := c.Vertex.Scenarios.Run(ctx, scen.RID, nil)
+fmt.Println(run.Status)
 c.Vertex.Scenarios.ApplyToMain(ctx, scen.RID)
 ```
 
@@ -213,5 +209,5 @@ c.Vertex.Scenarios.ApplyToMain(ctx, scen.RID)
 | ----------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
 | `404 ScenarioNotFound` on read with overlay | The Scenario RID does not exist or was archived       | Re-create or unarchive; or hit base without header   |
 | `409 ScenarioOntologyMismatch`              | `parentOntologyCommit` is from a different ontology    | Re-create the Scenario against the right ontology    |
-| SSE stream stalls then 200-EOF              | Run completed; the channel/iter just closes            | Always treat EOF as "done", not "error"              |
+| Run stays `pending` or `running`             | Scenario execution is still in flight                  | Keep polling `/runs/{runRid}` or use SDK `run()`     |
 | `403` on `/apply`                           | Caller lacks `vertex.scenario.apply` permission        | Grant the role or have an admin apply on your behalf |

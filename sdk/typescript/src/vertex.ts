@@ -1,11 +1,10 @@
 // VertexClient — TypeScript SDK surface for Weave Vertex (VTX-108).
 //
 // Mirrors the shape of the existing OmsClient module: a constructor that
-// takes a base URL + fetch impl, namespaced calls grouped by resource
-// (scenarios, graphs), and an AsyncIterable for SSE-streamed Run events.
-// The SSE endpoint and JSON schemas are owned by VTX-044 (other stream);
-// this module documents the contract and provides a transport that fails
-// fast if the server has not implemented it yet.
+// takes a base URL + fetch impl and namespaced calls grouped by resource
+// (scenarios, graphs). Scenario runs follow the mounted start-and-poll
+// contract: POST /runs accepts a run and GET /runs/{runRid} returns the
+// persisted lifecycle record.
 
 export interface VertexClientOptions {
   baseUrl?: string;
@@ -27,9 +26,8 @@ export interface Scenario {
   immutable: boolean;
 }
 
-export interface ScenarioRunOptions {
-  /** If true, returns an AsyncIterable of RunEvent. If false / omitted,
-   *  the call resolves with the terminal Run record once /runs completes. */
+export interface ScenarioRunOptions extends ScenarioRunPollOptions {
+  /** Scenario-run streaming is not mounted yet; true rejects without a request. */
   streaming?: boolean;
 }
 
@@ -39,25 +37,15 @@ export interface ScenarioRunPollOptions {
   signal?: AbortSignal;
 }
 
-export type RunEvent =
-  | { kind: 'progress'; percent: number }
-  | { kind: 'log'; line: string }
-  | { kind: 'retry'; activityId: string; attempt: number; error: string }
-  | { kind: 'completed'; scenarioRunRid: string }
-  | { kind: 'failed'; scenarioRunRid: string; error: string };
-
-export interface ScenarioRun {
-  scenarioRunRid?: string;
-  runRid?: string;
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled';
-  durationMs?: number;
-  error?: string;
+export interface ScenarioRunStartResponse {
+  runRid: string;
+  status: 'pending';
 }
 
 export interface ScenarioRunCheckpoint {
   runRid: string;
   scenarioRid: string;
-  status: ScenarioRun['status'];
+  status: ScenarioRunLifecycleStatus;
   completed?: string[];
   lastActivity?: string;
   attemptsById?: Record<string, number>;
@@ -68,13 +56,20 @@ export interface ScenarioRunCheckpoint {
 export interface ScenarioRunRecord {
   rid: string;
   scenarioRid: string;
-  status: ScenarioRun['status'];
+  status: ScenarioRunLifecycleStatus;
   error?: string;
   checkpoint?: ScenarioRunCheckpoint;
   startedAt?: string;
   completedAt?: string | null;
   createdAt?: string;
 }
+
+export type ScenarioRunLifecycleStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'canceled';
 
 export interface ApplyToMainInput {
   scenarioRid: string;
@@ -117,12 +112,10 @@ export class VertexClient {
   get scenarios() {
     return {
       create: (input: ScenarioCreateInput) => this.scenarioCreate(input),
-      run: <O extends ScenarioRunOptions>(
-        rid: string,
-        opts?: O,
-      ): O extends { streaming: true }
-        ? Promise<AsyncIterable<RunEvent>>
-        : Promise<ScenarioRun> => this.scenarioRun(rid, opts) as never,
+      startRun: (rid: string): Promise<ScenarioRunStartResponse> =>
+        this.scenarioStartRun(rid),
+      run: (rid: string, opts?: ScenarioRunOptions): Promise<ScenarioRunRecord> =>
+        this.scenarioRun(rid, opts),
       getRun: (scenarioRid: string, runRid: string): Promise<ScenarioRunRecord> =>
         this.scenarioGetRun(scenarioRid, runRid),
       waitForRun: (
@@ -145,21 +138,20 @@ export class VertexClient {
   private async scenarioRun(
     rid: string,
     opts?: ScenarioRunOptions,
-  ): Promise<ScenarioRun | AsyncIterable<RunEvent>> {
+  ): Promise<ScenarioRunRecord> {
+    if (opts?.streaming) {
+      throw new Error('Vertex SDK: scenario-run streaming is not mounted; use polling waitForRun');
+    }
+    const accepted = await this.scenarioStartRun(rid);
+    if (!accepted.runRid) {
+      throw new Error('Vertex SDK: scenario run start response is missing runRid');
+    }
+    return this.scenarioWaitForRun(rid, accepted.runRid, opts);
+  }
+
+  private async scenarioStartRun(rid: string): Promise<ScenarioRunStartResponse> {
     const path = '/api/vertex/v1/scenarios/' + encodeURIComponent(rid) + '/runs';
-    if (!opts?.streaming) {
-      return this.postJSON<ScenarioRun>(path, {});
-    }
-    const res = await this.fetchImpl(this.baseUrl + path, {
-      method: 'POST',
-      headers: { accept: 'text/event-stream' },
-      body: '{}',
-    });
-    if (!res.ok || !res.body) {
-      const text = res.body ? await res.text() : '';
-      throw new VertexHttpError(res.status, path, text);
-    }
-    return sseAsyncIterable(res.body);
+    return this.postJSON<ScenarioRunStartResponse>(path, {});
   }
 
   private async scenarioGetRun(scenarioRid: string, runRid: string): Promise<ScenarioRunRecord> {
@@ -238,7 +230,7 @@ export class VertexClient {
   }
 }
 
-function isTerminalScenarioRunStatus(status: ScenarioRun['status']): boolean {
+function isTerminalScenarioRunStatus(status: ScenarioRunLifecycleStatus): boolean {
   return status === 'succeeded' || status === 'failed' || status === 'canceled';
 }
 
@@ -270,35 +262,4 @@ function waitForPollDelay(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms);
     signal?.addEventListener('abort', onAbort, { once: true });
   });
-}
-
-// sseAsyncIterable parses an SSE response body into a stream of RunEvent.
-// Each event block ends in a blank line; data: lines accumulate into the
-// event payload. The wire format is locked by VTX-044 — keep this parser
-// minimal so it lines up with whatever EventSource shipping in the
-// frontend already negotiates.
-async function* sseAsyncIterable(body: ReadableStream<Uint8Array>): AsyncIterable<RunEvent> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf('\n\n')) !== -1) {
-      const block = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const dataLines = block
-        .split('\n')
-        .filter((l) => l.startsWith('data:'))
-        .map((l) => l.slice(5).trimStart());
-      if (dataLines.length === 0) continue;
-      try {
-        yield JSON.parse(dataLines.join('\n')) as RunEvent;
-      } catch {
-        // Drop malformed events — the run is best-effort observability.
-      }
-    }
-  }
 }

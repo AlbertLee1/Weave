@@ -1,0 +1,86 @@
+# Ralph Progress Log
+Started: Wed May 20 01:36:45 CST 2026
+
+Archived previous passing PRD:
+- scripts/ralph/archive/self-iteration-20260520-013645/prd.json
+- scripts/ralph/archive/self-iteration-20260520-013645/progress.txt
+
+Fresh health evidence:
+- main: `gh run list --branch main --limit 5` showed latest CI run 26109104836 success and latest Codespaces prebuild 26109104180 success.
+- branch: `gh run list --branch ralph/self-iteration-20260520-002052 --limit 5` showed pull_request CI run 26113686224 failure.
+- failed check: `gh run view 26113686224 --log-failed` showed Go golangci-lint failures:
+  - `sdk/go/vertex.go:138:2: importShadow: shadow of imported package 'url' (gocritic)`
+  - `sdk/go/vertex.go:276:14: httpNoBody: http.NoBody should be preferred to the nil request body (gocritic)`
+
+RED evidence:
+- `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m ./sdk/go`
+- Result: failed with the same two gocritic issues listed above.
+
+Codebase Patterns:
+- CI pins golangci-lint in `.github/workflows/ci.yml` and uses `only-new-issues: true`; local reproductions should use the same pinned version when the binary is not installed.
+- Go SDK Vertex scenario-run routes are covered in `sdk/go/vertex_test.go` and should stay aligned with `/api/vertex/v1/scenarios/{scenarioRid}/runs`.
+
+## Selected Story
+- `SELF-471` — Clear Go SDK Vertex lint regressions.
+
+## SELF-471 Evidence
+- Root cause: `sdk/go/vertex.go` imported `net/url` for path escaping, then introduced a local variable named `url` in `ScenariosService.Run`; the same file also used `nil` for a GET request body. The CI-pinned gocritic rules flag both as new issues on this branch.
+- GREEN:
+  - Renamed the local scenario-run request URL variable to `runURL`, preserving the existing `/api/vertex/v1/scenarios/{scenarioRid}/runs` route.
+  - Changed `Client.getJSON` to pass `http.NoBody` to `http.NewRequestWithContext` for GET requests.
+- Verification:
+  - `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m ./sdk/go` passed with `0 issues.`
+  - `go test ./sdk/go -run TestScenarios -count=1` passed.
+  - `git diff --check` passed.
+- Files changed:
+  - `sdk/go/vertex.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Reusable learning: when CI uses `only-new-issues`, local package-scoped lint with the pinned version is the fastest reliable reproduction for branch-only lint failures.
+
+
+## LLM review auto-fix context - 2026-05-20T11:48:20+08:00
+- PR: https://github.com/AlbertLee1/Weave/pull/39
+- Branch: ralph/self-iteration-20260520-002052
+- Reviewed HEAD: 93cd5dae020d
+- Review status: request_changes
+- Summary: Request changes: local verifier metadata is green, but the PR still models the mounted /runs start route as SSE/terminal in public SDK and web helpers, which breaks real scenario-run clients.
+- Blocking findings:
+```json
+[
+  {
+    "severity": "critical",
+    "file": "sdk/typescript/src/vertex.ts",
+    "line": 149,
+    "issue": "scenarios.run now targets POST /api/vertex/v1/scenarios/{scenarioRid}/runs but still treats that route as both an SSE stream source and, for the default non-streaming path, a terminal run result. The mounted handler/OpenAPI contract returns 202 JSON with {runRid,status} and requires GET /runs/{runRid} polling; there is no mounted SSE response on POST /runs. Real streaming callers will get an AsyncIterable over a JSON body with no data: events, and default callers can receive pending instead of a terminal record.",
+    "suggestion": "Split start from completion: POST /runs should parse the accepted {runRid,status}; non-streaming run should poll waitForRun to terminal or be renamed startRun. Only keep streaming if a real /runs/{runRid}/stream endpoint is implemented, mounted, documented, and tested against the handler."
+  },
+  {
+    "severity": "critical",
+    "file": "sdk/go/vertex.go",
+    "line": 138,
+    "issue": "Scenarios.Run sends Accept: text/event-stream to the async start route and pumps the 202 JSON response as SSE. Against the real server this silently closes the channel without events instead of returning the accepted run RID or polling the run record.",
+    "suggestion": "Update the Go SDK to model POST /runs as start-run JSON, then add a separate wait/poll path or wire Run through GetRun/WaitRun. Add a test using the actual 202 start response shape, not a mocked SSE response from POST /runs."
+  },
+  {
+    "severity": "critical",
+    "file": "sdk/python/weave_client/vertex.py",
+    "line": 70,
+    "issue": "The Python SDK default streaming=True path opens an SSE generator against POST /runs, but the server returns 202 application/json. The generator will yield no events, while streaming=False returns the immediate accepted response despite the docstring saying it blocks for a terminal run record.",
+    "suggestion": "Make run() match the mounted start+poll contract: parse {runRid,status}, then either wait_for_run for blocking behavior or expose start_run separately. Do not advertise streaming until a real stream route exists."
+  },
+  {
+    "severity": "warning",
+    "file": "web/src/features/vertex/scenarioPane/scenarioRunAsync.ts",
+    "line": 195,
+    "issue": "buildScenarioRunStreamUrl now emits /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}/stream and the BDD test calls it documented, but the server and OpenAPI only mount POST /runs, GET /runs/{runRid}, and POST /runs/{runRid}/cancel. Any UI wiring to this helper will 404 and fall back only if separate polling is supplied.",
+    "suggestion": "Remove or gate the stream helper until the stream endpoint is implemented, or add the server route/OpenAPI contract and handler-level tests in the same PR."
+  }
+]
+```
+- Recommended fix prompt:
+```text
+Fix the Vertex scenario-run clients to match the mounted contract: POST /api/vertex/v1/scenarios/{scenarioRid}/runs returns 202 {runRid,status}; GET /runs/{runRid} is the polling source. Update Go, Python, TypeScript SDKs and web helpers so non-streaming run starts then waits/polls to terminal or is renamed startRun. Remove or guard streaming helpers unless a real /runs/{runRid}/stream route is implemented, mounted, documented in OpenAPI, and covered by handler-level tests. Refresh cookbook/tests to exercise the real 202+poll flow instead of mocked SSE from POST /runs.
+```
+
+Instruction for Codex/Ralph: treat the LLM review blocking findings above as the highest-priority repair target. Create or update a focused PRD story on this same branch, fix ONLY the review findings with TDD/BDD evidence, commit the fix, and leave the PR branch ready for Hermes verifier, PR update, CI rerun, and LLM review rerun.

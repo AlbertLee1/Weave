@@ -1,20 +1,16 @@
-// VTX-044 — Scenario Run（异步路径，runRid + SSE）的纯逻辑层。
+// VTX-044 — Scenario Run（异步路径，runRid + polling）的纯逻辑层。
 //
 // 调研报告 §4.4 / 附录 B：当 Scenario 含 ≥ 2 models 或调用方显式
 // forceAsync=true，后端 POST /scenarios/{rid}/runs 立即返回 202
-// {runRid}。前端按 runRid 打开 SSE GET /scenarios/{rid}/runs/{runRid}/stream，
-// 后端推送 progress{model,pct} / result{model,output} / done{durationMs}
-// / error{model,message} / cancelled 事件。Pane 行按 progress 显示
-// spinner+百分比，done 翻 ✓ + duration，error 翻 × + tooltip，cancel
-// 通过 POST /runs/{runRid}/cancel 触发后端推 cancelled 事件 + cleanup。
+// {runRid}。当前已挂载的后端合同只提供 GET /runs/{runRid} polling 和
+// POST /runs/{runRid}/cancel；stream endpoint 尚未挂载或写入 OpenAPI。
 //
 // 本模块交付：
 //   - 异步触发判定 shouldRunAsync（modelCount >= 2 OR forceAsync）
 //   - 异步 Run 请求构造 buildAsyncRunScenarioRequest（forceAsync 透传）
-//   - SSE URL 构造 buildScenarioRunStreamUrl（runRid 走 encodeURIComponent）
 //   - Cancel 请求构造 buildCancelScenarioRunRequest
 //   - 202 响应解析 parseAcceptedScenarioRunResponse
-//   - SSE 事件解析 parseScenarioRunSseEvent（5 类事件 + clamp + fallback）
+//   - polling 结果解析 / 状态机 helper
 //   - 每个 scenario 一份 ScenarioRunJobState（runRid, status, startedAt,
 //     durationMs, error, progressByModel, resultsByModel）
 //   - 状态机迁移 applyAcceptedScenarioRunJob / applyScenarioRunSseEvent
@@ -62,11 +58,6 @@ export interface ShouldRunAsyncInput {
 export interface BuildAsyncRunScenarioRequestInput {
   scenarioRid: string;
   forceAsync?: boolean;
-}
-
-export interface BuildScenarioRunStreamUrlInput {
-  scenarioRid: string;
-  runRid: string;
 }
 
 export interface BuildCancelScenarioRunRequestInput {
@@ -185,14 +176,6 @@ export function buildAsyncRunScenarioRequest(
     return { method: 'POST', path, body: { forceAsync: true } };
   }
   return { method: 'POST', path, body: {} };
-}
-
-export function buildScenarioRunStreamUrl(
-  input: BuildScenarioRunStreamUrlInput,
-): string {
-  const scenarioRid = requireNonBlank(input.scenarioRid, 'scenarioRid');
-  const runRid = requireNonBlank(input.runRid, 'runRid');
-  return `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}/stream`;
 }
 
 export function buildCancelScenarioRunRequest(

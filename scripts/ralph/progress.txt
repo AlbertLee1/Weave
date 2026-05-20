@@ -1,39 +1,66 @@
 # Ralph Progress Log
-Started: Wed May 20 01:36:45 CST 2026
+Started: Wed May 20 11:50:19 CST 2026
 
 Archived previous passing PRD:
-- scripts/ralph/archive/self-iteration-20260520-013645/prd.json
-- scripts/ralph/archive/self-iteration-20260520-013645/progress.txt
+- scripts/ralph/archive/self-iteration-20260520-115019/prd.json
+- scripts/ralph/archive/self-iteration-20260520-115019/progress.txt
 
 Fresh health evidence:
 - main: `gh run list --branch main --limit 5` showed latest CI run 26109104836 success and latest Codespaces prebuild 26109104180 success.
-- branch: `gh run list --branch ralph/self-iteration-20260520-002052 --limit 5` showed pull_request CI run 26113686224 failure.
-- failed check: `gh run view 26113686224 --log-failed` showed Go golangci-lint failures:
-  - `sdk/go/vertex.go:138:2: importShadow: shadow of imported package 'url' (gocritic)`
-  - `sdk/go/vertex.go:276:14: httpNoBody: http.NoBody should be preferred to the nil request body (gocritic)`
+- branch: `gh run list --branch ralph/self-iteration-20260520-002052 --limit 8` showed latest pull_request CI run 26139790386 success.
+- local inspection: `dogfood-output/weave-webui-dogfood-20260517.md` still records DOG-001 seed data and DOG-002 dashboard count issues; neither is the current review blocker.
 
-RED evidence:
-- `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m ./sdk/go`
-- Result: failed with the same two gocritic issues listed above.
+LLM review auto-fix evidence:
+- PR: https://github.com/AlbertLee1/Weave/pull/39
+- Branch: ralph/self-iteration-20260520-002052
+- Reviewed HEAD: 93cd5dae020d
+- Review status: request_changes
+- Blocking issue: TypeScript, Go, Python, and web helpers still model `POST /api/vertex/v1/scenarios/{scenarioRid}/runs` as SSE or terminal output, but the mounted handler/OpenAPI contract returns `202 {"runRid","status"}` and requires polling `GET /runs/{runRid}`.
+- Required repair: update clients and cookbook/tests to exercise real start-and-poll flow; remove or guard stream helper usage unless a mounted `/runs/{runRid}/stream` route is added with OpenAPI and handler tests.
 
 Codebase Patterns:
 - CI pins golangci-lint in `.github/workflows/ci.yml` and uses `only-new-issues: true`; local reproductions should use the same pinned version when the binary is not installed.
 - Go SDK Vertex scenario-run routes are covered in `sdk/go/vertex_test.go` and should stay aligned with `/api/vertex/v1/scenarios/{scenarioRid}/runs`.
+- Mounted Vertex scenario-run server contract is start/poll/cancel only: `POST /api/vertex/v1/scenarios/{scenarioRid}/runs`, `GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}`, and `POST /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}/cancel`.
+- OpenAPI schemas `VertexScenarioRunStartResponse` and `VertexScenarioRun` define start as `{runRid,status}` and terminal polling as the persisted run record.
 
 ## Selected Story
-- `SELF-471` — Clear Go SDK Vertex lint regressions.
+- `SELF-472` - Align Vertex clients with start-and-poll scenario runs.
 
-## SELF-471 Evidence
-- Root cause: `sdk/go/vertex.go` imported `net/url` for path escaping, then introduced a local variable named `url` in `ScenariosService.Run`; the same file also used `nil` for a GET request body. The CI-pinned gocritic rules flag both as new issues on this branch.
+## SELF-472 Evidence
+- Root cause: prior SELF-468/SELF-469 route alignment moved clients to the plural `/runs` path but left public SDK/web behavior modeled as SSE or immediate terminal output. The mounted handler `pkg/vertex/scenarioruns/handler.go` and OpenAPI only expose start, get, and cancel routes; no `/runs/{runRid}/stream` route is mounted.
+- RED:
+  - `npm test -- SdkVertexClient.test.ts scenarioRunAsync.test.ts scenarioRunRouteContract.bdd.test.ts scenarioRunStream.test.ts` from `web/` failed with 4 expected failures: missing TypeScript `startRun`, `run()` returning pending instead of terminal, streaming not rejected cleanly, and stream helper not guarded.
+  - `pytest sdk/python/tests/test_vertex.py` failed with 3 expected failures: missing `start_run`, missing polling options on `run()`, and `streaming=True` not rejected.
+  - `go test ./sdk/go -run TestScenarios -count=1` failed to build for the expected API mismatch: `RunOptions.PollInterval` was missing and `Run()` still returned a channel.
 - GREEN:
-  - Renamed the local scenario-run request URL variable to `runURL`, preserving the existing `/api/vertex/v1/scenarios/{scenarioRid}/runs` route.
-  - Changed `Client.getJSON` to pass `http.NoBody` to `http.NewRequestWithContext` for GET requests.
+  - TypeScript SDK now exposes `scenarios.startRun()`, makes `scenarios.run()` start then poll `waitForRun()`, and rejects `streaming: true` before issuing a request.
+  - Python SDK now exposes `start_run()`, makes `run()` start then poll `wait_for_run()`, and rejects `streaming=True` before issuing a request.
+  - Go SDK now exposes `StartRun()`, makes `Run()` return the terminal `ScenarioRunRecord`, and no longer sends `Accept: text/event-stream` to `POST /runs`.
+  - Web scenario-run route helpers now expose mounted start/get/cancel routes only; the standalone stream helper is guarded by an explicit opt-in so accidental UI wiring cannot 404 against an unmounted route.
+  - Cookbook examples now demonstrate start-and-poll usage in Python, TypeScript, Go, and curl.
 - Verification:
-  - `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m ./sdk/go` passed with `0 issues.`
+  - `npm test -- SdkVertexClient.test.ts scenarioRunAsync.test.ts scenarioRunRouteContract.bdd.test.ts scenarioRunStream.test.ts` from `web/` passed: 4 files, 100 tests.
+  - `pytest sdk/python/tests/test_vertex.py` passed: 10 tests.
   - `go test ./sdk/go -run TestScenarios -count=1` passed.
-  - `git diff --check` passed.
+  - `npm run typecheck` from `web/` passed.
+  - `go test ./sdk/go` passed.
+  - `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m ./sdk/go` passed with `0 issues.`
+  - `git diff --check` passed after removing trailing blank lines.
 - Files changed:
+  - `sdk/typescript/src/vertex.ts`
+  - `web/src/vertex/SdkVertexClient.test.ts`
+  - `sdk/python/weave_client/vertex.py`
+  - `sdk/python/tests/test_vertex.py`
   - `sdk/go/vertex.go`
+  - `sdk/go/vertex_test.go`
+  - `web/src/features/vertex/scenarioPane/scenarioRunAsync.ts`
+  - `web/src/features/vertex/scenarioPane/scenarioRunAsync.test.ts`
+  - `web/src/features/vertex/scenarioPane/scenarioRunRouteContract.bdd.test.ts`
+  - `web/src/vertex/scenarioRunStream.ts`
+  - `web/src/vertex/scenarioRunStream.test.ts`
+  - `docs/cookbook/vertex-quickstart.md`
+  - `docs/cookbook/vertex-quickstart.py`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
-- Reusable learning: when CI uses `only-new-issues`, local package-scoped lint with the pinned version is the fastest reliable reproduction for branch-only lint failures.
+- Reusable learning: for Vertex scenario-run clients, route alignment is not enough; client semantics must match OpenAPI response lifecycles. `POST /runs` is only an accepted start response until a mounted stream endpoint exists.

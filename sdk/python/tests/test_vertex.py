@@ -7,7 +7,6 @@ import pytest
 
 from weave_client._http import HTTPResponse
 from weave_client.client import Client
-from weave_client.vertex import _parse_sse_stream
 
 
 class _StubTransport:
@@ -63,12 +62,58 @@ def test_vertex_scenarios_apply_to_main_posts_to_apply_endpoint():
     assert t.last_url.endswith("/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/apply")
 
 
-def test_vertex_scenarios_run_streaming_false_returns_terminal_record():
-    c, t = _make_client({"scenarioRunRid": "ri.vertex.main.scenario-run.r1", "status": "succeeded"})
-    res = c.vertex.scenarios.run("ri.vertex.main.scenario.s1", streaming=False)
-    assert isinstance(res, dict)
-    assert res["status"] == "succeeded"
+def test_vertex_scenarios_start_run_returns_accepted_response():
+    c, t = _make_client({"runRid": "ri.vertex.main.scenario-run.r1", "status": "pending"})
+    res = c.vertex.scenarios.start_run("ri.vertex.main.scenario.s1")
+    assert res == {"runRid": "ri.vertex.main.scenario-run.r1", "status": "pending"}
     assert t.last_url.endswith("/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs")
+    assert t.last_method == "POST"
+
+
+def test_vertex_scenarios_run_starts_and_polls_until_terminal_record():
+    c, t = _make_client(
+        [
+            {"runRid": "ri.vertex.main.scenario-run.r1", "status": "pending"},
+            {
+                "rid": "ri.vertex.main.scenario-run.r1",
+                "scenarioRid": "ri.vertex.main.scenario.s1",
+                "status": "pending",
+            },
+            {
+                "rid": "ri.vertex.main.scenario-run.r1",
+                "scenarioRid": "ri.vertex.main.scenario.s1",
+                "status": "succeeded",
+                "checkpoint": {
+                    "runRid": "ri.vertex.main.scenario-run.r1",
+                    "scenarioRid": "ri.vertex.main.scenario.s1",
+                    "status": "succeeded",
+                    "attemptsById": {"score": 1},
+                    "updatedAt": "2026-05-20T00:00:00Z",
+                },
+            },
+        ]
+    )
+    res = c.vertex.scenarios.run(
+        "ri.vertex.main.scenario.s1",
+        poll_interval=0.0,
+        timeout=10.0,
+    )
+    assert res["status"] == "succeeded"
+    assert [r["method"] for r in t.requests] == ["POST", "GET", "GET"]
+    assert t.requests[0]["url"].endswith("/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs")
+    assert all(
+        r["url"].endswith(
+            "/api/vertex/v1/scenarios/ri.vertex.main.scenario.s1/runs/ri.vertex.main.scenario-run.r1"
+        )
+        for r in t.requests[1:]
+    )
+
+
+def test_vertex_scenarios_run_streaming_true_is_rejected_without_request():
+    c, t = _make_client({})
+    with pytest.raises(NotImplementedError, match="streaming.*not mounted"):
+        c.vertex.scenarios.run("ri.vertex.main.scenario.s1", streaming=True)
+    assert t.requests == []
 
 
 def test_vertex_scenarios_wait_for_run_polls_get_route_until_failed_terminal_record():
@@ -180,21 +225,3 @@ def test_objects_get_without_scenario_id_does_not_set_header():
     c, t = _make_client({"id": "JFK"})
     c.objects.get("aviation", "Airport", "JFK")
     assert "X-Scenario-Id" not in t.last_headers
-
-
-def test_parse_sse_stream_yields_event_dicts_in_order():
-    chunks = [
-        b'data: {"kind": "progress", "percent": 25}\n\n',
-        b'data: {"kind": "progress", "percent": 100}\n\ndata: {"kind": "completed", "scenarioRunRid": "r1"}\n\n',
-    ]
-    out = list(_parse_sse_stream(chunks))
-    assert len(out) == 3
-    assert out[0]["kind"] == "progress" and out[0]["percent"] == 25
-    assert out[2]["kind"] == "completed"
-
-
-def test_parse_sse_stream_drops_malformed_events():
-    chunks = [b'data: not-json\n\ndata: {"kind": "progress", "percent": 10}\n\n']
-    out = list(_parse_sse_stream(chunks))
-    assert len(out) == 1
-    assert out[0]["percent"] == 10

@@ -1,15 +1,14 @@
 // Package weavesdk is the Weave Go SDK. The vertex namespace (VTX-110)
 // wires Scenario create / run / apply_to_main against the same HTTP API
-// the Python and TypeScript SDKs hit. Run uses a buffered channel so
-// callers can `for ev := range ch` to consume SSE Run events without
-// owning the underlying SSE wire format.
+// the Python and TypeScript SDKs hit. Run follows the mounted
+// start-and-poll contract: POST /runs returns a run RID, then GET
+// /runs/{runRid} yields the persisted lifecycle record.
 //
 // The transport is decoupled via the Doer interface; the unit suite
 // drives the client with a httptest.Server.
 package weavesdk
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -75,17 +74,16 @@ type ScenarioCreateInput struct {
 	ParentOntologyCommit string `json:"parentOntologyCommit"`
 }
 
-// RunEvent is one event from the SSE Run stream. Kind names mirror the
-// TypeScript SDK union; Payload carries the rest of the fields verbatim
-// so callers can json.Unmarshal into their own shape.
-type RunEvent struct {
-	Kind    string          `json:"kind"`
-	Payload json.RawMessage `json:"-"`
+// RunOptions tunes Scenarios.Run polling.
+type RunOptions struct {
+	PollInterval time.Duration
 }
 
-// RunOptions tunes Scenarios.Run.
-type RunOptions struct {
-	BufferSize int
+// ScenarioRunStartResponse mirrors POST
+// /api/vertex/v1/scenarios/{rid}/runs.
+type ScenarioRunStartResponse struct {
+	RunRID string `json:"runRid"`
+	Status string `json:"status"`
 }
 
 // ScenarioRunRecord mirrors the GET /api/vertex/v1/scenarios/{rid}/runs/{runRid}
@@ -126,35 +124,32 @@ func (s *ScenariosService) ApplyToMain(ctx context.Context, scenarioRID string) 
 	return out, nil
 }
 
-// Run opens an SSE stream against /api/vertex/v1/scenarios/{rid}/runs and
-// returns a channel that receives every parsed RunEvent. The channel
-// closes when the stream ends (or ctx is canceled). Callers MUST drain
-// the channel to avoid leaking the underlying goroutine.
-func (s *ScenariosService) Run(ctx context.Context, scenarioRID string, opts *RunOptions) (<-chan RunEvent, error) {
-	bufSize := 16
-	if opts != nil && opts.BufferSize > 0 {
-		bufSize = opts.BufferSize
-	}
-	runURL := s.client.BaseURL + "/api/vertex/v1/scenarios/" + scenarioRID + "/runs"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, runURL, strings.NewReader("{}"))
+// Run starts a scenario run, then polls the mounted run record route until the
+// run reaches a terminal status or ctx is canceled.
+func (s *ScenariosService) Run(ctx context.Context, scenarioRID string, opts *RunOptions) (*ScenarioRunRecord, error) {
+	accepted, err := s.StartRun(ctx, scenarioRID)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Content-Type", "application/json")
-	s.client.applyAuth(req)
-	resp, err := s.client.HTTP.Do(req)
-	if err != nil {
+	if accepted.RunRID == "" {
+		return nil, fmt.Errorf("vertex.scenarios.run: start response missing runRid")
+	}
+	waitOpts := &WaitRunOptions{}
+	if opts != nil {
+		waitOpts.PollInterval = opts.PollInterval
+	}
+	return s.WaitRun(ctx, scenarioRID, accepted.RunRID, waitOpts)
+}
+
+// StartRun POSTs to /api/vertex/v1/scenarios/{rid}/runs and returns the
+// accepted run RID for polling or cancellation.
+func (s *ScenariosService) StartRun(ctx context.Context, scenarioRID string) (*ScenarioRunStartResponse, error) {
+	var out ScenarioRunStartResponse
+	path := scenarioRunStartPath(scenarioRID)
+	if err := s.client.postJSON(ctx, path, struct{}{}, &out); err != nil {
 		return nil, err
 	}
-	if resp.StatusCode/100 != 2 {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		return nil, fmt.Errorf("vertex.scenarios.run: %d %s", resp.StatusCode, string(body))
-	}
-	ch := make(chan RunEvent, bufSize)
-	go pumpSSE(resp.Body, ch)
-	return ch, nil
+	return &out, nil
 }
 
 // GetRun fetches a persisted scenario-run record from the canonical
@@ -202,48 +197,12 @@ func scenarioRunRecordPath(scenarioRID string, runRID string) string {
 	return "/api/vertex/v1/scenarios/" + url.PathEscape(scenarioRID) + "/runs/" + url.PathEscape(runRID)
 }
 
-func isTerminalScenarioRunStatus(status string) bool {
-	return status == "succeeded" || status == "failed" || status == "canceled"
+func scenarioRunStartPath(scenarioRID string) string {
+	return "/api/vertex/v1/scenarios/" + url.PathEscape(scenarioRID) + "/runs"
 }
 
-func pumpSSE(body io.ReadCloser, ch chan<- RunEvent) {
-	defer close(ch)
-	defer body.Close()
-
-	reader := bufio.NewReader(body)
-	var dataBuf bytes.Buffer
-	flush := func() {
-		if dataBuf.Len() == 0 {
-			return
-		}
-		raw := append([]byte(nil), dataBuf.Bytes()...)
-		dataBuf.Reset()
-		var probe struct {
-			Kind string `json:"kind"`
-		}
-		if err := json.Unmarshal(raw, &probe); err != nil {
-			return
-		}
-		ch <- RunEvent{Kind: probe.Kind, Payload: raw}
-	}
-	for {
-		line, err := reader.ReadString('\n')
-		if line != "" {
-			line = strings.TrimRight(line, "\r\n")
-			if line == "" {
-				flush()
-			} else if strings.HasPrefix(line, "data:") {
-				if dataBuf.Len() > 0 {
-					dataBuf.WriteByte('\n')
-				}
-				dataBuf.WriteString(strings.TrimLeft(line[len("data:"):], " "))
-			}
-		}
-		if err != nil {
-			flush()
-			return
-		}
-	}
+func isTerminalScenarioRunStatus(status string) bool {
+	return status == "succeeded" || status == "failed" || status == "canceled"
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, body any, out any) error {

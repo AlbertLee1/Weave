@@ -32,10 +32,20 @@ class FakeEventSource {
 }
 
 describe('openScenarioRunStream (VTX-115)', () => {
+  it('throws by default because no scenario-run stream route is mounted', () => {
+    expect(() =>
+      openScenarioRunStream({
+        scenarioRid: 'ri.vertex.main.scenario.s1',
+        EventSourceCtor: FakeEventSource as unknown as typeof EventSource,
+      }),
+    ).toThrow(/stream route is not mounted/i);
+  });
+
   it('iterates events and terminates after a completed event', async () => {
     const handle = openScenarioRunStream({
       scenarioRid: 'ri.vertex.main.scenario.s1',
       EventSourceCtor: FakeEventSource as unknown as typeof EventSource,
+      allowUnimplementedStreamRoute: true,
     });
     const es = FakeEventSource.last!;
     es.pushEvent({ kind: 'progress', percent: 25 } satisfies RunEvent, 'evt-1');
@@ -54,6 +64,7 @@ describe('openScenarioRunStream (VTX-115)', () => {
       scenarioRid: 'ri.vertex.main.scenario.s1',
       EventSourceCtor: FakeEventSource as unknown as typeof EventSource,
       backoffMs: 10,
+      allowUnimplementedStreamRoute: true,
     });
     const first = FakeEventSource.last!;
     first.pushEvent({ kind: 'progress', percent: 10 }, 'evt-A');
@@ -82,6 +93,7 @@ describe('openScenarioRunStream (VTX-115)', () => {
       fetchImpl: fetchImpl as unknown as typeof fetch,
       maxReconnects: 1,
       backoffMs: 10,
+      allowUnimplementedStreamRoute: true,
     });
 
     FakeEventSource.last!.pushError();

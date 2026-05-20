@@ -1,4 +1,4 @@
-// scenarioRunStream — resilient SSE client for Scenario Runs (VTX-115).
+// scenarioRunStream — guarded SSE client for Scenario Runs (VTX-115).
 //
 // Wraps EventSource with:
 //   1. automatic reconnect on transport error
@@ -8,10 +8,10 @@
 //      /api/vertex/v1/scenarios/{rid}/runs/{runRid} returns the final
 //      record so the UI is never stuck "in progress" forever
 //
-// The actual SSE endpoint and replay support are owned by VTX-044.
-// This module is the client contract — it activates as soon as the
-// server implements it. Until then `pollFinalState` keeps the UI
-// honest by falling through to a single REST status check.
+// The actual SSE endpoint and replay support are not mounted in the
+// current server/OpenAPI contract. Callers must explicitly opt in before
+// this helper opens EventSource; default use throws so UI wiring cannot
+// accidentally hit a 404 stream route.
 
 export type RunEvent =
   | { kind: 'progress'; percent: number }
@@ -31,6 +31,8 @@ export interface ScenarioRunStreamOptions {
   maxReconnects?: number;
   /** Base backoff in ms; doubled on each retry up to 10s. */
   backoffMs?: number;
+  /** Test/future-server escape hatch until /runs/{runRid}/stream is mounted. */
+  allowUnimplementedStreamRoute?: boolean;
 }
 
 interface Handle {
@@ -51,6 +53,9 @@ interface MinimalEventSource {
 // objects. The iterable ends after a terminal event (completed/failed)
 // or after maxReconnects exhausts and pollFinalState returns.
 export function openScenarioRunStream(opts: ScenarioRunStreamOptions): Handle {
+  if (!opts.allowUnimplementedStreamRoute) {
+    throw new Error('Vertex scenario-run stream route is not mounted; use polling');
+  }
   const maxReconnects = opts.maxReconnects ?? 5;
   const backoffMs = opts.backoffMs ?? 1000;
   const EventSourceCtor = opts.EventSourceCtor ?? (globalThis as { EventSource: typeof EventSource }).EventSource;

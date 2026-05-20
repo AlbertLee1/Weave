@@ -4,7 +4,7 @@ import { buildRunScenarioRequest } from './scenarioRun';
 import {
   buildAsyncRunScenarioRequest,
   buildCancelScenarioRunRequest,
-  buildScenarioRunStreamUrl,
+  buildGetScenarioRunRequest,
   parseAcceptedScenarioRunResponse,
 } from './scenarioRunAsync';
 
@@ -21,10 +21,11 @@ describe('BDD: Vertex scenario-run route contract (SELF-468)', () => {
     expect(async).toMatchObject({ method: 'POST', path: expected });
   });
 
-  it('Given a run RID, When stream and cancel helpers are built, Then they use the documented runs/{runRid} route family', () => {
-    expect(buildScenarioRunStreamUrl({ scenarioRid, runRid })).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}/stream`,
-    );
+  it('Given a run RID, When get and cancel helpers are built, Then they use the mounted runs/{runRid} route family', () => {
+    expect(buildGetScenarioRunRequest({ scenarioRid, runRid })).toMatchObject({
+      method: 'GET',
+      path: `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}`,
+    });
     expect(buildCancelScenarioRunRequest({ scenarioRid, runRid })).toMatchObject({
       method: 'POST',
       path: `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}/cancel`,

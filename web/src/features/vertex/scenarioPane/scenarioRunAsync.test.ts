@@ -7,7 +7,6 @@ import {
   buildAsyncRunScenarioRequest,
   buildCancelScenarioRunRequest,
   buildGetScenarioRunRequest,
-  buildScenarioRunStreamUrl,
   createScenarioRunJobMap,
   createScenarioRunJobState,
   getModelProgressPct,
@@ -118,33 +117,6 @@ describe('VTX-044 async run request builder', () => {
     expect(() => buildAsyncRunScenarioRequest({ scenarioRid: '   ' })).toThrow(
       /scenarioRid/,
     );
-  });
-});
-
-describe('VTX-044 stream URL builder', () => {
-  it('given_scenarioRid_and_runRid_when_buildStreamUrl_then_returns_sse_path', () => {
-    const url = buildScenarioRunStreamUrl({ scenarioRid, runRid });
-    expect(url).toBe(
-      `/api/vertex/v1/scenarios/${encodeURIComponent(scenarioRid)}/runs/${encodeURIComponent(runRid)}/stream`,
-    );
-  });
-
-  it('given_runRid_with_slash_when_buildStreamUrl_then_path_encodes_runRid', () => {
-    const slashRun = 'run/with/slashes';
-    const url = buildScenarioRunStreamUrl({ scenarioRid, runRid: slashRun });
-    expect(url).toContain(encodeURIComponent(slashRun));
-  });
-
-  it('given_blank_runRid_when_buildStreamUrl_then_throws', () => {
-    expect(() =>
-      buildScenarioRunStreamUrl({ scenarioRid, runRid: '   ' }),
-    ).toThrow(/runRid/);
-  });
-
-  it('given_blank_scenarioRid_when_buildStreamUrl_then_throws', () => {
-    expect(() =>
-      buildScenarioRunStreamUrl({ scenarioRid: '', runRid }),
-    ).toThrow(/scenarioRid/);
   });
 });
 
