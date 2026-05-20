@@ -148,6 +148,22 @@ func TestHTTPTransport_InvalidJSON_Returns32700_HTTPStatus200(t *testing.T) {
 	}
 }
 
+func TestBDD_HTTPTransportRejectsOversizedBodyAtTransportLayer(t *testing.T) {
+	srv, _, _, _ := newTestServer(t)
+	handler := NewHTTPHandler(srv)
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(strings.Repeat("x", maxBodySize+1)))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413; body=%q", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), `"jsonrpc"`) {
+		t.Fatalf("oversized body response should be transport-level, got JSON-RPC body %q", rr.Body.String())
+	}
+}
+
 func TestHTTPTransport_NonPostReturns405(t *testing.T) {
 	srv, _, _, _ := newTestServer(t)
 	handler := NewHTTPHandler(srv)
