@@ -84,7 +84,7 @@ describe('openScenarioRunStream (VTX-115)', () => {
   it('falls back to pollFinalState after maxReconnects exhausts', async () => {
     vi.useFakeTimers();
     const fetchImpl = vi.fn(async () =>
-      new Response(JSON.stringify({ status: 'succeeded', runRid: 'r-final' }), { status: 200 }),
+      new Response(JSON.stringify({ status: 'succeeded', rid: 'r-final' }), { status: 200 }),
     );
     const handle = openScenarioRunStream({
       scenarioRid: 'ri.vertex.main.scenario.s1',
@@ -125,7 +125,7 @@ describe('pollFinalState', () => {
 
   it('maps a succeeded REST response to a completed event', async () => {
     const fetchImpl = vi.fn(async () =>
-      new Response(JSON.stringify({ status: 'succeeded', runRid: 'r-final' }), { status: 200 }),
+      new Response(JSON.stringify({ status: 'succeeded', rid: 'r-final' }), { status: 200 }),
     );
     const r = await pollFinalState(
       { scenarioRid: 's', runRid: 'j' },
@@ -137,7 +137,7 @@ describe('pollFinalState', () => {
 
   it('maps a failed REST response to a failed event', async () => {
     const fetchImpl = vi.fn(async () =>
-      new Response(JSON.stringify({ status: 'failed', runRid: 'r-final', error: 'model failed' }), { status: 200 }),
+      new Response(JSON.stringify({ status: 'failed', rid: 'r-final', error: 'model failed' }), { status: 200 }),
     );
     const r = await pollFinalState(
       { scenarioRid: 's', runRid: 'j' },
@@ -145,4 +145,18 @@ describe('pollFinalState', () => {
     );
     expect(r).toEqual({ kind: 'failed', scenarioRunRid: 'r-final', error: 'model failed' });
   });
+
+  it.each(['pending', 'running', 'canceled'] as const)(
+    'returns null for non-success-or-failure REST status %s',
+    async (status) => {
+      const fetchImpl = vi.fn(async () =>
+        new Response(JSON.stringify({ status, rid: 'r-final' }), { status: 200 }),
+      );
+      const r = await pollFinalState(
+        { scenarioRid: 's', runRid: 'j' },
+        fetchImpl as unknown as typeof fetch,
+      );
+      expect(r).toBeNull();
+    },
+  );
 });

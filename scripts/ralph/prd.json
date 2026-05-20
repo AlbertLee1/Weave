@@ -1,29 +1,27 @@
 {
-  "project": "Weave Self-Iteration Vertex Scenario Run Contract Repair",
+  "project": "Weave Self-Iteration Vertex Web Scenario Run Contract Repair",
   "branchName": "ralph/self-iteration-20260520-002052",
-  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260520-002052. The previous active PRD had all stories passing and was archived under scripts/ralph/archive/self-iteration-20260520-115019/. Fresh GitHub health at 2026-05-20 11:50 CST: latest main CI run 26109104836 completed success and latest branch pull_request CI run 26139790386 completed success. A newer LLM review auto-fix context requested changes because Vertex scenario-run SDKs and web helpers still modeled POST /api/vertex/v1/scenarios/{scenarioRid}/runs as SSE or terminal output, while the mounted handler and OpenAPI contract return 202 JSON {runRid,status} and require GET /runs/{runRid} polling. This PRD stays focused on repairing that review-blocking contract mismatch before adding any new OSv2 capability work.",
+  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260520-002052. The previous active PRD had all stories passing and was archived under scripts/ralph/archive/self-iteration-20260520-123219/. Fresh GitHub health at 2026-05-20 12:32 CST: latest main CI run 26109104836 completed success and latest branch pull_request CI run 26141075643 completed success. A newer LLM review auto-fix context requested changes because web scenario-run helpers/tests still preserve stale terminal POST semantics and the stream REST fallback does not parse the mounted VertexScenarioRun record shape. This PRD fixes only those review-blocking findings before adding any new OSv2-related capability work.",
   "userStories": [
     {
-      "id": "SELF-472",
-      "name": "Align Vertex clients with start-and-poll scenario runs",
+      "id": "SELF-473",
+      "name": "Repair web scenario-run contract drift",
       "phase": "LLM Review Repair",
       "active": true,
       "priority": 1,
       "passes": true,
       "dependencies": [],
-      "description": "Update the TypeScript, Python, and Go Vertex SDKs plus the web scenario-run helper/docs so public clients match the mounted scenario-run contract: POST /runs starts a run and returns {runRid,status}; GET /runs/{runRid} is the polling source for terminal records. Remove or guard public streaming helpers until a mounted stream endpoint exists.",
+      "description": "Align the web scenario-run helper tests and stream fallback with the mounted scenario-run contract: POST /api/vertex/v1/scenarios/{scenarioRid}/runs accepts a run as 202 {runRid,status}; terminal state comes from GET /runs/{runRid}; the stream fallback parses VertexScenarioRun.rid/status without misreporting pending, running, or canceled states.",
       "bdd_acceptance": [
-        "Given the server accepts POST /api/vertex/v1/scenarios/{scenarioRid}/runs with 202 {runRid,status}, When TypeScript VertexClient.scenarios.run is called without streaming, Then it starts the run and polls GET /runs/{runRid} until a terminal record is returned.",
-        "Given the same mounted start response, When Python client.vertex.scenarios.run is called, Then it starts the run and waits via GET /runs/{runRid}; no default path opens SSE against POST /runs.",
-        "Given the same mounted start response, When Go Client.Vertex.Scenarios.Run is called, Then it returns the terminal ScenarioRunRecord by starting and polling; no Accept: text/event-stream request is sent to POST /runs.",
-        "Given no /runs/{runRid}/stream route is mounted or documented, When web scenario-run route helpers are built, Then they expose start, get, and cancel routes only and tests no longer describe a stream route as documented.",
-        "Given the cookbook examples are followed, When they run a Vertex scenario, Then they demonstrate start-and-poll usage instead of mocked SSE from POST /runs."
+        "Given the mounted run start route returns 202 {runRid,status}, When the web scenario-run helper parses the response, Then it preserves the accepted run RID and status instead of expecting durationMs or a terminal scenario payload.",
+        "Given a started run, When the web helper needs terminal state, Then it builds the mounted GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid} route and leaves terminal parsing to the run-record polling helper.",
+        "Given the stream fallback polls a mounted VertexScenarioRun record with {rid,status:'succeeded'}, When the record is terminal success, Then it emits a completed event using rid as scenarioRunRid.",
+        "Given the stream fallback polls a mounted VertexScenarioRun record with {rid,status:'failed',error}, When the record is terminal failure, Then it emits a failed event using rid and the server error.",
+        "Given the stream fallback polls a mounted VertexScenarioRun record with pending, running, or canceled status, When the status is not succeeded or failed, Then it returns null rather than inventing a failed event."
       ],
       "quality_gates": [
-        "`npm test -- SdkVertexClient.test.ts scenarioRunAsync.test.ts scenarioRunRouteContract.bdd.test.ts` from web/",
-        "`pytest sdk/python/tests/test_vertex.py`",
-        "`go test ./sdk/go -run TestScenarios -count=1`",
-        "`npm test -- scenarioRunStream.test.ts` from web/ if stream-client compatibility changes are needed",
+        "`npm test -- scenarioRun.test.ts scenarioRunAsync.test.ts scenarioRunStream.test.ts` from web/",
+        "`npm run typecheck` from web/",
         "`git diff --check`"
       ]
     }

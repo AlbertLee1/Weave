@@ -1,22 +1,41 @@
 # Ralph Progress Log
-Started: Wed May 20 11:50:19 CST 2026
+Started: Wed May 20 12:32:19 CST 2026
 
 Archived previous passing PRD:
-- scripts/ralph/archive/self-iteration-20260520-115019/prd.json
-- scripts/ralph/archive/self-iteration-20260520-115019/progress.txt
+- scripts/ralph/archive/self-iteration-20260520-123219/prd.json
+- scripts/ralph/archive/self-iteration-20260520-123219/progress.txt
 
 Fresh health evidence:
 - main: `gh run list --branch main --limit 5` showed latest CI run 26109104836 success and latest Codespaces prebuild 26109104180 success.
-- branch: `gh run list --branch ralph/self-iteration-20260520-002052 --limit 8` showed latest pull_request CI run 26139790386 success.
-- local inspection: `dogfood-output/weave-webui-dogfood-20260517.md` still records DOG-001 seed data and DOG-002 dashboard count issues; neither is the current review blocker.
+- branch: `gh run list --branch ralph/self-iteration-20260520-002052 --limit 8` showed latest pull_request CI run 26141075643 success.
+- local inspection: `dogfood-output/weave-webui-dogfood-20260517.md` remains the latest web dogfood output; no newer dogfood-output file targets this review blocker.
 
 LLM review auto-fix evidence:
 - PR: https://github.com/AlbertLee1/Weave/pull/39
 - Branch: ralph/self-iteration-20260520-002052
-- Reviewed HEAD: 93cd5dae020d
+- Reviewed HEAD: 25cfd23ae809
 - Review status: request_changes
-- Blocking issue: TypeScript, Go, Python, and web helpers still model `POST /api/vertex/v1/scenarios/{scenarioRid}/runs` as SSE or terminal output, but the mounted handler/OpenAPI contract returns `202 {"runRid","status"}` and requires polling `GET /runs/{runRid}`.
-- Required repair: update clients and cookbook/tests to exercise real start-and-poll flow; remove or guard stream helper usage unless a mounted `/runs/{runRid}/stream` route is added with OpenAPI and handler tests.
+- Summary: Request changes: the main SDKs mostly follow start-and-poll, but web scenario-run helpers/tests still preserve stale terminal-response semantics and the stream REST fallback is not aligned with the mounted run-record schema.
+- Blocking findings:
+```json
+[
+  {
+    "severity": "warning",
+    "file": "web/src/features/vertex/scenarioPane/scenarioRun.ts",
+    "line": 305,
+    "issue": "The sync scenario-run helper still models POST /api/vertex/v1/scenarios/{rid}/runs as a terminal 200 response with {status:'success', durationMs, scenario}. The same helper's request builder now targets the mounted /runs start route, whose contract is 202 {runRid,status} followed by GET /runs/{runRid} polling. Any caller using this helper against the real route will parse the accepted response as malformed instead of polling, and the BDD test at scenarioRun.test.ts:474 still documents the impossible 200 OK flow.",
+    "suggestion": "Replace or quarantine the old sync terminal response helpers. Make the web run flow parse the 202 start response and poll GET /runs/{runRid} until terminal, or route callers through scenarioRunAsync. Update scenarioRun.test.ts to cover the real start-and-poll contract instead of a mocked 200 success payload."
+  },
+  {
+    "severity": "warning",
+    "file": "web/src/vertex/scenarioRunStream.ts",
+    "line": 176,
+    "issue": "pollFinalState now calls the mounted GET /runs/{runRid} route, but it reads body.runRid/body.scenarioRunRid. The documented/server VertexScenarioRun record uses rid, so the fallback returns null for real terminal records. It also treats any non-'succeeded' status as failed, which would misreport valid pending/running/canceled records.",
+    "suggestion": "Parse the mounted run-record shape: use body.rid for the run RID, return completed only for succeeded, failed only for failed (and handle canceled explicitly or return null), and leave pending/running as null. Update scenarioRunStream.test.ts fixtures to use {rid, status} from the OpenAPI contract."
+  }
+]
+```
+- Required repair: fix only the stale sync scenario-run helper/tests and `pollFinalState` run-record parsing described above.
 
 Codebase Patterns:
 - CI pins golangci-lint in `.github/workflows/ci.yml` and uses `only-new-issues: true`; local reproductions should use the same pinned version when the binary is not installed.
@@ -25,42 +44,25 @@ Codebase Patterns:
 - OpenAPI schemas `VertexScenarioRunStartResponse` and `VertexScenarioRun` define start as `{runRid,status}` and terminal polling as the persisted run record.
 
 ## Selected Story
-- `SELF-472` - Align Vertex clients with start-and-poll scenario runs.
+- `SELF-473` - Repair web scenario-run contract drift.
 
-## SELF-472 Evidence
-- Root cause: prior SELF-468/SELF-469 route alignment moved clients to the plural `/runs` path but left public SDK/web behavior modeled as SSE or immediate terminal output. The mounted handler `pkg/vertex/scenarioruns/handler.go` and OpenAPI only expose start, get, and cancel routes; no `/runs/{runRid}/stream` route is mounted.
+## SELF-473 Evidence
+- Root cause: the web single-function scenario-run helper still documented and parsed POST `/api/vertex/v1/scenarios/{scenarioRid}/runs` as a terminal 200-style response with `{durationMs,scenario}`, while the mounted route accepts the run as `202 {runRid,status}` and requires GET `/runs/{runRid}` for terminal state. The stream fallback was already polling the mounted GET route, but it read stale `runRid`/`scenarioRunRid` response fields instead of the OpenAPI/server `VertexScenarioRun.rid` field and collapsed every non-`succeeded` status into failure.
 - RED:
-  - `npm test -- SdkVertexClient.test.ts scenarioRunAsync.test.ts scenarioRunRouteContract.bdd.test.ts scenarioRunStream.test.ts` from `web/` failed with 4 expected failures: missing TypeScript `startRun`, `run()` returning pending instead of terminal, streaming not rejected cleanly, and stream helper not guarded.
-  - `pytest sdk/python/tests/test_vertex.py` failed with 3 expected failures: missing `start_run`, missing polling options on `run()`, and `streaming=True` not rejected.
-  - `go test ./sdk/go -run TestScenarios -count=1` failed to build for the expected API mismatch: `RunOptions.PollInterval` was missing and `Run()` still returned a channel.
+  - `npm test -- scenarioRun.test.ts scenarioRunStream.test.ts` from `web/` failed as expected: 9 failures. `scenarioRun.test.ts` lacked `parseScenarioRunAcceptedResponse`/`buildGetRunScenarioRequest`; `scenarioRunStream.test.ts` returned `null` for `{rid,status:'succeeded'|'failed'}` fixtures.
 - GREEN:
-  - TypeScript SDK now exposes `scenarios.startRun()`, makes `scenarios.run()` start then poll `waitForRun()`, and rejects `streaming: true` before issuing a request.
-  - Python SDK now exposes `start_run()`, makes `run()` start then poll `wait_for_run()`, and rejects `streaming=True` before issuing a request.
-  - Go SDK now exposes `StartRun()`, makes `Run()` return the terminal `ScenarioRunRecord`, and no longer sends `Accept: text/event-stream` to `POST /runs`.
-  - Web scenario-run route helpers now expose mounted start/get/cancel routes only; the standalone stream helper is guarded by an explicit opt-in so accidental UI wiring cannot 404 against an unmounted route.
-  - Cookbook examples now demonstrate start-and-poll usage in Python, TypeScript, Go, and curl.
+  - `web/src/features/vertex/scenarioPane/scenarioRun.ts` now exposes accepted-response parsing for `202 {runRid,status}` and a mounted GET `/runs/{runRid}` request builder. The stale terminal POST parser/types/comments were removed from the helper and tests.
+  - `web/src/vertex/scenarioRunStream.ts` now parses `VertexScenarioRun.rid`, returns completed only for `succeeded`, failed only for `failed`, and returns `null` for `pending`, `running`, and `canceled`.
 - Verification:
-  - `npm test -- SdkVertexClient.test.ts scenarioRunAsync.test.ts scenarioRunRouteContract.bdd.test.ts scenarioRunStream.test.ts` from `web/` passed: 4 files, 100 tests.
-  - `pytest sdk/python/tests/test_vertex.py` passed: 10 tests.
-  - `go test ./sdk/go -run TestScenarios -count=1` passed.
+  - `npm test -- scenarioRun.test.ts scenarioRunStream.test.ts` from `web/` passed: 2 files, 62 tests.
+  - `npm test -- scenarioRun.test.ts scenarioRunAsync.test.ts scenarioRunStream.test.ts` from `web/` passed: 3 files, 144 tests.
   - `npm run typecheck` from `web/` passed.
-  - `go test ./sdk/go` passed.
-  - `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m ./sdk/go` passed with `0 issues.`
-  - `git diff --check` passed after removing trailing blank lines.
+  - `git diff --check` passed.
 - Files changed:
-  - `sdk/typescript/src/vertex.ts`
-  - `web/src/vertex/SdkVertexClient.test.ts`
-  - `sdk/python/weave_client/vertex.py`
-  - `sdk/python/tests/test_vertex.py`
-  - `sdk/go/vertex.go`
-  - `sdk/go/vertex_test.go`
-  - `web/src/features/vertex/scenarioPane/scenarioRunAsync.ts`
-  - `web/src/features/vertex/scenarioPane/scenarioRunAsync.test.ts`
-  - `web/src/features/vertex/scenarioPane/scenarioRunRouteContract.bdd.test.ts`
+  - `web/src/features/vertex/scenarioPane/scenarioRun.ts`
+  - `web/src/features/vertex/scenarioPane/scenarioRun.test.ts`
   - `web/src/vertex/scenarioRunStream.ts`
   - `web/src/vertex/scenarioRunStream.test.ts`
-  - `docs/cookbook/vertex-quickstart.md`
-  - `docs/cookbook/vertex-quickstart.py`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
-- Reusable learning: for Vertex scenario-run clients, route alignment is not enough; client semantics must match OpenAPI response lifecycles. `POST /runs` is only an accepted start response until a mounted stream endpoint exists.
+- Reusable learning: web scenario-run helpers should treat POST `/runs` as start-only. Any terminal UI transition must be driven by the persisted run record from GET `/runs/{runRid}`; stream fallbacks must parse the same `VertexScenarioRun` shape as the mounted REST endpoint.

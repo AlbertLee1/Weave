@@ -168,17 +168,19 @@ export async function pollFinalState(
     );
     if (!res.ok) return null;
     const body = (await res.json()) as {
-      status: 'succeeded' | 'failed';
-      runRid?: string;
-      scenarioRunRid?: string;
+      rid?: string;
+      status: 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled';
       error?: string;
     };
-    const scenarioRunRid = body.runRid ?? body.scenarioRunRid;
-    if (!scenarioRunRid) return null;
     if (body.status === 'succeeded') {
-      return { kind: 'completed', scenarioRunRid };
+      if (!body.rid) return null;
+      return { kind: 'completed', scenarioRunRid: body.rid };
     }
-    return { kind: 'failed', scenarioRunRid, error: body.error ?? 'failed' };
+    if (body.status === 'failed') {
+      if (!body.rid) return null;
+      return { kind: 'failed', scenarioRunRid: body.rid, error: body.error ?? 'failed' };
+    }
+    return null;
   } catch {
     return null;
   }
