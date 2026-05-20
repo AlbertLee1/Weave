@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -26,6 +27,20 @@ type Request struct {
 	ID      json.RawMessage `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+// ParsedRequest is one item from a JSON-RPC request envelope. Exactly one of
+// Request or Error is set; Error is used for malformed entries inside a batch
+// so valid siblings can still be handled.
+type ParsedRequest struct {
+	Request *Request
+	Error   *Response
+}
+
+// RequestEnvelope is either one request object or a JSON-RPC batch array.
+type RequestEnvelope struct {
+	Batch bool
+	Items []ParsedRequest
 }
 
 // IsNotification reports whether the request is a JSON-RPC notification
@@ -122,6 +137,56 @@ func ParseRequest(data []byte) (*Request, error) {
 		return nil, &RPCError{Code: CodeInvalidRequest, Message: "method is required"}
 	}
 	return &req, nil
+}
+
+// ParseRequestEnvelope decodes either a single JSON-RPC request object or a
+// JSON-RPC batch array. Empty batches are invalid per JSON-RPC 2.0.
+func ParseRequestEnvelope(data []byte) (*RequestEnvelope, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		var raws []json.RawMessage
+		if err := json.Unmarshal(trimmed, &raws); err != nil {
+			return nil, &RPCError{Code: CodeParseError, Message: "parse error: " + err.Error()}
+		}
+		if len(raws) == 0 {
+			return nil, &RPCError{Code: CodeInvalidRequest, Message: "batch must contain at least one request"}
+		}
+		env := &RequestEnvelope{Batch: true, Items: make([]ParsedRequest, 0, len(raws))}
+		for _, raw := range raws {
+			req, err := ParseRequest(raw)
+			if err != nil {
+				code, msg := rpcErrorCodeAndMessage(err)
+				env.Items = append(env.Items, ParsedRequest{
+					Error: NewErrorResponse(sniffRequestID(raw), code, msg, nil),
+				})
+				continue
+			}
+			env.Items = append(env.Items, ParsedRequest{Request: req})
+		}
+		return env, nil
+	}
+
+	req, err := ParseRequest(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	return &RequestEnvelope{Items: []ParsedRequest{{Request: req}}}, nil
+}
+
+func rpcErrorCodeAndMessage(err error) (int, string) {
+	rpcErr, _ := err.(*RPCError)
+	if rpcErr != nil {
+		return rpcErr.Code, rpcErr.Message
+	}
+	return CodeParseError, err.Error()
+}
+
+func sniffRequestID(data []byte) json.RawMessage {
+	var sniff struct {
+		ID json.RawMessage `json:"id"`
+	}
+	_ = json.Unmarshal(data, &sniff)
+	return sniff.ID
 }
 
 // NewSuccessResponse builds a response envelope wrapping a successful result.

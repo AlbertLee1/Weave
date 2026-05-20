@@ -47,40 +47,44 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, parseErr := ParseRequest(body)
+	envelope, parseErr := ParseRequestEnvelope(body)
 	if parseErr != nil {
 		// Best effort: try to recover the id from the raw body so the
-		// response can echo it back. ParseRequest already classified the
+		// response can echo it back. ParseRequestEnvelope already classified the
 		// error code (parse vs invalid request).
-		var sniff struct {
-			ID json.RawMessage `json:"id"`
-		}
-		_ = json.Unmarshal(body, &sniff)
-		rpcErr, _ := parseErr.(*RPCError)
-		code := CodeParseError
-		msg := parseErr.Error()
-		if rpcErr != nil {
-			code = rpcErr.Code
-			msg = rpcErr.Message
-		}
-		writeJSON(w, NewErrorResponse(sniff.ID, code, msg, nil))
+		code, msg := rpcErrorCodeAndMessage(parseErr)
+		writeJSON(w, NewErrorResponse(sniffRequestID(body), code, msg, nil))
 		return
 	}
 
-	resp := h.srv.Handle(r.Context(), req)
-	if resp == nil {
-		// Notification: no response per JSON-RPC 2.0. Use 204 so HTTP
-		// clients see an unambiguous "accepted with no body".
+	responses := make([]*Response, 0, len(envelope.Items))
+	for _, item := range envelope.Items {
+		if item.Error != nil {
+			responses = append(responses, item.Error)
+			continue
+		}
+		resp := h.srv.Handle(r.Context(), item.Request)
+		if resp != nil {
+			responses = append(responses, resp)
+		}
+	}
+	if len(responses) == 0 {
+		// Notification-only envelopes produce no response per JSON-RPC 2.0.
+		// Use 204 so HTTP clients see an unambiguous "accepted with no body".
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	writeJSON(w, resp)
+	if envelope.Batch {
+		writeJSON(w, responses)
+		return
+	}
+	writeJSON(w, responses[0])
 }
 
-// writeJSON encodes a JSON-RPC response envelope and writes it with HTTP 200.
+// writeJSON encodes a JSON-RPC response payload and writes it with HTTP 200.
 // Errors are surfaced via the JSON envelope, never via the status code.
-func writeJSON(w http.ResponseWriter, resp *Response) {
+func writeJSON(w http.ResponseWriter, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(payload)
 }
