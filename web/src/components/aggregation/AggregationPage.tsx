@@ -9,6 +9,8 @@ import { ResultTable } from './ResultTable';
 import { SimpleChart } from './SimpleChart';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
+import { FilterBuilder } from '../browser/FilterBuilder';
+import { buildWhereClause, type FilterCondition } from '../../lib/whereBuilder';
 
 export function AggregationPage() {
   const { ontology, objectType } = useParams<{ ontology: string; objectType: string }>();
@@ -20,13 +22,17 @@ export function AggregationPage() {
 
   const [metrics, setMetrics] = useState<AggregationMetric[]>([{ type: 'count' }]);
   const [groupBy, setGroupBy] = useState<GroupByClause[]>([]);
+  const [filters, setFilters] = useState<FilterCondition[]>([]);
   const [aggRequest, setAggRequest] = useState<AggregationRequest | null>(null);
+
+  const availableProperties = useMemo<
+    Record<string, { dataType: { type: string; itemType?: unknown }; rid: string }>
+  >(() => objectTypeDef?.properties ?? {}, [objectTypeDef]);
 
   // Derive available fields from object type properties
   const availableFields = useMemo(() => {
-    if (!objectTypeDef?.properties) return [];
-    return Object.keys(objectTypeDef.properties);
-  }, [objectTypeDef]);
+    return Object.keys(availableProperties);
+  }, [availableProperties]);
 
   const { data: aggResult, isLoading: aggLoading, isError, error } = useAggregation(
     ontology ?? '',
@@ -46,9 +52,11 @@ export function AggregationPage() {
   }, [aggResult, metrics]);
 
   function handleExecute() {
+    const where = buildWhereClause(filters);
     setAggRequest({
       aggregation: metrics,
       groupBy: groupBy.length > 0 ? groupBy : undefined,
+      where,
     });
   }
 
@@ -114,6 +122,26 @@ export function AggregationPage() {
             onChange={setGroupBy}
             availableFields={availableFields}
           />
+        </div>
+
+        <div
+          data-testid="aggregation-filter-section"
+          className="flex flex-col gap-3 border-t border-border pt-4"
+        >
+          <label className="text-xs text-text-secondary font-sans mb-1">
+            Where Filter
+          </label>
+          {availableFields.length > 0 ? (
+            <FilterBuilder
+              properties={availableProperties}
+              filters={filters}
+              onFiltersChange={setFilters}
+            />
+          ) : (
+            <div className="text-xs text-text-secondary">
+              No filterable fields.
+            </div>
+          )}
         </div>
       </div>
 

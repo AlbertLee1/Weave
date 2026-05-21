@@ -26,12 +26,11 @@ import {
  *     via the table's `<th>` column header (key already produced as
  *     `<field>.<aggType>` by the wire normalizer for unnamed metrics,
  *     so we use an explicit `name` alias to lock the friendly path).
- *   - "filter" → AggregationPage doesn't render a where/filter
- *     affordance today (handleExecute only sets `aggregation` and
- *     `groupBy`); we lock the gap with a button + textbox + role-search
- *     triple absence assertion plus a positive assertion that the
- *     captured POST body has no `where` key (so the day a PR adds the
- *     UI, this scenario must be replaced with click-driven coverage).
+ *   - "filter" → AggregationPage renders a where-clause row using the
+ *     same field/operator/value contract as the object browser filter
+ *     builder; the scenario captures the POST body and asserts the
+ *     optional AggregationRequest.where key is included only when the
+ *     user has added a filter.
  *   - "切换图表类型 (bar/line/pie)" → SimpleChart hard-codes a bar
  *     chart and there is no chart-type switcher today. Happy-path
  *     scenario asserts the chart wrapper carries `data-chart-type="bar"`
@@ -306,15 +305,12 @@ describeFeature('Aggregation page', () => {
     });
   });
 
-  test('Scenario: filter / where clause has no affordance today', async ({
+  test('Scenario: filter / where clause submits the configured where body', async ({
     page,
   }) => {
-    // Honest mapping for AC "filter": handleExecute composes only
-    // `{aggregation, groupBy}` — the AggregationRequest type carries
-    // an optional `where` but the page has no UI to populate it.
-    // We lock the gap with a triple absence + positive "POST body
-    // has no `where` key" assertion. Replace this scenario with
-    // click-driven coverage the day a filter row goes live.
+    // Locks AC "filter": the AggregationRequest type carries an
+    // optional `where`, and the UI must now populate it from a visible
+    // field/operator/value affordance instead of silently omitting it.
     const agg = new AggregationPage(page);
     const captured: CapturedAgg[] = [];
 
@@ -325,29 +321,28 @@ describeFeature('Aggregation page', () => {
       }));
     });
 
-    await When('the user opens the page and clicks Execute with defaults', async () => {
+    await When('the user opens the page and configures shipCountry = USA', async () => {
       await agg.goto(ONTOLOGY, OBJECT_TYPE);
+      await agg.filterFieldSelect().selectOption('shipCountry');
+      await agg.filterOperatorSelect().selectOption('eq');
+      await agg.filterValueInput().fill('USA');
+      await agg.filterAddBtn.click();
+    });
+
+    await Then('the filter chip is visible in the config panel', async () => {
+      await expect(agg.activeFilters).toContainText('shipCountry =');
+      await expect(agg.activeFilters).toContainText('USA');
+    });
+
+    await When('the user clicks Execute', async () => {
       await agg.executeBtn.click();
       await expect(agg.results).toBeVisible();
     });
 
-    await Then('the config panel exposes no filter/where affordance', async () => {
-      await expect(
-        agg.configPanel.getByRole('button', {
-          name: /filter|where|condition|add\s*filter/i,
-        }),
-      ).toHaveCount(0);
-      await expect(
-        agg.configPanel.getByRole('textbox', { name: /filter|where|condition/i }),
-      ).toHaveCount(0);
-      await expect(agg.configPanel.getByRole('searchbox')).toHaveCount(0);
-    });
-
-    await Then('the POST body carries no where clause', async () => {
+    await Then('the POST body carries the configured where clause', async () => {
       await expect.poll(() => captured.length).toBe(1);
       const body = captured[0]!.body;
-      expect(body.where).toBeUndefined();
-      expect(Object.prototype.hasOwnProperty.call(body, 'where')).toBe(false);
+      expect(body.where).toEqual({ type: 'eq', field: 'shipCountry', value: 'USA' });
     });
   });
 
