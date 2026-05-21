@@ -116,3 +116,43 @@ Files changed:
 Reusable learning:
 - Pipeline run-history UI should use the existing frontend API/hook pattern from AIP Logic runs: add a typed API client, wrap it in a React Query hook keyed by the selected resource id, and pass query state into the page panel so empty/error/loading states are explicit.
 ---
+
+## Selected story
+- SELF-603 - Persist Real Scheduled Pipeline DAG Outcomes.
+- Reason: SELF-601 made scheduled ticks observable as runtime-not-configured failures and SELF-602 surfaced those rows in the UI. The remaining gap was the transition path for a configured DAG node runner: scheduled ticks should persist actual RunDAG outcomes instead of always recording placeholder failures.
+
+## SELF-603 - Persist Real Scheduled Pipeline DAG Outcomes
+Status: PASS
+
+BDD/TDD red step:
+- Added SELF-603 scenarios to `cmd/server/pipeline_scheduler_runner_bdd_test.go`:
+  - A scheduled pipeline with a configured DAG node runner records a successful run row with `triggeredBy=schedule`, a persisted `RunDAG` result, and successful node statuses.
+  - A scheduled pipeline whose DAG node runner fails records a failed run row with the partial `RunDAG` result and error message, while returning the node error to the scheduler logger path.
+- Command: `go test ./cmd/server -run 'TestBDD_ScheduledPipelineTick_GivenDAGRunner' -count=1 -v`
+- Result: exited 1 as expected because `newScheduledPipelineDAGRunRecorder` did not exist.
+
+Implementation:
+- `cmd/server/pipeline_scheduler_runner.go`
+  - Extended `scheduledPipelineRunRecorder` with an optional `pipeline.NodeRunner`.
+  - Added `newScheduledPipelineDAGRunRecorder(store, nodeRunner)` for configured runtime use.
+  - Kept the existing nil-runtime path unchanged: it still appends a failed runtime-not-configured row and returns the runtime-not-configured error.
+  - When a node runner is configured, the scheduler runner now calls `pipeline.RunDAG`, appends a terminal `PipelineRun` with `Result`, `status`, `startedAt`, `finishedAt`, `triggeredBy=schedule`, and any error message, then returns the DAG error after the run row is durable.
+
+Verification:
+- RED: `go test ./cmd/server -run 'TestBDD_ScheduledPipelineTick_GivenDAGRunner' -count=1 -v` exited 1 with `undefined: newScheduledPipelineDAGRunRecorder`.
+- GREEN targeted: `go test ./cmd/server -run 'TestBDD_ScheduledPipelineTick_GivenDAGRunner' -count=1 -v` exited 0.
+- Scheduler regression: `go test ./cmd/server -run 'TestBDD_ScheduledPipelineTick' -count=1 -v` exited 0 with all four scheduled tick BDD tests passing.
+- Related packages: `go test ./cmd/server ./pkg/pipeline -count=1` exited 0.
+- CI helper tests: `go test ./scripts/ci -count=1` exited 0.
+- Fast Go gate: `go test $(./scripts/ci/go-packages.sh) -count=1` exited 0.
+
+Files changed:
+- `cmd/server/pipeline_scheduler_runner.go`
+- `cmd/server/pipeline_scheduler_runner_bdd_test.go`
+- `scripts/ralph/prd.json`
+- `scripts/ralph/progress.txt`
+
+Reusable learning:
+- The scheduler runner should treat `pipeline.NodeRunner` presence as the runtime boundary: nil records explicit runtime-not-configured evidence, while non-nil runs the DAG and persists the real `RunResult` before surfacing any execution error to scheduler logging.
+- `pipeline.RunDAG` validates the pipeline model through `BuildDAG`, so BDD fixtures that exercise real DAG execution need a 5- or 6-field cron string such as `0 * * * *`; `@every` descriptors are scheduler-parser inputs, not model-validator inputs.
+---

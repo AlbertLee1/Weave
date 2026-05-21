@@ -61,7 +61,7 @@
       "title": "Persist Real Scheduled Pipeline DAG Outcomes",
       "description": "As a pipeline operator, I want scheduled pipelines with an available runtime runner to persist actual DAG success/failure results, so run history evolves from tick evidence into execution evidence.",
       "priority": "medium",
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         {
           "given": "a scheduled pipeline and a configured DAG node runner",
