@@ -61,21 +61,24 @@ const promptNameSep = "__"
 // wired (degraded test paths) the result is an empty list. The ordering is
 // stable: ontology api name, then action api name.
 func (s *Server) handlePromptsList(ctx context.Context) (map[string]any, error) {
-	prompts := s.collectPrompts(ctx)
+	prompts, err := s.collectPrompts(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{"prompts": prompts}, nil
 }
 
 // collectPrompts walks OMS metadata and synthesises one Prompt per
 // ActionType. Returns a non-nil slice (possibly empty) so JSON output is
 // always [{}...]/[] rather than null.
-func (s *Server) collectPrompts(ctx context.Context) []Prompt {
+func (s *Server) collectPrompts(ctx context.Context) ([]Prompt, error) {
 	out := []Prompt{}
 	if s.oms == nil {
-		return out
+		return out, nil
 	}
 	ontologies, err := s.oms.ListOntologies(ctx)
 	if err != nil {
-		return out
+		return nil, fmt.Errorf("list ontologies: %w", err)
 	}
 	// Stable ordering for both clients and tests.
 	sort.SliceStable(ontologies, func(i, j int) bool {
@@ -84,7 +87,7 @@ func (s *Server) collectPrompts(ctx context.Context) []Prompt {
 	for _, ont := range ontologies {
 		actions, err := s.oms.ListActionTypes(ctx, ont.RID)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("list action types for %s: %w", ont.APIName, err)
 		}
 		sort.SliceStable(actions, func(i, j int) bool {
 			return actions[i].APIName < actions[j].APIName
@@ -97,7 +100,7 @@ func (s *Server) collectPrompts(ctx context.Context) []Prompt {
 			})
 		}
 	}
-	return out
+	return out, nil
 }
 
 func promptNameFor(ontologyAPIName, actionAPIName string) string {

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/liyang/weave/pkg/oms"
@@ -161,10 +162,52 @@ func TestPromptsList_Given_NilOMS_When_Called_Then_EmptyListNoPanic(t *testing.T
 	}
 }
 
+func TestPromptsList_Given_OntologyListingFails_When_Called_Then_InternalError(t *testing.T) {
+	srv, repo := newPromptsServer(t)
+	repo.listOntologiesErr = errors.New("oms unavailable")
+
+	resp := srv.Handle(context.Background(), &Request{
+		JSONRPC: "2.0", ID: json.RawMessage(`6`), Method: "prompts/list",
+	})
+	if resp.Error == nil {
+		t.Fatalf("expected prompts/list error")
+	}
+	if resp.Error.Code != CodeInternalError {
+		t.Fatalf("error code = %d, want %d", resp.Error.Code, CodeInternalError)
+	}
+	for _, want := range []string{"list ontologies", "oms unavailable"} {
+		if !contains(resp.Error.Message, want) {
+			t.Fatalf("error message missing %q: %s", want, resp.Error.Message)
+		}
+	}
+}
+
+func TestPromptsList_Given_ActionTypeListingFails_When_Called_Then_InternalErrorNoPartialCatalogue(t *testing.T) {
+	srv, repo := newPromptsServer(t)
+	repo.listActionTypesErr = map[string]error{
+		repo.ontologies[1].RID: errors.New("action metadata unavailable"),
+	}
+
+	resp := srv.Handle(context.Background(), &Request{
+		JSONRPC: "2.0", ID: json.RawMessage(`7`), Method: "prompts/list",
+	})
+	if resp.Error == nil {
+		t.Fatalf("expected prompts/list error")
+	}
+	if resp.Error.Code != CodeInternalError {
+		t.Fatalf("error code = %d, want %d", resp.Error.Code, CodeInternalError)
+	}
+	for _, want := range []string{"list action types", "chinook", "action metadata unavailable"} {
+		if !contains(resp.Error.Message, want) {
+			t.Fatalf("error message missing %q: %s", want, resp.Error.Message)
+		}
+	}
+}
+
 func TestInitialize_Given_Server_When_HandshakeCalled_Then_AdvertisesPromptsCapability(t *testing.T) {
 	srv, _, _, _ := newTestServer(t)
 	resp := srv.Handle(context.Background(), &Request{
-		JSONRPC: "2.0", ID: json.RawMessage(`5`), Method: "initialize",
+		JSONRPC: "2.0", ID: json.RawMessage(`8`), Method: "initialize",
 	})
 	var body struct {
 		Capabilities map[string]json.RawMessage `json:"capabilities"`
