@@ -58,6 +58,34 @@ describe('openScenarioRunStream (VTX-115)', () => {
     expect(es.closed).toBe(true);
   });
 
+  it('iterates events and terminates after a canceled event', async () => {
+    const handle = openScenarioRunStream({
+      scenarioRid: 'ri.vertex.main.scenario.s1',
+      EventSourceCtor: FakeEventSource as unknown as typeof EventSource,
+      allowUnimplementedStreamRoute: true,
+    });
+    const es = FakeEventSource.last!;
+    es.pushEvent(
+      {
+        kind: 'canceled',
+        scenarioRunRid: 'r1',
+        error: 'operator canceled',
+      } as unknown as RunEvent,
+      'evt-2',
+    );
+
+    const iter = handle.events[Symbol.asyncIterator]();
+    await expect(iter.next()).resolves.toEqual({
+      value: {
+        kind: 'canceled',
+        scenarioRunRid: 'r1',
+        error: 'operator canceled',
+      },
+      done: false,
+    });
+    expect(es.closed).toBe(true);
+  });
+
   it('reconnects on error and carries Last-Event-Id in the reconnect URL', async () => {
     vi.useFakeTimers();
     const handle = openScenarioRunStream({
@@ -146,7 +174,18 @@ describe('pollFinalState', () => {
     expect(r).toEqual({ kind: 'failed', scenarioRunRid: 'r-final', error: 'model failed' });
   });
 
-  it.each(['pending', 'running', 'canceled'] as const)(
+  it('maps a canceled REST response to a canceled event', async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ status: 'canceled', rid: 'r-final', error: 'operator canceled' }), { status: 200 }),
+    );
+    const r = await pollFinalState(
+      { scenarioRid: 's', runRid: 'j' },
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(r).toEqual({ kind: 'canceled', scenarioRunRid: 'r-final', error: 'operator canceled' });
+  });
+
+  it.each(['pending', 'running'] as const)(
     'returns null for non-success-or-failure REST status %s',
     async (status) => {
       const fetchImpl = vi.fn(async () =>

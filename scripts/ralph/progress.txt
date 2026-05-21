@@ -1,160 +1,44 @@
-# Ralph Progress Log - Parallel2 Integration
-Integrated: 2026-05-20T20:54:13+08:00
-Integration branch: ralph/self-iteration-20260520-134952
-
-## Stream A: ralph/self-iteration-20260520-134952-A
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260520-134952-A
-HEAD: f140f08334ca
-
-# Ralph Progress Log - Parallel2 Stream A
-Started: 2026-05-20T13:58:16+08:00
-Integration branch: ralph/self-iteration-20260520-134952
-Stream branch: ralph/self-iteration-20260520-134952-A
-Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
-Archived prior empty PRD/progress under scripts/ralph/archive/self-iteration-20260520-135816/
----
+# Ralph Progress Log
+Started: Thu May 21 08:59:49 CST 2026
+Branch: ralph/self-iteration-20260520-134952
 
 ## Fresh PRD Inspection
-- Branch check: `git branch --show-current` => `ralph/self-iteration-20260520-134952-A`.
-- Initial worktree check: `git status --short --branch` => clean branch.
-- Prior `scripts/ralph/prd.json` belonged to this branch but had an empty `userStories` array, so a fresh P2A PRD was required.
-- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the prior progress file.
-- GitHub health: `gh run list --branch main --limit 5` showed latest main CI run `26142462722` completed successfully on `2026-05-20T05:02:39Z`; no PR exists for this stream branch yet.
-- Local known-risk check: `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v` passed, so the fresh-CI `cmd/server/embed.go` / `web/dist` issue is already guarded.
-- DOG-001 and DOG-003 dogfood failures are already covered by current BDD tests in `test/fixtures/seed_northwind/seed_test.go`, `pkg/oms/index_bootstrap_bdd_test.go`, and `pkg/oss/stream_ingest_dog003_bdd_test.go`.
-- Backend sweep started: `go test $(./scripts/ci/go-packages.sh)` was still running when the PRD was written; all emitted package results were passing so far.
-
-## Selected Story
-- `P2A-001` - Reject malformed stream ingest edits before publish.
+- Existing `scripts/ralph/prd.json` belonged to this branch and all stories had `passes: true`, so a fresh one-story PRD was required.
+- Archived prior state under `scripts/ralph/archive/self-iteration-20260521-085949/`.
+- No `PR CI auto-fix context` or `LLM review auto-fix context` existed in the active progress file.
+- GitHub health: `gh run list --branch ralph/self-iteration-20260520-134952 --limit 5` showed the latest pull-request CI run `26164497179` completed successfully on `2026-05-20T13:06:28Z`.
+- Known CI risk check: `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v` passed.
+- Known web risk check: `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx` passed: 1 file, 8 tests.
+- Vertex package health check: `go test ./pkg/vertex/... -count=1` passed.
+- Vertex focused web health check: `npm --prefix web test -- --run src/vertex/VertexWorkspacePage.test.tsx src/vertex/VertexGraphWidget.test.tsx src/vertex/VertexGraphWidget.defaults.test.tsx` passed: 3 files, 47 tests.
 
 ## Codebase Patterns
-- Stream-local `scripts/ralph/prd.json` and `scripts/ralph/progress.txt` are runtime state and should be updated for Ralph but not committed.
+- Root `prd.json` and `progress.txt` are symlinks to `scripts/ralph/prd.json` and `scripts/ralph/progress.txt`; keep the symlinks intact.
+- Vite/Vitest commands should be run with paths relative to `web` when using `npm --prefix web`.
 - `cmd/server/embed_ci_bdd_test.go` is the focused guard for fresh checkout Go builds without generated WebUI assets.
-- DOG-003 stream-ingest/index readiness has two layers: OMS import/create bootstraps indexes and `oss.StreamIngestHandler` can reject missing indexes through `SetIndexReadinessChecker`.
-
-## P2A-001 Evidence - Reject malformed stream ingest edits before publish
-- RED:
-  - Added `TestBDD_StreamIngestRejectsMalformedEditEnvelope` in `pkg/oss/stream_ingest_test.go`.
-  - `go test ./pkg/oss -run TestBDD_StreamIngestRejectsMalformedEditEnvelope -count=1 -v` failed because invalid edit envelopes returned `200` with `editCount:1` and reached the publisher.
-- GREEN:
-  - Added `validateIngestEditEnvelope` in `pkg/oss/stream_ingest.go`.
-  - The handler now returns `400 INVALID_ARGUMENT / InvalidEdit` before publish when an edit has an unknown type, a missing primary key, or an incomplete link identity (`linkTypeRid` / `targetPrimaryKey`).
-  - Existing source tagging and URL objectType coercion still happen before metadata validation and publish for valid edits.
-- Verification:
-  - `go test ./pkg/oss -run 'TestBDD_StreamIngestRejectsMalformedEditEnvelope|TestStreamIngestHappyPath|TestStreamIngestExact1000' -count=1 -v` => passed.
-  - `go test ./pkg/oss -count=1` => passed (`ok github.com/liyang/weave/pkg/oss 70.034s`).
-  - Baseline health before source edits: `go test $(./scripts/ci/go-packages.sh)` => passed.
-  - Final focused gate: `go test ./pkg/oss -run 'TestBDD_StreamIngestRejectsMalformedEditEnvelope|TestStreamIngestHappyPath|TestStreamIngestExact1000' -count=1` => passed (`ok github.com/liyang/weave/pkg/oss 0.550s`).
-  - `python3 -m json.tool scripts/ralph/prd.json >/dev/null` => passed.
-  - `git diff --check` => passed.
-- Files changed:
-  - `pkg/oss/stream_ingest.go`
-  - `pkg/oss/stream_ingest_test.go`
-  - `scripts/ralph/prd.json` (runtime state, not committed)
-  - `scripts/ralph/progress.txt` (runtime state, not committed)
-- Reusable learning:
-  - Stream ingest had semantic validators for metadata/value types and operational guards for rate limits/index readiness, but the base edit envelope still needed an API-layer guard. Put this shape check before publisher calls so `200 OK` only means the batch is consumer-safe at the envelope level.
-
-## P2A-002 Evidence - Support JSON-RPC batch envelopes in MCP transports
-- Started: 2026-05-20T14:11:43+08:00.
-- RED:
-  - Added `TestBDD_HTTPTransportProcessesJSONRPCBatch` and `TestBDD_HTTPTransportRejectsEmptyJSONRPCBatch` in `pkg/mcp/http_transport_test.go`.
-  - Added `TestBDD_StdioTransportProcessesJSONRPCBatchOnOneLine` in `pkg/mcp/stdio_transport_test.go`.
-  - Initial red run after correcting the stdio fixture to one physical line: `go test ./pkg/mcp -run 'TestBDD_HTTPTransportProcessesJSONRPCBatch|TestBDD_HTTPTransportRejectsEmptyJSONRPCBatch|TestBDD_StdioTransportProcessesJSONRPCBatchOnOneLine' -count=1 -v` failed because batch arrays were parsed as a single request and returned JSON-RPC parse errors; empty batch returned `-32700` instead of `-32600`.
-- GREEN:
-  - Added `ParseRequestEnvelope` in `pkg/mcp/protocol.go` to distinguish single requests from non-empty JSON-RPC batch arrays.
-  - Empty batch arrays now return JSON-RPC `InvalidRequest`.
-  - Malformed items inside a non-empty batch produce per-item error responses while valid sibling requests can still be handled.
-  - HTTP transport writes one JSON array for batch responses and still returns 204 for notification-only envelopes.
-  - Stdio transport writes one output line containing the response array for a batch line and skips notifications.
-- Verification:
-  - `go test ./pkg/mcp -run 'TestBDD_HTTPTransportProcessesJSONRPCBatch|TestBDD_HTTPTransportRejectsEmptyJSONRPCBatch|TestBDD_StdioTransportProcessesJSONRPCBatchOnOneLine' -count=1 -v` => passed.
-  - `go test ./pkg/mcp -count=1` => passed (`ok github.com/liyang/weave/pkg/mcp 0.609s` on final source state).
-  - `git diff --check` => passed.
-  - `go test $(./scripts/ci/go-packages.sh)` => passed on final source state.
-- Files changed:
-  - `pkg/mcp/protocol.go`
-  - `pkg/mcp/http_transport.go`
-  - `pkg/mcp/stdio_transport.go`
-  - `pkg/mcp/http_transport_test.go`
-  - `pkg/mcp/stdio_transport_test.go`
-  - `scripts/ralph/prd.json` (runtime state, not committed)
-  - `scripts/ralph/progress.txt` (runtime state, not committed)
-- Reusable learning:
-  - MCP transports should parse the JSON-RPC envelope once and then share dispatch semantics. Keeping batch awareness at the transport boundary preserves `Server.Handle` as a single-request dispatcher while allowing HTTP and stdio to format batch responses according to their transport contracts.
-
-## P2A-003 Evidence - Make MCP HTTP body-limit failures transport-level
-- Started: 2026-05-20T14:17:02+08:00.
-- RED:
-  - Added `TestBDD_HTTPTransportRejectsOversizedBodyAtTransportLayer` in `pkg/mcp/http_transport_test.go`.
-  - `go test ./pkg/mcp -run TestBDD_HTTPTransportRejectsOversizedBodyAtTransportLayer -count=1 -v` failed because a body larger than `maxBodySize` returned HTTP `200` with a JSON-RPC `InvalidRequest` envelope: `failed to read request body: http: request body too large`.
-- GREEN:
-  - Updated `pkg/mcp/http_transport.go` to classify `*http.MaxBytesError` from `http.MaxBytesReader` as a transport-level rejection.
-  - Oversized HTTP MCP requests now return `413 Request Entity Too Large` via `http.Error` and do not emit a JSON-RPC envelope.
-  - Other request read errors still use the existing JSON-RPC `InvalidRequest` behavior, preserving protocol-level error handling.
-- Verification:
-  - `go test ./pkg/mcp -run TestBDD_HTTPTransportRejectsOversizedBodyAtTransportLayer -count=1 -v` => passed.
-  - `go test ./pkg/mcp -run 'TestBDD_HTTPTransportRejectsOversizedBodyAtTransportLayer|TestHTTPTransport_DecodesJSONRPC|TestHTTPTransport_ReturnsValidResponse' -count=1 -v` => passed.
-  - `go test ./pkg/mcp -count=1` => passed (`ok github.com/liyang/weave/pkg/mcp 0.600s`).
-  - `git diff --check` => passed.
-  - `go test $(./scripts/ci/go-packages.sh)` => passed.
-- Files changed:
-  - `pkg/mcp/http_transport.go`
-  - `pkg/mcp/http_transport_test.go`
-  - `scripts/ralph/prd.json` (runtime state, not committed)
-  - `scripts/ralph/progress.txt` (runtime state, not committed)
-- Reusable learning:
-  - MCP HTTP keeps JSON-RPC protocol errors on HTTP `200`, but size enforcement belongs to the HTTP transport boundary. `http.MaxBytesReader` exposes that boundary as `*http.MaxBytesError`, which should be handled before generic read-error mapping.
-
-
----
-
-## Stream B: ralph/self-iteration-20260520-134952-B
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260520-134952-B
-HEAD: 09591eac3a92
-
-# Ralph Progress Log - Parallel2 Stream B
-Started: 2026-05-20T13:55:32+08:00
-Integration branch: ralph/self-iteration-20260520-134952
-Stream branch: ralph/self-iteration-20260520-134952-B
-Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
-
-## Initial Health Evidence
-- Branch verified: `ralph/self-iteration-20260520-134952-B`.
-- Worktree initially clean.
-- Existing hinted CI issues checked:
-  - `go test ./cmd/server` passed; embed placeholder is present under `cmd/server/web/embed-placeholder.txt`.
-  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx` passed: 1 file, 8 tests.
-- Web health checks:
-  - `npm --prefix web test -- --run` passed: 280 files, 2891 tests.
-  - `npm --prefix web run build` passed; bundle budget passed.
-  - Playwright discovery command from CI passed; 71 tests listed.
-- `npm --prefix web run lint` has broad pre-existing lint debt. Focused stream-B finding: realtime subscription hooks mutate refs during render and fail targeted React 19 lint.
-
-## Codebase Patterns
-- Vite/Vitest commands must be run with paths relative to `web` when using `npm --prefix web`.
-- `useWebSocketSubscription` and `useObjectSetSubscription` intentionally keep latest callbacks in refs so reconnect/message handlers do not resubscribe on every callback identity change.
+- `web/src/vertex/scenarioRunStream.ts` is intentionally guarded: default calls throw until the SSE route is mounted, and tests/future callers must opt in with `allowUnimplementedStreamRoute`.
+- The TypeScript Vertex SDK polling path already treats `pending`, `running`, `succeeded`, `failed`, and `canceled` as lifecycle statuses, with `canceled` terminal.
 
 ## Selected Story
-- P2B-001: Repair React 19 realtime subscription ref handling.
+- `SELF-501` - Emit canceled Vertex scenario-run stream fallback events.
 
-## Progress
-- Created focused PRD after archiving the empty stream-local state under `scripts/ralph/archive/self-iteration-20260520-135532/`.
-- RED: added `web/src/hooks/__tests__/realtimeSubscriptions.callbacks.bdd.test.ts` for callback freshness. The BDD file passed on existing behavior, while the implementation gate was red as expected:
-  - `cd web && npx eslint src/hooks/useWebSocketSubscription.ts src/hooks/useObjectSetSubscription.ts` failed with 7 `react-hooks/refs` render-time ref mutation errors.
-- GREEN: moved latest callback/subscription parameter ref refreshes in `useWebSocketSubscription` and `useObjectSetSubscription` from render into `useLayoutEffect`, preserving stable connection effects.
-- Verification after implementation:
-  - `npm --prefix web test -- --run src/hooks/__tests__/realtimeSubscriptions.callbacks.bdd.test.ts src/hooks/__tests__/useWebSocketSubscription.test.ts src/hooks/__tests__/useObjectSetSubscription.test.ts` passed: 3 files, 26 tests.
-  - `cd web && npx eslint src/hooks/useWebSocketSubscription.ts src/hooks/useObjectSetSubscription.ts` passed with no output.
-  - `cd web && npx eslint src/hooks/__tests__/realtimeSubscriptions.callbacks.bdd.test.ts src/hooks/useWebSocketSubscription.ts src/hooks/useObjectSetSubscription.ts` passed with no output.
+## SELF-501 Evidence - Emit canceled Vertex scenario-run stream fallback events
+- RED:
+  - Added BDD coverage in `web/src/vertex/scenarioRunStream.test.ts` for canceled SSE terminal events and canceled REST fallback mapping.
+  - `npm --prefix web test -- --run src/vertex/scenarioRunStream.test.ts` failed for the expected reasons: `es.closed` stayed `false` after a canceled event, and `pollFinalState` returned `null` for a canceled REST record.
+- GREEN:
+  - Extended `RunEvent` with `kind: "canceled"`.
+  - Added shared terminal-event detection so completed, failed, and canceled events close the stream.
+  - Mapped REST fallback status `canceled` to a terminal canceled event carrying `scenarioRunRid` and optional error.
+- Verification:
+  - `npm --prefix web test -- --run src/vertex/scenarioRunStream.test.ts` passed: 1 file, 11 tests.
+  - `npm --prefix web test -- --run src/vertex/scenarioRunStream.test.ts src/vertex/SdkVertexClient.test.ts` passed: 2 files, 19 tests.
   - `npm --prefix web run typecheck` passed.
-  - `npm --prefix web run build` passed; bundle budget passed.
-  - `npm --prefix web test -- --run` passed: 281 files, 2893 tests.
-- Files changed for commit:
-  - `web/src/hooks/useWebSocketSubscription.ts`
-  - `web/src/hooks/useObjectSetSubscription.ts`
-  - `web/src/hooks/__tests__/realtimeSubscriptions.callbacks.bdd.test.ts`
-- P2B-001 marked `passes: true`.
-
-
----
+  - `python3 -m json.tool scripts/ralph/prd.json >/dev/null` passed.
+- Files changed:
+  - `web/src/vertex/scenarioRunStream.ts`
+  - `web/src/vertex/scenarioRunStream.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- Reusable learning:
+  - Keep scenario-run stream terminal states aligned with SDK polling lifecycle states; `canceled` is terminal even when the stream path has to learn it through REST fallback.
