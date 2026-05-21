@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { Ontology } from '../../api/types';
 
 interface OntologyCardProps {
@@ -7,6 +8,8 @@ interface OntologyCardProps {
 }
 
 export function OntologyCard({ ontology, objectTypeCount, onClick }: OntologyCardProps) {
+  const { t } = useTranslation();
+
   return (
     <button
       type="button"
@@ -54,7 +57,7 @@ export function OntologyCard({ ontology, objectTypeCount, onClick }: OntologyCar
             boxShadow: 'inset 0 0 8px rgba(245,158,11,0.08)',
           }}
         >
-          {objectTypeCount} types
+          {t('dashboard.objectTypeCount', { count: objectTypeCount })}
         </span>
       </div>
 

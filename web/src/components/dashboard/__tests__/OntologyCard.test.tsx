@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { changeLocale } from '../../../i18n';
 import { OntologyCard } from '../OntologyCard';
 
 const mockOntology = {
@@ -10,6 +11,10 @@ const mockOntology = {
 };
 
 describe('OntologyCard', () => {
+  beforeEach(async () => {
+    await changeLocale('en');
+  });
+
   it('displays displayName', () => {
     render(
       <OntologyCard ontology={mockOntology} objectTypeCount={5} onClick={() => {}} />,
@@ -28,9 +33,7 @@ describe('OntologyCard', () => {
     render(
       <OntologyCard ontology={mockOntology} objectTypeCount={5} onClick={() => {}} />,
     );
-    // The component renders the count and label as sibling text nodes
-    // ("5" + " types"), so use a regex matcher rather than exact text.
-    expect(screen.getByText(/5\s*types?/)).toBeInTheDocument();
+    expect(screen.getByText(/5\s*object types?/)).toBeInTheDocument();
   });
 
   it('calls onClick when clicked', () => {
