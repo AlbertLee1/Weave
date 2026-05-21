@@ -265,6 +265,18 @@ curl -s -X POST http://localhost:9117/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{}}'
 
+# resources/list with a bounded page
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{
+        "pageSize":100}}'
+
+# resources/list next page
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{
+        "cursor":"<nextCursor-from-prior-response>"}}'
+
 # resources/read for an ontology
 curl -s -X POST http://localhost:9117/mcp \
   -H 'Content-Type: application/json' \
@@ -293,6 +305,12 @@ curl -s -X POST http://localhost:9117/mcp \
 Reading a resource for an ObjectSet returns the Definition only —
 materialise the rows by POSTing the Definition to
 `/api/v2/ontologies/{ontology}/objectSets/loadObjects`.
+
+By default, `resources/list` returns the full catalogue for existing
+clients. Supplying `pageSize` returns a URI-sorted page and a `nextCursor`
+when more resources remain. Pass that cursor back on the next
+`resources/list` call to continue after the previous page boundary.
+Malformed cursors return JSON-RPC `Invalid params`.
 
 `resources/subscribe` validates the URI against the live catalogue before
 recording the subscription, so malformed or unknown resources return a

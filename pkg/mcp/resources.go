@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,6 +67,17 @@ type resourcesReadParams struct {
 	URI string `json:"uri"`
 }
 
+type resourcesListParams struct {
+	Cursor   string `json:"cursor,omitempty"`
+	PageSize int    `json:"pageSize,omitempty"`
+}
+
+type resourceListCursor struct {
+	Version  int    `json:"v"`
+	AfterURI string `json:"afterUri"`
+	PageSize int    `json:"pageSize,omitempty"`
+}
+
 type resourcesSubscribeParams struct {
 	URI string `json:"uri"`
 }
@@ -83,6 +95,11 @@ type resourcesSubscribeParams struct {
 // the worst failure mode for a discovery endpoint — better to fail loudly
 // and let the client retry once the upstream is healthy again.
 func (s *Server) handleResourcesList(ctx context.Context, req *Request) *Response {
+	params, errResp := decodeResourcesListParams(req)
+	if errResp != nil {
+		return errResp
+	}
+
 	resources := []Resource{}
 
 	if s.oms != nil {
@@ -138,7 +155,91 @@ func (s *Server) handleResourcesList(ctx context.Context, req *Request) *Respons
 	}
 
 	sort.Slice(resources, func(i, j int) bool { return resources[i].URI < resources[j].URI })
-	return NewSuccessResponse(req.ID, map[string]any{"resources": resources})
+
+	page, nextCursor, err := pageResources(resources, params)
+	if err != nil {
+		return NewErrorResponse(req.ID, CodeInvalidParams, err.Error(), nil)
+	}
+	result := map[string]any{"resources": page}
+	if nextCursor != "" {
+		result["nextCursor"] = nextCursor
+	}
+	return NewSuccessResponse(req.ID, result)
+}
+
+func decodeResourcesListParams(req *Request) (resourcesListParams, *Response) {
+	var p resourcesListParams
+	if len(req.Params) == 0 {
+		return p, nil
+	}
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		return p, NewErrorResponse(req.ID, CodeInvalidParams, "decode params: "+err.Error(), nil)
+	}
+	if p.PageSize < 0 {
+		return p, NewErrorResponse(req.ID, CodeInvalidParams, "pageSize must be non-negative", nil)
+	}
+	if p.Cursor != "" {
+		c, err := decodeResourceListCursor(p.Cursor)
+		if err != nil {
+			return p, NewErrorResponse(req.ID, CodeInvalidParams, err.Error(), nil)
+		}
+		if p.PageSize == 0 {
+			p.PageSize = c.PageSize
+		}
+		p.Cursor = c.AfterURI
+	}
+	return p, nil
+}
+
+func pageResources(resources []Resource, params resourcesListParams) ([]Resource, string, error) {
+	start := 0
+	if params.Cursor != "" {
+		start = sort.Search(len(resources), func(i int) bool {
+			return resources[i].URI > params.Cursor
+		})
+	}
+	if params.PageSize == 0 || start+params.PageSize >= len(resources) {
+		return resources[start:], "", nil
+	}
+	end := start + params.PageSize
+	nextCursor, err := encodeResourceListCursor(resources[end-1].URI, params.PageSize)
+	if err != nil {
+		return nil, "", err
+	}
+	return resources[start:end], nextCursor, nil
+}
+
+func encodeResourceListCursor(afterURI string, pageSize int) (string, error) {
+	body, err := json.Marshal(resourceListCursor{
+		Version:  1,
+		AfterURI: afterURI,
+		PageSize: pageSize,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode resource cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(body), nil
+}
+
+func decodeResourceListCursor(cursor string) (resourceListCursor, error) {
+	body, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return resourceListCursor{}, fmt.Errorf("invalid resource cursor")
+	}
+	var c resourceListCursor
+	if err := json.Unmarshal(body, &c); err != nil {
+		return resourceListCursor{}, fmt.Errorf("invalid resource cursor")
+	}
+	if c.Version != 1 {
+		return resourceListCursor{}, fmt.Errorf("invalid resource cursor version")
+	}
+	if !strings.HasPrefix(c.AfterURI, uriScheme) {
+		return resourceListCursor{}, fmt.Errorf("invalid resource cursor boundary")
+	}
+	if c.PageSize < 0 {
+		return resourceListCursor{}, fmt.Errorf("invalid resource cursor page size")
+	}
+	return c, nil
 }
 
 // handleResourcesRead implements MCP resources/read. The URI scheme is

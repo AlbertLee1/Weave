@@ -19,7 +19,7 @@
 //     ontology, action and supplied arguments so the LLM can invoke
 //     weave_apply_action with the same shape (OSV2-302)
 //   - resources/list : list ontologies, ObjectTypes (one per ontology, OSV2-307),
-//     and temporary ObjectSets as MCP resources
+//     and temporary ObjectSets as MCP resources, with optional cursor pagination
 //   - resources/read : return the schema for an ontology, the schema for a
 //     single ObjectType (weave://objecttype/<ontology>/<objectType>),
 //     or the stored definition for an ObjectSet, given a `weave://<kind>/<id>` URI
