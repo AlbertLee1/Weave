@@ -75,6 +75,8 @@ codes (`405`, `204`) are reserved for transport-level conditions.
 | `prompts/get` | Render one ActionType prompt with supplied arguments |
 | `resources/list` | List ontologies, ObjectTypes, and temporary ObjectSets as MCP resources |
 | `resources/read` | Return the schema for an ontology, ObjectType, or stored ObjectSet definition |
+| `resources/subscribe` | Subscribe to a known ontology, ObjectType, or ObjectSet resource URI |
+| `resources/unsubscribe` | Idempotently remove a resource subscription |
 | `ping` | Liveness check; returns `{}` |
 
 Notifications (requests with no `id`) such as `notifications/initialized`
@@ -190,7 +192,7 @@ curl -s -X POST http://localhost:9117/mcp \
 #    "capabilities":{
 #      "tools":{"listChanged":false},
 #      "prompts":{"listChanged":false},
-#      "resources":{"listChanged":false,"subscribe":false}},
+#      "resources":{"listChanged":false,"subscribe":true}},
 #    "serverInfo":{"name":"weave-mcp","version":"0.1.0"}}}
 
 # 2. tools/list
@@ -274,11 +276,29 @@ curl -s -X POST http://localhost:9117/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{
         "uri":"weave://objecttype/demo/User"}}'
+
+# resources/subscribe for an ontology
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":4,"method":"resources/subscribe","params":{
+        "uri":"weave://ontology/ri.weave.main.ontology.demo"}}'
+
+# resources/unsubscribe for the same URI
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":5,"method":"resources/unsubscribe","params":{
+        "uri":"weave://ontology/ri.weave.main.ontology.demo"}}'
 ```
 
 Reading a resource for an ObjectSet returns the Definition only —
 materialise the rows by POSTing the Definition to
 `/api/v2/ontologies/{ontology}/objectSets/loadObjects`.
+
+`resources/subscribe` validates the URI against the live catalogue before
+recording the subscription, so malformed or unknown resources return a
+JSON-RPC error instead of a silent success. `resources/unsubscribe` is
+idempotent and succeeds even if the caller has already removed the
+subscription.
 
 ## Limitations (MVP)
 

@@ -138,7 +138,7 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 | SDK (Python) | Aggregation | 🔴 | n/a | 🔴 | **10%** | 未暴露 |
 | CLI | auth / ontology / object | 🟢 | n/a | 🟢 | **80%** | 基础齐全、JSON/表格输出 |
 | CLI | action / aggregate / objectset | 🟢 | n/a | 🟡 | **65%** | `cmd/weave-cli/cmd_action.go` 暴露 `weave action apply`；`cmd_aggregate.go` 暴露 `weave aggregate`；`cmd_objectset.go` 暴露 `weave objectset load` / `weave objectset create-temporary`；`cmd/weave-cli/cli_us304_test.go` 覆盖命令契约；remaining depth gaps 是更高阶 helper、别名、发现文档和输出 polish |
-| MCP | 7 基础 + 4 AI 工具 | 🟢 | n/a | 🟢 | **82%** | `docs/mcp.md` 记录 HTTP `/mcp`、`prompts/list` / `prompts/get`、`resources/list` / `resources/read`；实现位于 `pkg/mcp/prompts.go` 与 `pkg/mcp/resources.go`，资源 URI 包含 `weave://objecttype/<ontology>/<objectType>`；剩余是 sampling、resource subscribe 与部署认证 polish |
+| MCP | 7 基础 + 4 AI 工具 | 🟢 | n/a | 🟢 | **84%** | `docs/mcp.md` 记录 HTTP `/mcp`、`prompts/list` / `prompts/get`、`resources/list` / `resources/read` / `resources/subscribe` / `resources/unsubscribe`；实现位于 `pkg/mcp/prompts.go` 与 `pkg/mcp/resources.go`，资源 URI 包含 `weave://objecttype/<ontology>/<objectType>`；剩余是 sampling 与部署认证 polish |
 | MCP stdio 独立二进制 | 🟢 bridge | — | 🟡 | **60%** | `cmd/weave-mcp/http_bridge.go` 在 `WEAVE_MCP_URL` 存在时提供 stdio HTTP bridge，转发到运行中的 `/mcp` 并复用 tools/prompts/resources；remaining local-standalone gap 是不自启 PG/NATS/Bleve |
 
 **总评（加权）**：**Weave 整体完成度 ≈ 72%**。其中：
@@ -371,8 +371,8 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 建议：补 `docs/cli.md` 的 action/aggregate/objectset 命令参考、常用 body 模板、可能的 `objectset run` 便捷别名，以及更丰富的 table 输出；这些属于 remaining depth gaps，不是缺失入口。
 
 **Gap-D4 — MCP prompts / resources / sampling**
-- 现状：`pkg/mcp/prompts.go` 已实现 `prompts/list` / `prompts/get`，从 OMS ActionType 元数据合成 prompt；`pkg/mcp/resources.go` 已实现 `resources/list` / `resources/read`，能列出 ontology、ObjectType 与临时 ObjectSet 资源，ObjectType URI 形如 `weave://objecttype/<ontology>/<objectType>`；对外契约见 `docs/mcp.md`。
-- 建议：下一步补 MCP sampling、resource subscribe 以及生产认证/部署说明；prompts/resources 不再是缺失入口。
+- 现状：`pkg/mcp/prompts.go` 已实现 `prompts/list` / `prompts/get`，从 OMS ActionType 元数据合成 prompt；`pkg/mcp/resources.go` 已实现 `resources/list` / `resources/read` / `resources/subscribe` / `resources/unsubscribe`，能列出 ontology、ObjectType 与临时 ObjectSet 资源，ObjectType URI 形如 `weave://objecttype/<ontology>/<objectType>`；对外契约见 `docs/mcp.md`。
+- 建议：下一步补 MCP sampling 以及生产认证/部署说明；prompts/resources 不再是缺失入口。
 
 **Gap-D5 — weave-mcp stdio 真可用**
 - 现状：`weave-mcp` 已有 bridge 模式：设置 `WEAVE_MCP_URL` 后，`cmd/weave-mcp/http_bridge.go` 会把本地 stdio JSON-RPC 转发到运行中的 `/mcp`，并复用同一套 tools/prompts/resources；也会透传 `WEAVE_MCP_TOKEN` / `WEAVE_MCP_API_KEY`。

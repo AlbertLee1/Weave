@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/liyang/weave/pkg/actions"
 	"github.com/liyang/weave/pkg/oms"
@@ -31,6 +32,7 @@ const (
 type Server struct {
 	registry *Registry
 	logger   *slog.Logger
+	mu       sync.Mutex
 
 	// Deps the built-in Weave tools call into.
 	oss      oss.Service
@@ -51,6 +53,11 @@ type Server struct {
 	// introduced in US-286. Optional — when nil, ObjectSet resources are
 	// simply omitted from the catalogue.
 	objectSetCatalog ObjectSetCatalog
+
+	// resourceSubscriptions tracks MCP resources/subscribe state per URI.
+	// Transports are request/response today, but keeping the registry here
+	// gives future resource-updated notifications a precise recipient set.
+	resourceSubscriptions map[string]struct{}
 }
 
 // ServerOption configures a Server at construction time.
@@ -66,11 +73,12 @@ func WithLogger(l *slog.Logger) ServerOption {
 // weave_apply_action returns an InternalError when called.
 func NewServer(ossSvc oss.Service, omsRepo oms.Repository, executor *actions.Executor, opts ...ServerOption) *Server {
 	s := &Server{
-		registry: NewRegistry(),
-		logger:   slog.Default(),
-		oss:      ossSvc,
-		oms:      omsRepo,
-		executor: executor,
+		registry:              NewRegistry(),
+		logger:                slog.Default(),
+		oss:                   ossSvc,
+		oms:                   omsRepo,
+		executor:              executor,
+		resourceSubscriptions: map[string]struct{}{},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -116,6 +124,10 @@ func (s *Server) Handle(ctx context.Context, req *Request) *Response {
 		return s.handleResourcesList(ctx, req)
 	case "resources/read":
 		return s.handleResourcesRead(ctx, req)
+	case "resources/subscribe":
+		return s.handleResourcesSubscribe(ctx, req)
+	case "resources/unsubscribe":
+		return s.handleResourcesUnsubscribe(req)
 	case "ping":
 		return NewSuccessResponse(req.ID, map[string]any{})
 	default:
@@ -135,7 +147,7 @@ func (s *Server) handleInitialize(req *Request) *Response {
 		"protocolVersion": ProtocolVersion,
 		"capabilities": map[string]any{
 			"tools":     map[string]any{"listChanged": false},
-			"resources": map[string]any{"listChanged": false, "subscribe": false},
+			"resources": map[string]any{"listChanged": false, "subscribe": true},
 			"prompts":   map[string]any{"listChanged": false},
 		},
 		"serverInfo": map[string]any{

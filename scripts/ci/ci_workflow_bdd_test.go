@@ -943,6 +943,8 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 		"`prompts/get`",
 		"`resources/list`",
 		"`resources/read`",
+		"`resources/subscribe`",
+		"`resources/unsubscribe`",
 		"`weave://objecttype/<ontology>/<objectType>`",
 		"stdio HTTP bridge",
 		"remaining local-standalone gap",
@@ -959,6 +961,8 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 		"`prompts/get` | Render one ActionType prompt with supplied arguments",
 		"`resources/list` | List ontologies, ObjectTypes, and temporary ObjectSets as MCP resources",
 		"`resources/read` | Return the schema for an ontology, ObjectType, or stored ObjectSet definition",
+		"`resources/subscribe` | Subscribe to a known ontology, ObjectType, or ObjectSet resource URI",
+		"`resources/unsubscribe` | Idempotently remove a resource subscription",
 		"`weave://objecttype/<ontology>/<objectType>`",
 	} {
 		if !strings.Contains(mcpDocs, required) {
@@ -971,7 +975,9 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 		`case "prompts/get":`,
 		`case "resources/list":`,
 		`case "resources/read":`,
-		`"resources": map[string]any{"listChanged": false, "subscribe": false}`,
+		`case "resources/subscribe":`,
+		`case "resources/unsubscribe":`,
+		`"resources": map[string]any{"listChanged": false, "subscribe": true}`,
 		`"prompts":   map[string]any{"listChanged": false}`,
 	} {
 		if !strings.Contains(mcpServer, required) {
@@ -983,7 +989,7 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 			t.Errorf("pkg/mcp/prompts.go must expose prompts fragment %q", required)
 		}
 	}
-	for _, required := range []string{"handleResourcesList", "handleResourcesRead", "ListOntologies", "ListObjectTypes", "weave://objecttype"} {
+	for _, required := range []string{"handleResourcesList", "handleResourcesRead", "handleResourcesSubscribe", "handleResourcesUnsubscribe", "ListOntologies", "ListObjectTypes", "weave://objecttype"} {
 		if !strings.Contains(resources, required) {
 			t.Errorf("pkg/mcp/resources.go must expose resources fragment %q", required)
 		}

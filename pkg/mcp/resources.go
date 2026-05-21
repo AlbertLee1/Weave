@@ -66,6 +66,10 @@ type resourcesReadParams struct {
 	URI string `json:"uri"`
 }
 
+type resourcesSubscribeParams struct {
+	URI string `json:"uri"`
+}
+
 // handleResourcesList implements MCP resources/list. It enumerates every
 // ontology in the OMS repo, every ObjectType under each ontology (OSV2-307,
 // so AI clients can resource://read a single type's schema instead of
@@ -198,6 +202,108 @@ func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Respons
 	default:
 		return NewErrorResponse(req.ID, CodeInvalidParams,
 			fmt.Sprintf("unsupported resource kind %q", kind), nil)
+	}
+}
+
+// handleResourcesSubscribe implements MCP resources/subscribe. We validate
+// the URI against the live catalogue before recording it so clients cannot
+// believe a typo or stale RID is being watched.
+func (s *Server) handleResourcesSubscribe(ctx context.Context, req *Request) *Response {
+	uri, errResp := decodeResourceSubscriptionParams(req)
+	if errResp != nil {
+		return errResp
+	}
+	if err := s.validateSubscribableResource(ctx, uri); err != nil {
+		if errors.Is(err, errInvalidResourceURI) {
+			return NewErrorResponse(req.ID, CodeInvalidParams, err.Error(), nil)
+		}
+		return NewErrorResponse(req.ID, CodeToolError, err.Error(), nil)
+	}
+
+	s.mu.Lock()
+	if s.resourceSubscriptions == nil {
+		s.resourceSubscriptions = map[string]struct{}{}
+	}
+	s.resourceSubscriptions[uri] = struct{}{}
+	s.mu.Unlock()
+	return NewSuccessResponse(req.ID, map[string]any{})
+}
+
+// handleResourcesUnsubscribe implements MCP resources/unsubscribe. It is
+// intentionally idempotent: a client may unsubscribe after a resource has
+// already changed or disappeared, and cleanup should still succeed.
+func (s *Server) handleResourcesUnsubscribe(req *Request) *Response {
+	uri, errResp := decodeResourceSubscriptionParams(req)
+	if errResp != nil {
+		return errResp
+	}
+	if _, _, err := parseResourceURI(uri); err != nil {
+		return NewErrorResponse(req.ID, CodeInvalidParams, err.Error(), nil)
+	}
+
+	s.mu.Lock()
+	delete(s.resourceSubscriptions, uri)
+	s.mu.Unlock()
+	return NewSuccessResponse(req.ID, map[string]any{})
+}
+
+func decodeResourceSubscriptionParams(req *Request) (string, *Response) {
+	var p resourcesSubscribeParams
+	if len(req.Params) == 0 {
+		return "", NewErrorResponse(req.ID, CodeInvalidParams, "params required", nil)
+	}
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		return "", NewErrorResponse(req.ID, CodeInvalidParams, "decode params: "+err.Error(), nil)
+	}
+	if p.URI == "" {
+		return "", NewErrorResponse(req.ID, CodeInvalidParams, "uri is required", nil)
+	}
+	return p.URI, nil
+}
+
+var errInvalidResourceURI = errors.New("invalid resource uri")
+
+func (s *Server) validateSubscribableResource(ctx context.Context, uri string) error {
+	kind, id, err := parseResourceURI(uri)
+	if err != nil {
+		return fmt.Errorf("%w: %s", errInvalidResourceURI, err.Error())
+	}
+
+	switch kind {
+	case "ontology":
+		if s.oms == nil {
+			return errors.New("oms repository not configured")
+		}
+		if _, err := s.oms.GetOntology(ctx, id); err != nil {
+			return fmt.Errorf("resource %q not found: %w", uri, err)
+		}
+		return nil
+	case "objectset":
+		if s.objectSetCatalog == nil {
+			return fmt.Errorf("resource %q not found: %w", uri, ErrObjectSetNotFound)
+		}
+		if _, err := s.objectSetCatalog.GetObjectSet(id); err != nil {
+			return fmt.Errorf("resource %q not found: %w", uri, err)
+		}
+		return nil
+	case "objecttype":
+		ontAPI, otAPI, ok := strings.Cut(id, "/")
+		if !ok || ontAPI == "" || otAPI == "" {
+			return fmt.Errorf("%w: objecttype uri must be weave://objecttype/<ontologyApiName>/<objectTypeApiName>", errInvalidResourceURI)
+		}
+		if s.oms == nil {
+			return errors.New("oms repository not configured")
+		}
+		ont, err := s.oms.GetOntology(ctx, ontAPI)
+		if err != nil {
+			return fmt.Errorf("resource %q not found: %w", uri, err)
+		}
+		if _, err := s.oms.GetObjectTypeByAPIName(ctx, ont.RID, otAPI); err != nil {
+			return fmt.Errorf("resource %q not found: %w", uri, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: unsupported resource kind %q", errInvalidResourceURI, kind)
 	}
 }
 
