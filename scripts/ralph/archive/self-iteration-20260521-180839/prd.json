@@ -1,0 +1,107 @@
+{
+  "project": "Weave parallel2 self-iteration",
+  "branchName": "ralph/self-iteration-20260521-171221",
+  "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
+  "userStories": [
+    {
+      "id": "P2A-001",
+      "title": "MCP Resource Subscription Handshake",
+      "priority": 1,
+      "area": "MCP backend",
+      "story": "As an MCP client, I want Weave to advertise and handle resource subscription requests for known ontology, ObjectType, and temporary ObjectSet resources so agents can prepare for schema-change notifications without treating subscribe as unsupported.",
+      "acceptanceCriteria": [
+        "Given an MCP client initializes, when it reads capabilities.resources, then subscribe is true while listChanged remains false.",
+        "Given a valid resource URI, when the client calls resources/subscribe, then the server returns an empty success result and remembers the subscription idempotently.",
+        "Given a subscribed URI, when the client calls resources/unsubscribe, then the server returns an empty success result and removes the subscription idempotently.",
+        "Given a malformed URI or unknown resource URI, when the client calls resources/subscribe, then the server returns a JSON-RPC error instead of silently succeeding.",
+        "Given the public MCP docs and CI status checks, then they describe resources/subscribe and resources/unsubscribe without stale subscribe=false claims."
+      ],
+      "dependencies": [
+        "pkg/mcp resources/read URI validation and fake test repository",
+        "docs/mcp.md and scripts/ci/ci_workflow_bdd_test.go MCP status assertions"
+      ],
+      "passes": true,
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260521-171221-A"
+    },
+    {
+      "id": "P2A-002",
+      "title": "MCP Resource List Cursor Safety",
+      "priority": 2,
+      "area": "MCP backend",
+      "story": "As an MCP client connected to a large Weave tenant, I want resources/list to honor a cursor and deterministic page boundary so resource discovery does not require loading every ontology and ObjectType in one unbounded response.",
+      "acceptanceCriteria": [
+        "Given a small page size in test wiring, when resources/list is called, then it returns a stable URI-sorted page and nextCursor.",
+        "Given a nextCursor from the first page, when resources/list is called again, then it returns the remaining resources without duplicates.",
+        "Given a malformed cursor, when resources/list is called, then it returns CodeInvalidParams.",
+        "Given no cursor or page size, existing clients still receive the full catalogue by default."
+      ],
+      "dependencies": [
+        "P2A-001 subscription methods must not change resource URI ordering."
+      ],
+      "passes": true,
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260521-171221-A"
+    },
+    {
+      "id": "P2A-003",
+      "title": "MCP HTTP Bridge Timeout Reliability",
+      "priority": 3,
+      "area": "MCP backend reliability",
+      "story": "As a local MCP client using cmd/weave-mcp as a stdio bridge, I want upstream HTTP stalls to become bounded JSON-RPC errors so the client does not hang indefinitely when the Weave server is slow or unreachable.",
+      "acceptanceCriteria": [
+        "Given WEAVE_MCP_URL points at a stalled endpoint, when cmd/weave-mcp forwards a request, then the bridge returns a JSON-RPC server error within the configured timeout.",
+        "Given WEAVE_MCP_HTTP_TIMEOUT is set to a valid duration, then the bridge uses that timeout.",
+        "Given WEAVE_MCP_HTTP_TIMEOUT is invalid, then startup fails clearly instead of silently using an unintended timeout.",
+        "Given existing auth env vars, then Authorization and X-Weave-API-Key forwarding keep their current precedence."
+      ],
+      "dependencies": [
+        "cmd/weave-mcp/http_bridge.go",
+        "cmd/weave-mcp tests"
+      ],
+      "passes": true,
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260521-171221-A"
+    },
+    {
+      "id": "P2B-001",
+      "title": "Localize Dashboard Ontology Card Object-Type Counts",
+      "priority": 1,
+      "asA": "Weave operator using the browser dashboard",
+      "iWant": "ontology cards to display object-type counts with the same pluralization and locale behavior as the rest of the dashboard",
+      "soThat": "the landing page remains trustworthy in English and zh-CN when counts are singular, plural, or localized",
+      "acceptanceCriteria": [
+        "Given an ontology card has one object type, When the dashboard renders in English, Then the chip says '1 object type' rather than '1 types'.",
+        "Given an ontology card has multiple object types, When the dashboard renders in English, Then the chip says '<count> object types'.",
+        "Given the active locale is zh-CN, When an ontology card renders, Then the chip uses dashboard.objectTypeCount translations instead of hardcoded English text."
+      ],
+      "dependencies": [
+        "web/src/i18n/resources/en.ts dashboard.objectTypeCount_one/other",
+        "web/src/i18n/resources/zh-CN.ts dashboard.objectTypeCount_other",
+        "react-i18next singleton initialized by web/src/i18n/index.ts"
+      ],
+      "passes": true,
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260521-171221-B"
+    },
+    {
+      "id": "P2B-002",
+      "title": "Polish Schema Graph Count Copy",
+      "priority": 2,
+      "asA": "ontology administrator reviewing the schema graph",
+      "iWant": "type/link summaries to use correct singular/plural copy",
+      "soThat": "the graph summary does not show awkward states like '1 types'",
+      "acceptanceCriteria": [
+        "Given the schema graph has one object type and zero links, When the admin page renders, Then the summary uses singular '1 type' and plural-safe '0 links'.",
+        "Given the schema graph has multiple object types and one link, When the admin page renders, Then the summary uses '<n> types · 1 link'."
+      ],
+      "dependencies": [
+        "web/src/components/admin/SchemaGraphPage.tsx",
+        "web/src/components/admin/__tests__/SchemaGraphPage.test.tsx"
+      ],
+      "passes": true,
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260521-171221-B"
+    }
+  ]
+}

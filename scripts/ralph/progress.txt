@@ -1,197 +1,63 @@
-# Ralph Progress Log - Parallel2 Integration
-Integrated: 2026-05-21T17:44:03+08:00
-Integration branch: ralph/self-iteration-20260521-171221
+# Ralph Progress Log
+Started: 2026-05-21T18:08:39+08:00
+Branch: ralph/self-iteration-20260521-171221
 
-## Stream A: ralph/self-iteration-20260521-171221-A
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260521-171221-A
-HEAD: 54302f7d77c5
-
-# Ralph Progress Log - Parallel2 Stream A
-Started: 2026-05-21T17:15:07+08:00
-Integration branch: ralph/self-iteration-20260521-171221
-Stream branch: ralph/self-iteration-20260521-171221-A
-Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
-
-Archived prior empty state:
-- scripts/ralph/archive/self-iteration-20260521-171507/prd.json
-- scripts/ralph/archive/self-iteration-20260521-171507/progress.txt
-
-Context inspected:
-- Branch verified with `git branch --show-current`: ralph/self-iteration-20260521-171221-A.
-- Existing PRD had no user stories, so a new stream-local PRD was created.
-- Local MCP baseline: `go test ./pkg/mcp` passed.
-- Fresh-CI embed baseline: `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1` passed.
-- GitHub main CI snapshot: latest CI run in progress at 2026-05-21T09:10:41Z; previous CI success at 2026-05-21T02:15:17Z; latest Codespaces Prebuilds failed but is outside the Go/web PR gate.
-- Dogfood notes reviewed: DOG-003 and DOG-004 already have backend guards; DOG-001 seed wipe has a direct `DELETE FROM functions WHERE ontology_rid = $1` in `test/fixtures/seed_northwind/seed.go`.
-
-Selected story for this execution:
-- P2A-001 - MCP Resource Subscription Handshake.
-
-Implementation evidence:
-- RED: `go test ./pkg/mcp -run P2A001 -count=1` failed because initialize advertised `resources.subscribe=false`, `resources/subscribe` was method-not-found, malformed subscribe returned `-32601` instead of `-32602`, and unknown resource subscribe returned `-32601` instead of `-32000`.
-- GREEN: Added MCP resource subscription dispatch, capability advertisement, URI validation, idempotent unsubscribe, and docs/status test updates.
-- Files changed for story:
-  - `pkg/mcp/server.go`
-  - `pkg/mcp/resources.go`
-  - `pkg/mcp/resources_subscribe_p2a001_test.go`
-  - `docs/mcp.md`
-  - `docs/PRD-Weave-OSv2-深度复刻-V2.md`
-  - `scripts/ci/ci_workflow_bdd_test.go`
-
-Verification:
-- `go test ./pkg/mcp -run P2A001 -count=1` -> pass.
-- `go test ./scripts/ci -run TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge -count=1` -> pass.
-- `go test ./pkg/mcp ./scripts/ci -count=1` -> pass.
-- `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1` -> pass.
-- `git diff --check` -> pass.
-
-Result:
-- P2A-001 passes: true.
-
-Selected story for this execution:
-- P2A-002 - MCP Resource List Cursor Safety.
-
-Implementation evidence:
-- RED: `go test ./pkg/mcp -run P2A002 -count=1` failed because `resources/list` ignored `pageSize` and returned all 4 resources, and malformed cursors returned a successful full list instead of `CodeInvalidParams`.
-- GREEN: Added `resources/list` params decoding for `pageSize` and opaque `cursor`, URI-boundary pagination after stable URI sorting, cursor validation, and MCP docs for `nextCursor` continuation.
-- Files changed for story:
-  - `pkg/mcp/resources.go`
-  - `pkg/mcp/resources_list_cursor_p2a002_test.go`
-  - `pkg/mcp/doc.go`
-  - `docs/mcp.md`
-
-Verification:
-- `go test ./pkg/mcp -run P2A002 -count=1` -> pass.
-- `go test ./pkg/mcp -count=1` -> pass.
-- `go test ./scripts/ci -run TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge -count=1` -> pass.
-- `git diff --check` -> pass.
-
-Result:
-- P2A-002 passes: true.
-
-Selected story for this execution:
-- P2A-003 - MCP HTTP Bridge Timeout Reliability.
-
-Implementation evidence:
-- RED: `go test ./cmd/weave-mcp -run P2A003 -count=1` failed because `WithHTTPTimeout` and `bridgeOptionsFromEnv` did not exist.
-- Root-cause check: a follow-up `go test ./cmd/weave-mcp -run TestBDD_HTTPBridge_Given_StalledEndpointAndConfiguredTimeout -count=1 -timeout 5s -v` showed the initial stalled-server test cleanup blocked in `httptest.Server.Close`; the harness was updated to release the fake stalled handler during cleanup.
-- GREEN: Added configurable HTTP bridge timeouts, `WEAVE_MCP_HTTP_TIMEOUT` parsing with invalid/non-positive duration errors, timeout docs, and status-doc CI assertions.
-- Files changed for story:
-  - `cmd/weave-mcp/http_bridge.go`
-  - `cmd/weave-mcp/main.go`
-  - `cmd/weave-mcp/timeout_p2a003_test.go`
-  - `docs/mcp.md`
-  - `docs/PRD-Weave-OSv2-深度复刻-V2.md`
-  - `scripts/ci/ci_workflow_bdd_test.go`
-
-Verification:
-- `go test ./cmd/weave-mcp -run P2A003 -count=1 -v` -> pass.
-- `go test ./cmd/weave-mcp -count=1` -> pass.
-- `go test ./scripts/ci -run TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge -count=1` -> pass.
-- `go test ./cmd/weave-mcp ./scripts/ci -count=1` -> pass.
-- `git diff --check` -> pass.
-
-Result:
-- P2A-003 passes: true.
-
-Reusable Codebase Patterns:
-- MCP server dispatch lives in `pkg/mcp/server.go`; method-specific resource behavior lives in `pkg/mcp/resources.go`.
-- MCP initialize capabilities are locked by both package tests and `scripts/ci/ci_workflow_bdd_test.go` string checks, so docs/status tests must be updated with server changes.
-- MCP resource subscription should validate subscribes against the live resource catalogue, but unsubscribe should remain idempotent so clients can clean up after resource deletion.
-- MCP `resources/list` accepts optional `pageSize` and opaque `cursor`; cursors resume after the previous page's last URI, so the resource catalogue must stay URI-sorted before pagination.
-- `cmd/weave-mcp` bridge options live in `http_bridge.go`; env-to-option wiring lives in `main.go`, and `scripts/ci/ci_workflow_bdd_test.go` has string guards that must follow new bridge env contracts.
-
-
----
-
-## Stream B: ralph/self-iteration-20260521-171221-B
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260521-171221-B
-HEAD: 3642ae65eca9
-
-# Ralph Progress Log - Parallel2 Stream B
-Started: 2026-05-21T17:19:12+08:00
-Integration branch: ralph/self-iteration-20260521-171221
-Stream branch: ralph/self-iteration-20260521-171221-B
-Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
+Archived prior all-passing state:
+- scripts/ralph/archive/self-iteration-20260521-180839/prd.json
+- scripts/ralph/archive/self-iteration-20260521-180839/progress.txt
 
 ## Baseline Inspection
-- Verified current branch: `ralph/self-iteration-20260521-171221-B`.
-- Prior PRD had no user stories; archived it under `scripts/ralph/archive/self-iteration-20260521-171912/`.
-- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in prior progress.
-- `dogfood-output/weave-webui-dogfood-20260517.md` DOG-002 is already fixed in current Dashboard code and has BDD coverage.
-- Known US-453 compliance download issue is not currently failing: `npm --prefix web test -- src/components/admin/__tests__/ComplianceReportsPage.test.tsx` passed 8/8.
-- Fresh web CI gates checked:
-  - `npx tsc --noEmit` from `web/`: pass.
-  - `npm --prefix web test`: pass, 282 files / 2902 tests.
-  - `npx vitest run --coverage` from `web/`: pass, 282 files / 2902 tests.
-  - `npm --prefix web run build`: pass, bundle budget passed.
-  - `npx playwright test --list ...` from `web/`: pass, 71 tests discovered.
-- Known fresh Go embed risk is already covered by `cmd/server/embed_ci_bdd_test.go` and `cmd/server/web/embed-placeholder.txt`.
+- Verified branch with `git branch --show-current`: ralph/self-iteration-20260521-171221.
+- Existing PRD belonged to this branch and all five stories had `passes: true`, so this run created a new focused PRD.
+- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the live progress file.
+- Dogfood notes reviewed: DOG-001 Northwind seed still exists as a durable dogfood finding; DOG-002 dashboard total count had already been fixed in prior work.
+- Known fresh-CI risks checked:
+  - `cmd/server/embed.go` now embeds `all:web`, with `cmd/server/web/embed-placeholder.txt` and `cmd/server/embed_ci_bdd_test.go` covering fresh Go builds without generated `web/dist`.
+  - US-453 compliance download coverage includes a streamless `Response.blob()` failure fixture in `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`.
+- GitHub Actions current PR CI checked with `gh run list --branch ralph/self-iteration-20260521-171221 --limit 5`: latest CI run 26218880007 failed.
+- Failure evidence from `gh run view 26218880007 --log-failed`: Go job failed at `golangci-lint`; build and vet passed; web job passed. Lint reported `pkg/mcp/resources.go:310:29: catalogue is a misspelling of catalog (misspell)`.
 
 ## Current Story
-- Selected `P2B-001` because Dashboard ontology cards still hardcode English object-type count text despite existing i18n plural keys.
+- Selected RCI-001 - Repair MCP Resource Comment Lint Failure because current PR CI is failing before Go tests.
 
-## P2B-001 - Localize Dashboard Ontology Card Object-Type Counts
+## RCI-001 - Repair MCP Resource Comment Lint Failure
 Status: PASS
 
-### Red
-- Added `web/src/components/dashboard/__tests__/OntologyCard.i18n.bdd.test.tsx`.
-- Command: `npm --prefix web test -- src/components/dashboard/__tests__/OntologyCard.i18n.bdd.test.tsx`
-- Result: failed as expected, 3/3 failures. Evidence showed cards rendered `1 types` / `3 types` instead of English singular/plural and zh-CN localized text.
-
-### Green
-- Updated `web/src/components/dashboard/OntologyCard.tsx` to use `useTranslation()` and `dashboard.objectTypeCount`.
-- Updated existing dashboard tests to initialize i18n deterministically and expect the corrected count copy.
-- Targeted command: `npm --prefix web test -- src/components/dashboard/__tests__/OntologyCard.i18n.bdd.test.tsx src/components/dashboard/__tests__/OntologyCard.test.tsx src/components/dashboard/__tests__/DashboardPage.totalObjectTypes.bdd.test.tsx`
-- Targeted result: pass, 3 files / 10 tests.
-
-### Verification
-- `npx tsc --noEmit` from `web/`: pass.
-- `npm --prefix web test`: pass, 283 files / 2905 tests.
-- `npm --prefix web run build`: pass, bundle budget passed.
-- `npx eslint src/components/dashboard/OntologyCard.tsx src/components/dashboard/__tests__/OntologyCard.i18n.bdd.test.tsx src/components/dashboard/__tests__/OntologyCard.test.tsx src/components/dashboard/__tests__/DashboardPage.totalObjectTypes.bdd.test.tsx` from `web/`: pass.
-
-### Files Changed
-- `web/src/components/dashboard/OntologyCard.tsx`
-- `web/src/components/dashboard/__tests__/OntologyCard.i18n.bdd.test.tsx`
-- `web/src/components/dashboard/__tests__/OntologyCard.test.tsx`
-- `web/src/components/dashboard/__tests__/DashboardPage.totalObjectTypes.bdd.test.tsx`
-
-### Reusable Learning
-- Dashboard components that call `useTranslation()` need tests to import or invoke the shared i18n singleton (`web/src/i18n/index.ts`) before asserting translated text.
-
-## P2B-002 - Polish Schema Graph Count Copy
-Status: PASS
+### Root Cause
+- GitHub Actions run 26218880007 failed in the Go job at `golangci-lint`.
+- Build and vet completed successfully before lint.
+- The only CI-reported new lint issue was `pkg/mcp/resources.go:310:29: catalogue is a misspelling of catalog (misspell)`.
+- Local unscoped lint also showed older MCP lint debt, so the reproducible repair command uses the same patch-scoped mode as pull-request CI.
 
 ### Red
-- Updated `web/src/components/admin/__tests__/SchemaGraphPage.test.tsx` before implementation.
-- Added fixture override support so the schema graph can render one-link scenarios without duplicating the component harness.
-- Command: `npm --prefix web test -- src/components/admin/__tests__/SchemaGraphPage.test.tsx`
-- Result: failed as expected, 1/8 failures. Evidence showed the filtered summary rendered `1 types · 0 links` instead of `1 type · 0 links`.
+- Command: `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --new-from-rev d4877d2056503b6cecf5f3afbac49c1f00abf8c3 --timeout=5m ./pkg/mcp`
+- Result: failed as expected with one issue at `pkg/mcp/resources.go:310:29`, `catalogue` -> `catalog`.
 
 ### Green
-- Updated `web/src/components/admin/SchemaGraphPage.tsx` to format type/link count labels with singular text only for count `1`.
-- Retained plural copy for zero and multiple counts.
-- Targeted command: `npm --prefix web test -- src/components/admin/__tests__/SchemaGraphPage.test.tsx`
-- Targeted result: pass, 1 file / 8 tests.
+- Updated the MCP resource subscribe comment in `pkg/mcp/resources.go` from `catalogue` to `catalog`.
 
 ### Verification
-- `npx tsc --noEmit` from `web/`: pass.
-- `npx eslint src/components/admin/SchemaGraphPage.tsx src/components/admin/__tests__/SchemaGraphPage.test.tsx` from `web/`: pass.
-- `npm --prefix web test`: pass, 283 files / 2906 tests.
-- `npm --prefix web run build`: pass, bundle budget passed.
+- `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --new-from-rev d4877d2056503b6cecf5f3afbac49c1f00abf8c3 --timeout=5m ./pkg/mcp` -> pass, `0 issues`.
+- `go test ./pkg/mcp -count=1` -> pass.
+- `git diff --check` -> pass.
+- `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --new-from-rev d4877d2056503b6cecf5f3afbac49c1f00abf8c3 --timeout=5m` -> pass, `0 issues`.
 
 ### Files Changed
-- `web/src/components/admin/SchemaGraphPage.tsx`
-- `web/src/components/admin/__tests__/SchemaGraphPage.test.tsx`
+- `pkg/mcp/resources.go`
+- `scripts/ralph/prd.json`
+- `scripts/ralph/progress.txt`
+- `scripts/ralph/archive/self-iteration-20260521-180839/prd.json`
+- `scripts/ralph/archive/self-iteration-20260521-180839/progress.txt`
 
 ### Reusable Learning
-- Admin graph summary copy should format `0` with plural nouns and reserve singular nouns for exactly `1`.
+- For pull-request CI lint failures, reproduce locally with `golangci-lint run --new-from-rev $(git merge-base origin/main HEAD)` to avoid unrelated pre-existing lint debt.
 
 ## Codebase Patterns
+- MCP server dispatch lives in `pkg/mcp/server.go`; method-specific resource behavior lives in `pkg/mcp/resources.go`.
+- MCP initialize capabilities are locked by both package tests and `scripts/ci/ci_workflow_bdd_test.go` string checks, so docs/status tests must be updated with server changes.
+- MCP resource subscription should validate subscribes against the live resource catalog, but unsubscribe should remain idempotent so clients can clean up after resource deletion.
+- MCP `resources/list` accepts optional `pageSize` and opaque `cursor`; cursors resume after the previous page's last URI, so the resource catalog must stay URI-sorted before pagination.
+- `cmd/weave-mcp` bridge options live in `http_bridge.go`; env-to-option wiring lives in `main.go`, and `scripts/ci/ci_workflow_bdd_test.go` has string guards that must follow new bridge env contracts.
 - Frontend component tests use Vitest + React Testing Library under `web/src/components/**/__tests__`.
 - React i18n uses a singleton initialized at `web/src/i18n/index.ts`; component copy should prefer `useTranslation()`.
-- Count-summary UI copy in admin pages should be covered with explicit singular and zero/multiple BDD assertions because dashboard/admin tests already assert exact visible copy.
-
-
----
+- Count-summary UI copy in admin pages should format `0` with plural nouns and reserve singular nouns for exactly `1`.

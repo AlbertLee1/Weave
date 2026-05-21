@@ -307,7 +307,7 @@ func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Respons
 }
 
 // handleResourcesSubscribe implements MCP resources/subscribe. We validate
-// the URI against the live catalogue before recording it so clients cannot
+// the URI against the live catalog before recording it so clients cannot
 // believe a typo or stale RID is being watched.
 func (s *Server) handleResourcesSubscribe(ctx context.Context, req *Request) *Response {
 	uri, errResp := decodeResourceSubscriptionParams(req)
