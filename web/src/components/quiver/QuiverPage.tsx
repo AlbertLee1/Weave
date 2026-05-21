@@ -45,6 +45,47 @@ function dashboardKey(rid: string) {
   return ['quiver', 'dashboards', rid] as const;
 }
 
+function buildDashboardConfig(
+  ontologyApiName: string,
+  seriesList: SeriesSpec[],
+): QuiverDashboardConfig {
+  return {
+    ontologyApiName,
+    series: seriesList.map((s) => ({
+      id: s.id,
+      objectType: s.objectType,
+      primaryKey: s.primaryKey,
+      property: s.property,
+      label: s.label,
+      color: s.color,
+      ...(s.branch ? { branch: s.branch } : {}),
+    })),
+  };
+}
+
+function exportFilename(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `${slug || 'quiver-dashboard'}.quiver.json`;
+}
+
+function triggerJsonDownload(payload: unknown, filename: string): void {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: 'application/json',
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 export function QuiverPage() {
   const navigate = useNavigate();
   const { ontology, rid } = useParams<{ ontology: string; rid?: string }>();
@@ -174,23 +215,29 @@ export function QuiverPage() {
       setSaveError('Dashboard name is required.');
       return;
     }
-    const config: QuiverDashboardConfig = {
-      ontologyApiName,
-      series: seriesList.map((s) => ({
-        id: s.id,
-        objectType: s.objectType,
-        primaryKey: s.primaryKey,
-        property: s.property,
-        label: s.label,
-        color: s.color,
-        ...(s.branch ? { branch: s.branch } : {}),
-      })),
-    };
+    const config = buildDashboardConfig(ontologyApiName, seriesList);
     saveMutation.mutate({
       ...(dashboardRID ? { rid: dashboardRID } : {}),
       name: trimmedName,
       config,
     });
+  }
+
+  function handleExportJson() {
+    if (seriesList.length === 0) return;
+    const trimmedName = dashboardName.trim();
+    const config = buildDashboardConfig(ontologyApiName, seriesList);
+    const exportRid = dashboardRID ?? rid;
+    triggerJsonDownload(
+      {
+        exportedAt: new Date().toISOString(),
+        ontologyApiName,
+        ...(exportRid ? { rid: exportRid } : {}),
+        ...(trimmedName ? { name: trimmedName } : {}),
+        config,
+      },
+      exportFilename(trimmedName),
+    );
   }
 
   function handleNew() {
@@ -255,6 +302,15 @@ export function QuiverPage() {
                 className="bg-accent-emerald text-bg-primary px-3 py-1.5 rounded text-sm font-medium hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {dashboardRID ? 'Update' : 'Save'}
+              </button>
+              <button
+                type="button"
+                onClick={handleExportJson}
+                disabled={seriesList.length === 0}
+                data-testid="quiver-export-json-button"
+                className="px-3 py-1.5 text-sm border border-border rounded text-text-secondary hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Export JSON
               </button>
               {dashboardRID && (
                 <button
