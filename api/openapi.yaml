@@ -2161,6 +2161,10 @@ components:
             $ref: "#/components/schemas/GroupBySpec"
         where:
           $ref: "#/components/schemas/WhereClause"
+          description: |
+            Aggregation accepts the shared WhereClause shape, except regex
+            filters are rejected with `AggregationWhereRegexUnsupported` until
+            aggregation search can enforce the regex timeout contract.
         subAggregations:
           type: array
           description: |

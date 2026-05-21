@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // MatchClause evaluates a WhereClause tree in-memory against a single row
@@ -245,21 +246,69 @@ func matchContainsAnyTerm(clause *WhereClause, row map[string]interface{}) bool 
 	if !ok {
 		return false
 	}
-	terms := SplitTerms(query)
-	if len(terms) == 0 {
+	queryTerms := tokenSet(query)
+	if len(queryTerms) == 0 {
 		return false
 	}
-	rowVal, ok := row[clause.Field].(string)
+	rowValues, ok := rowTextValues(row[clause.Field])
 	if !ok {
 		return false
 	}
-	lowerRow := strings.ToLower(rowVal)
-	for _, term := range terms {
-		if strings.Contains(lowerRow, strings.ToLower(term)) {
-			return true
+	for _, value := range rowValues {
+		for _, token := range tokenizeText(value) {
+			if queryTerms[token] {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func tokenSet(text string) map[string]bool {
+	tokens := tokenizeText(text)
+	if len(tokens) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(tokens))
+	for _, token := range tokens {
+		set[token] = true
+	}
+	return set
+}
+
+func tokenizeText(text string) []string {
+	parts := strings.FieldsFunc(text, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	tokens := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part != "" {
+			tokens = append(tokens, part)
+		}
+	}
+	return tokens
+}
+
+func rowTextValues(raw interface{}) ([]string, bool) {
+	switch v := raw.(type) {
+	case string:
+		return []string{v}, true
+	case []string:
+		return v, true
+	case []interface{}:
+		values := make([]string, 0, len(v))
+		for _, item := range v {
+			str, ok := item.(string)
+			if !ok {
+				continue
+			}
+			values = append(values, str)
+		}
+		return values, len(values) > 0
+	default:
+		return nil, false
+	}
 }
 
 func stringOrStringArrayValue(value json.RawMessage) (string, bool) {

@@ -107,6 +107,11 @@ func TestOpenAPISpec_AggregationRequestDocumentsWhere(t *testing.T) {
 		if got, _ := where["$ref"].(string); got != "#/components/schemas/WhereClause" {
 			t.Fatalf("%s.properties.where.$ref = %q, want WhereClause", schemaName, got)
 		}
+		if schemaName == "AggregationRequest" {
+			if desc, _ := where["description"].(string); !strings.Contains(desc, "AggregationWhereRegexUnsupported") {
+				t.Fatalf("AggregationRequest.properties.where.description should document regex rejection; got %q", desc)
+			}
+		}
 	}
 }
 
