@@ -38,8 +38,32 @@ export interface Pipeline {
   updatedAt: string;
 }
 
+// PipelineRun mirrors pkg/pipeline.PipelineRun on the wire.
+export interface PipelineRun {
+  id: number;
+  pipelineId: string;
+  status: string;
+  startedAt: string;
+  finishedAt?: string;
+  errorMessage?: string;
+  result?: Record<string, unknown>;
+  triggeredBy?: string;
+  lastCommittedOffset?: number;
+  createdAt: string;
+}
+
 export interface ListPipelinesResponse {
   pipelines: Pipeline[];
+}
+
+export interface ListPipelineRunsResponse {
+  runs: PipelineRun[];
+  nextCursor?: string;
+}
+
+export interface ListPipelineRunsOptions {
+  limit?: number;
+  cursor?: string;
 }
 
 export function listPipelines(): Promise<ListPipelinesResponse> {
@@ -50,5 +74,24 @@ export function getPipeline(pipelineId: string): Promise<Pipeline> {
   return request<Pipeline>(
     'GET',
     `/api/v2/pipelines/${encodeURIComponent(pipelineId)}`,
+  );
+}
+
+export function listPipelineRuns(
+  pipelineId: string,
+  opts: ListPipelineRunsOptions = {},
+): Promise<ListPipelineRunsResponse> {
+  const params = new URLSearchParams();
+  if (opts.limit !== undefined) {
+    params.set('limit', String(opts.limit));
+  }
+  if (opts.cursor) {
+    params.set('cursor', opts.cursor);
+  }
+  const query = params.toString();
+  const suffix = query.length > 0 ? `?${query}` : '';
+  return request<ListPipelineRunsResponse>(
+    'GET',
+    `/api/v2/pipelines/${encodeURIComponent(pipelineId)}/runs${suffix}`,
   );
 }

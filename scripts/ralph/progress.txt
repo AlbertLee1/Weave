@@ -66,3 +66,53 @@ Files changed:
 Reusable learning:
 - Scheduled pipeline ticks should be observable through the existing Pipeline run-history API before the full DAG runtime is wired. A failed run row with an explicit runtime-not-configured message is less misleading than a success row and more useful than a server log line.
 ---
+
+## Selected story
+- SELF-602 - Surface Pipeline Run History in the Pipeline Log Panel.
+- Reason: SELF-601 now records scheduled ticks through the existing Pipeline run-history store, but the Web Pipeline page still showed placeholder copy in the log panel. Surfacing `/api/v2/pipelines/{pipelineId}/runs` closes the operator visibility loop with a narrow frontend change.
+
+## SELF-602 - Surface Pipeline Run History in the Pipeline Log Panel
+Status: PASS
+
+BDD/TDD red step:
+- Added SELF-602 scenarios to `web/src/components/pipelines/__tests__/PipelinesPage.test.tsx`:
+  - A selected pipeline with recent runs lists run id, status, trigger, timestamp, and error text in the log panel.
+  - A selected pipeline with no runs shows an empty run-history state and removes the old placeholder copy.
+- Command: `npm --prefix web test -- --run src/components/pipelines/__tests__/PipelinesPage.test.tsx`
+- Result: exited 1 as expected; the new tests could not find `pipeline-run-history` or `pipeline-run-history-empty`.
+
+Implementation:
+- `web/src/api/pipelines.ts`
+  - Added `PipelineRun`, `ListPipelineRunsResponse`, `ListPipelineRunsOptions`, and `listPipelineRuns`.
+  - `listPipelineRuns` calls the mounted `/api/v2/pipelines/{pipelineId}/runs` endpoint with optional `limit` and `cursor` query parameters.
+- `web/src/hooks/usePipelines.ts`
+  - Added `pipelineRuns` query keys and `usePipelineRuns(pipelineId, limit = 10)`.
+- `web/src/components/pipelines/PipelinesPage.tsx`
+  - Fetches recent runs for the selected pipeline.
+  - Replaced the placeholder log-panel copy with a run-history section.
+  - Shows loading, error, empty, and non-empty run-history states.
+  - Displays run status, trigger, UTC timestamp, and error message for recent runs.
+- `web/src/components/pipelines/__tests__/PipelinesPage.test.tsx`
+  - Stubs the run-history fetch for existing Pipeline page tests.
+  - Adds SELF-602 BDD coverage for recent-run and no-run states.
+
+Verification:
+- RED: `npm --prefix web test -- --run src/components/pipelines/__tests__/PipelinesPage.test.tsx` exited 1 with missing run-history test ids.
+- GREEN targeted: `npm --prefix web test -- --run src/components/pipelines/__tests__/PipelinesPage.test.tsx` exited 0 with 8/8 tests passing.
+- Package typecheck: `npm --prefix web run typecheck` exited 0.
+- Web build: `npm --prefix web run build` exited 0; Vite built 1680 modules and bundle budgets passed.
+- CI-shaped typecheck: `npx tsc --noEmit` from `web/` exited 0.
+- Final targeted rerun: `npm --prefix web test -- --run src/components/pipelines/__tests__/PipelinesPage.test.tsx` exited 0 with 8/8 tests passing.
+- Note: `npm --prefix web exec tsc -- --noEmit` exited 1 because the command syntax sent no options to `tsc`; reran the workflow-equivalent `npx tsc --noEmit` from `web/`, which exited 0.
+
+Files changed:
+- `web/src/api/pipelines.ts`
+- `web/src/hooks/usePipelines.ts`
+- `web/src/components/pipelines/PipelinesPage.tsx`
+- `web/src/components/pipelines/__tests__/PipelinesPage.test.tsx`
+- `scripts/ralph/prd.json`
+- `scripts/ralph/progress.txt`
+
+Reusable learning:
+- Pipeline run-history UI should use the existing frontend API/hook pattern from AIP Logic runs: add a typed API client, wrap it in a React Query hook keyed by the selected resource id, and pass query state into the page panel so empty/error/loading states are explicit.
+---

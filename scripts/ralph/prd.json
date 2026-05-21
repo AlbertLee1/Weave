@@ -37,7 +37,7 @@
       "title": "Surface Pipeline Run History in the Pipeline Log Panel",
       "description": "As a pipeline operator, I want the Web Pipeline log panel to read the existing runs endpoint so I can see recent scheduled ticks and failures without leaving the UI.",
       "priority": "medium",
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         {
           "given": "a selected pipeline has recent runs",
