@@ -1,16 +1,12 @@
 # Ralph Progress Log
-Started: Thu May 21 08:59:49 CST 2026
+Started: Thu May 21 09:33:31 CST 2026
 Branch: ralph/self-iteration-20260520-134952
 
 ## Fresh PRD Inspection
-- Existing `scripts/ralph/prd.json` belonged to this branch and all stories had `passes: true`, so a fresh one-story PRD was required.
-- Archived prior state under `scripts/ralph/archive/self-iteration-20260521-085949/`.
-- No `PR CI auto-fix context` or `LLM review auto-fix context` existed in the active progress file.
-- GitHub health: `gh run list --branch ralph/self-iteration-20260520-134952 --limit 5` showed the latest pull-request CI run `26164497179` completed successfully on `2026-05-20T13:06:28Z`.
-- Known CI risk check: `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v` passed.
-- Known web risk check: `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx` passed: 1 file, 8 tests.
-- Vertex package health check: `go test ./pkg/vertex/... -count=1` passed.
-- Vertex focused web health check: `npm --prefix web test -- --run src/vertex/VertexWorkspacePage.test.tsx src/vertex/VertexGraphWidget.test.tsx src/vertex/VertexGraphWidget.defaults.test.tsx` passed: 3 files, 47 tests.
+- Existing `scripts/ralph/prd.json` belonged to this branch and all stories had `passes: true`.
+- Active `scripts/ralph/progress.txt` contained an `LLM review auto-fix context`, so the new PRD is intentionally a one-story review repair.
+- Archived prior state under `scripts/ralph/archive/self-iteration-20260521-093331/`.
+- Root symlinks remain intact: `prd.json -> scripts/ralph/prd.json` and `progress.txt -> scripts/ralph/progress.txt`.
 
 ## Codebase Patterns
 - Root `prd.json` and `progress.txt` are symlinks to `scripts/ralph/prd.json` and `scripts/ralph/progress.txt`; keep the symlinks intact.
@@ -18,27 +14,53 @@ Branch: ralph/self-iteration-20260520-134952
 - `cmd/server/embed_ci_bdd_test.go` is the focused guard for fresh checkout Go builds without generated WebUI assets.
 - `web/src/vertex/scenarioRunStream.ts` is intentionally guarded: default calls throw until the SSE route is mounted, and tests/future callers must opt in with `allowUnimplementedStreamRoute`.
 - The TypeScript Vertex SDK polling path already treats `pending`, `running`, `succeeded`, `failed`, and `canceled` as lifecycle statuses, with `canceled` terminal.
+- `cmd/weave-mcp/RunHTTPBridge` is the production stdio-to-HTTP MCP bridge. It forwards one newline-delimited JSON-RPC envelope per stdin line to `/mcp` and writes at most one normalized stdout line per response-bearing envelope.
+- `pkg/mcp.ParseRequestEnvelope` is the canonical JSON-RPC object-or-batch parser used by in-process HTTP and stdio transports; bridge-side envelope classification should stay aligned with that parser.
+
+## LLM Review Auto-Fix Context - 2026-05-21T09:32:16+08:00
+- PR: https://github.com/AlbertLee1/Weave/pull/40
+- Branch: ralph/self-iteration-20260520-134952
+- Reviewed HEAD: 24f0e4afa1a6
+- Review status: request_changes
+- Summary: Request changes: MCP batch support is correct in the in-process HTTP/stdio transports, but it misses the production weave-mcp bridge path. Local verifier is green, but this integration gap is not covered.
+- Blocking findings:
+```json
+[
+  {
+    "severity": "critical",
+    "file": "cmd/weave-mcp/http_bridge.go",
+    "line": 101,
+    "issue": "The production weave-mcp bridge still treats any top-level JSON array as a notification because it only sniffs an object-level id. With this PR, /mcp now returns valid JSON-RPC batch responses, but bridge mode drops them whenever a stdio client sends a batch, so the main production stdio-to-HTTP path silently loses all batch results.",
+    "suggestion": "Teach RunHTTPBridge to classify JSON-RPC batch envelopes: if any batch item expects a response or is invalid, do not drop the upstream response; add a focused bridge test for a mixed batch with two requests and one notification."
+  }
+]
+```
+- Recommended fix prompt:
+```text
+Update cmd/weave-mcp RunHTTPBridge to understand JSON-RPC batch envelopes when deciding whether stdout should receive the upstream response. Add BDD coverage showing a batch line with request ids is forwarded and emitted as one batch response line, while notification-only batches still produce no output.
+```
 
 ## Selected Story
-- `SELF-501` - Emit canceled Vertex scenario-run stream fallback events.
+- `SELF-502` - Forward JSON-RPC batch responses through weave-mcp bridge.
 
-## SELF-501 Evidence - Emit canceled Vertex scenario-run stream fallback events
+## SELF-502 Evidence - Forward JSON-RPC batch responses through weave-mcp bridge
+- Root cause:
+  - `cmd/weave-mcp/RunHTTPBridge` previously unmarshaled every stdin line into an object-only `{id}` sniff struct.
+  - For a top-level JSON-RPC batch array, the sniff left `id` empty and the bridge treated the whole envelope as notification-only, dropping the valid upstream batch response.
 - RED:
-  - Added BDD coverage in `web/src/vertex/scenarioRunStream.test.ts` for canceled SSE terminal events and canceled REST fallback mapping.
-  - `npm --prefix web test -- --run src/vertex/scenarioRunStream.test.ts` failed for the expected reasons: `es.closed` stayed `false` after a canceled event, and `pollFinalState` returned `null` for a canceled REST record.
+  - Added BDD bridge coverage in `cmd/weave-mcp/main_test.go` for a mixed batch with two requests plus one notification, an invalid batch item, and a notification-only batch.
+  - `go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge_Given_(MixedJSONRPCBatch|InvalidItemInJSONRPCBatch|NotificationOnlyJSONRPCBatch)' -count=1 -v` failed for the expected reasons: mixed and invalid batches produced empty stdout while notification-only batches stayed silent.
 - GREEN:
-  - Extended `RunEvent` with `kind: "canceled"`.
-  - Added shared terminal-event detection so completed, failed, and canceled events close the stream.
-  - Mapped REST fallback status `canceled` to a terminal canceled event carrying `scenarioRunRid` and optional error.
+  - `RunHTTPBridge` now classifies stdin lines with `pkg/mcp.ParseRequestEnvelope`, matching the in-process HTTP and stdio transports.
+  - Batch envelopes are response-bearing if any item has an id or any item parsed as a JSON-RPC error; only notification-only batches are dropped from stdout.
 - Verification:
-  - `npm --prefix web test -- --run src/vertex/scenarioRunStream.test.ts` passed: 1 file, 11 tests.
-  - `npm --prefix web test -- --run src/vertex/scenarioRunStream.test.ts src/vertex/SdkVertexClient.test.ts` passed: 2 files, 19 tests.
-  - `npm --prefix web run typecheck` passed.
-  - `python3 -m json.tool scripts/ralph/prd.json >/dev/null` passed.
+  - `go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge|TestHTTPBridge' -count=1 -v` passed.
+  - `go test ./pkg/mcp -run 'TestBDD_.*Batch|TestStdioTransport_NotificationProducesNoOutput|TestHTTPTransport_DecodesJSONRPC' -count=1` passed.
+  - `go test ./cmd/weave-mcp ./pkg/mcp -count=1` passed.
 - Files changed:
-  - `web/src/vertex/scenarioRunStream.ts`
-  - `web/src/vertex/scenarioRunStream.test.ts`
+  - `cmd/weave-mcp/http_bridge.go`
+  - `cmd/weave-mcp/main_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - Reusable learning:
-  - Keep scenario-run stream terminal states aligned with SDK polling lifecycle states; `canceled` is terminal even when the stream path has to learn it through REST fallback.
+  - Bridge-mode MCP envelope classification should reuse `pkg/mcp.ParseRequestEnvelope` so array batches, invalid batch items, and object notifications stay aligned across the production stdio-to-HTTP bridge and the in-process transports.

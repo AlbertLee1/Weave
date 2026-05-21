@@ -1,29 +1,30 @@
 {
   "project": "Weave self-iteration",
   "branchName": "ralph/self-iteration-20260520-134952",
-  "description": "Focused follow-up after green branch CI: close one Vertex scenario-run terminal-state gap so upper-layer stream fallback behavior matches the mounted polling contract.",
+  "description": "Focused LLM review repair: keep JSON-RPC batch responses visible through the production weave-mcp stdio-to-HTTP bridge.",
   "userStories": [
     {
-      "id": "SELF-501",
-      "title": "Emit canceled Vertex scenario-run stream fallback events",
+      "id": "SELF-502",
+      "title": "Forward JSON-RPC batch responses through weave-mcp bridge",
       "priority": 1,
-      "area": "web/Vertex scenario runs",
-      "problem": "Vertex scenario-run polling treats canceled runs as terminal, but the guarded stream helper's REST fallback returns null for canceled records after reconnect exhaustion. A caller using the stream fallback can end without learning that the run was canceled.",
-      "userStory": "As a Vertex operator watching a scenario run, I want a canceled run to surface as a terminal stream event so the UI can stop waiting and show the operator cancellation state.",
+      "area": "cmd/weave-mcp HTTP bridge",
+      "problem": "RunHTTPBridge classifies requests by sniffing an object-level id. A top-level JSON-RPC batch array therefore looks notification-only to the bridge, so mixed batches with request ids are forwarded upstream but their valid batch response is dropped from stdout.",
+      "userStory": "As a local MCP client using weave-mcp over stdio, I want batch request results to be forwarded back as one response line so tool discovery and other batched calls do not silently hang or lose results.",
       "bddAcceptance": [
-        "Given the scenario-run stream reconnect path exhausts retries and the REST fallback returns status canceled with a run RID and error, when pollFinalState resolves, then it emits a terminal canceled RunEvent carrying the run RID and error.",
-        "Given an SSE message arrives with kind canceled, when openScenarioRunStream handles it, then the async iterator yields that canceled event and closes the EventSource.",
-        "Given the REST fallback returns pending or running, when pollFinalState resolves, then it still returns null because those statuses are non-terminal.",
-        "Given the TypeScript SDK polling path waits for scenario runs, when its existing canceled-run test runs, then it still treats canceled as a terminal lifecycle record."
+        "Given a stdio client sends one JSON-RPC batch line with two requests and one notification, when RunHTTPBridge forwards it to /mcp and receives a batch response, then stdout emits exactly one batch response line containing the two request ids.",
+        "Given a stdio client sends a JSON-RPC batch line that contains only notifications, when RunHTTPBridge forwards it to /mcp and receives no response body, then stdout emits no output line.",
+        "Given a JSON-RPC batch contains any item that expects a response or is invalid, when RunHTTPBridge classifies the envelope before forwarding, then it does not treat the envelope as notification-only.",
+        "Given a single JSON-RPC notification object is forwarded through RunHTTPBridge, when upstream returns no body, then existing no-output notification behavior is preserved."
       ],
       "dependencies": [
-        "web/src/vertex/scenarioRunStream.ts",
-        "web/src/vertex/scenarioRunStream.test.ts",
-        "web/src/vertex/SdkVertexClient.test.ts"
+        "cmd/weave-mcp/http_bridge.go",
+        "cmd/weave-mcp/main_test.go",
+        "pkg/mcp/protocol.go"
       ],
       "verification": [
-        "npm --prefix web test -- --run src/vertex/scenarioRunStream.test.ts src/vertex/SdkVertexClient.test.ts",
-        "npm --prefix web run typecheck"
+        "go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge|TestHTTPBridge' -count=1 -v",
+        "go test ./pkg/mcp -run 'TestBDD_.*Batch|TestStdioTransport_NotificationProducesNoOutput|TestHTTPTransport_DecodesJSONRPC' -count=1",
+        "go test ./cmd/weave-mcp ./pkg/mcp -count=1"
       ],
       "passes": true
     }
