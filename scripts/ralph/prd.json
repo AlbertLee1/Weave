@@ -1,83 +1,37 @@
 {
   "project": "Weave self-iteration 20260521",
   "branchName": "ralph/self-iteration-20260521-110910",
-  "description": "Small branch-local Ralph cycle focused on verifiable Pipeline service/operator gaps after PR CI was confirmed green.",
+  "description": "Focused LLM review repair for backend aggregation where-filter execution.",
   "userStories": [
     {
-      "id": "SELF-601",
-      "title": "Record Scheduled Pipeline Ticks as Run History",
-      "description": "As a pipeline operator, I want cron-triggered pipeline ticks to create durable run-history rows even before the full runtime executor is wired, so the product surface shows that schedules are firing instead of leaving only server logs.",
+      "id": "SELF-604",
+      "title": "Apply Aggregation Where Filters Server-Side",
+      "description": "As a pipeline and operations analyst using Aggregation, I want the backend aggregate endpoint to apply the where filter sent by the UI, so aggregate results reflect the filtered object set and column policy cannot be bypassed through where fields.",
       "priority": "high",
       "passes": true,
       "acceptanceCriteria": [
         {
-          "given": "an enabled scheduled pipeline and the server scheduler runner receives a cron tick",
-          "when": "the runtime executor is not configured",
-          "then": "the pipeline store receives a terminal run row for that pipeline with triggeredBy=schedule"
+          "given": "an aggregate request includes a where clause that matches only active employees",
+          "when": "the caller posts to /api/v2/ontologies/{ontology}/objects/{objectType}/aggregate",
+          "then": "the returned count is scoped to matching rows and differs from the unfiltered aggregate"
         },
         {
-          "given": "the scheduler records a runtime-not-configured tick",
-          "when": "the run row is inspected through the existing run-history store contract",
-          "then": "it includes startedAt, finishedAt, failed status, and an explanatory errorMessage"
+          "given": "the caller can aggregate visible properties but the where clause references a hidden property",
+          "when": "the aggregate endpoint evaluates the request policy",
+          "then": "the request is rejected with PropertyNotAccessible for the hidden where field"
         },
         {
-          "given": "recording the run row fails",
-          "when": "the scheduler runner returns",
-          "then": "the error is propagated to the scheduler logger instead of being swallowed silently"
+          "given": "a scenario-overlay aggregate request includes a where clause",
+          "when": "scenario edits are folded over the base rows",
+          "then": "the where clause filters the post-overlay rows before metrics and groupBy buckets are computed"
         }
       ],
       "dependencies": [
-        "pkg/pipeline.Scheduler",
-        "pkg/pipeline.Store run-history contract",
-        "cmd/server pipeline scheduler wiring"
-      ]
-    },
-    {
-      "id": "SELF-602",
-      "title": "Surface Pipeline Run History in the Pipeline Log Panel",
-      "description": "As a pipeline operator, I want the Web Pipeline log panel to read the existing runs endpoint so I can see recent scheduled ticks and failures without leaving the UI.",
-      "priority": "medium",
-      "passes": true,
-      "acceptanceCriteria": [
-        {
-          "given": "a selected pipeline has recent runs",
-          "when": "the Pipelines page renders its log panel",
-          "then": "the panel lists recent run status, trigger, timestamp, and error text"
-        },
-        {
-          "given": "a selected pipeline has no runs",
-          "when": "the Pipelines page renders",
-          "then": "the log panel shows an empty run-history state instead of saying run history is not implemented"
-        }
-      ],
-      "dependencies": [
-        "web/src/api/pipelines.ts",
-        "web/src/hooks/usePipelines.ts",
-        "web/src/components/pipelines/PipelinesPage.tsx"
-      ]
-    },
-    {
-      "id": "SELF-603",
-      "title": "Persist Real Scheduled Pipeline DAG Outcomes",
-      "description": "As a pipeline operator, I want scheduled pipelines with an available runtime runner to persist actual DAG success/failure results, so run history evolves from tick evidence into execution evidence.",
-      "priority": "medium",
-      "passes": true,
-      "acceptanceCriteria": [
-        {
-          "given": "a scheduled pipeline and a configured DAG node runner",
-          "when": "the scheduler fires",
-          "then": "the stored pipeline run includes the RunDAG result and success status"
-        },
-        {
-          "given": "a scheduled pipeline whose DAG execution fails",
-          "when": "the scheduler records the run",
-          "then": "the stored run includes failed status, the RunDAG partial result, and the error message"
-        }
-      ],
-      "dependencies": [
-        "pkg/pipeline.RunDAG",
-        "pkg/pipeline.PipelineRun",
-        "cmd/server pipeline runtime wiring"
+        "pkg/oss/aggregation.AggregationRequest",
+        "pkg/oss/where.ConvertToBleveQuery",
+        "pkg/oss/where.MatchClause",
+        "pkg/oss.Handler AggregateObjects policy gate",
+        "pkg/oss scenario aggregation overlay"
       ]
     }
   ]

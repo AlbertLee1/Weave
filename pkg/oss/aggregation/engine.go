@@ -8,12 +8,14 @@ import (
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search/query"
+	"github.com/liyang/weave/pkg/oss/where"
 )
 
 // AggregationRequest represents a Palantir V2 aggregation request.
 type AggregationRequest struct {
 	ObjectType      string               `json:"objectType"`
 	Query           *bleve.SearchRequest `json:"-"` // pre-built search request (may be nil for all objects)
+	Where           *where.WhereClause   `json:"where,omitempty"`
 	Aggregations    []AggregationSpec    `json:"aggregation"`
 	GroupBy         []GroupBySpec        `json:"groupBy,omitempty"`
 	SubAggregations []SubAggregationSpec `json:"subAggregations,omitempty"`
@@ -189,6 +191,13 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 
 	if baseQuery == nil {
 		baseQuery = bleve.NewMatchAllQuery()
+	}
+	if req.Where != nil {
+		whereQuery, err := where.ConvertToBleveQuery(req.Where)
+		if err != nil {
+			return nil, fmt.Errorf("where: %w", err)
+		}
+		baseQuery = bleve.NewConjunctionQuery(baseQuery, whereQuery)
 	}
 
 	if len(req.GroupBy) > MaxGroupByDepth {

@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oss/aggregation"
+	"github.com/liyang/weave/pkg/oss/where"
 )
 
 // PropertyFilterProvider resolves the column-level allow list for the
@@ -88,7 +90,49 @@ func (h *Handler) rejectFilteredAggregationFields(ctx context.Context, objectTyp
 			return deny(spec.Field)
 		}
 	}
+	for _, field := range aggregationWhereFields(req.Where) {
+		if _, ok := allowedSet[field]; !ok {
+			return deny(field)
+		}
+	}
 	return nil
+}
+
+func aggregationWhereFields(clause *where.WhereClause) []string {
+	fields := map[string]struct{}{}
+	collectAggregationWhereFields(clause, fields)
+	out := make([]string, 0, len(fields))
+	for field := range fields {
+		out = append(out, field)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func collectAggregationWhereFields(clause *where.WhereClause, fields map[string]struct{}) {
+	if clause == nil {
+		return
+	}
+	switch clause.Type {
+	case "and", "or":
+		var subs []where.WhereClause
+		if err := json.Unmarshal(clause.Value, &subs); err != nil {
+			return
+		}
+		for i := range subs {
+			collectAggregationWhereFields(&subs[i], fields)
+		}
+	case "not":
+		var sub where.WhereClause
+		if err := json.Unmarshal(clause.Value, &sub); err != nil {
+			return
+		}
+		collectAggregationWhereFields(&sub, fields)
+	default:
+		if clause.Field != "" {
+			fields[clause.Field] = struct{}{}
+		}
+	}
 }
 
 // AggregateObjects handles POST /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate.

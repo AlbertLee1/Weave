@@ -1,22 +1,42 @@
 # Ralph Progress Log
-Started: 2026-05-21T12:07:17+08:00
+Started: 2026-05-21T12:58:11+08:00
 Branch: ralph/self-iteration-20260521-110910
-Archived previous Ralph files: scripts/ralph/archive/self-iteration-20260521-120717/
+Archived previous Ralph files: scripts/ralph/archive/self-iteration-20260521-125811/
 
 ## Initial inspection
 - Branch verified: `ralph/self-iteration-20260521-110910`.
-- Previous PRD belonged to this branch but all stories had `passes: true`, so a new small PRD was created.
-- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the working progress file.
-- GitHub PR #41 check rollup was inspected with `gh pr list --head ralph/self-iteration-20260521-110910 --json number,headRefName,statusCheckRollup,url,state`; both CI checks were successful:
-  - Go (build, vet, lint, test, vulncheck), completed 2026-05-21T03:55:21Z.
-  - Web (typecheck, test, build), completed 2026-05-21T03:55:26Z.
-- Known issue check:
-  - `cmd/server/embed.go` already has `cmd/server/embed_ci_bdd_test.go` guarding fresh CI builds without generated `web/dist`.
-  - `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx` passed; the US-453 `object.stream is not a function` regression is covered and not active.
-- Dogfood findings checked:
-  - DOG-001 Northwind seed replay has `scripts/e2e-setup.sh` object-type probing and seed tests from P2B-503.
-  - DOG-003 stream ingest index readiness has DOG-003 bootstrap/fail-fast coverage in OMS/OSS.
-  - DOG-004 browser search where-contract and DOG-005 explorer flags have BDD coverage.
+- Previous PRD belonged to this branch and all stories had `passes: true`, so a new small PRD was created.
+- Root symlinks remain in place: `prd.json -> scripts/ralph/prd.json`, `progress.txt -> scripts/ralph/progress.txt`.
+- `LLM review auto-fix context` was present and is the highest-priority target for this iteration. Scope is limited to the blocking finding: aggregation where filters are exposed by the UI but ignored by the backend.
+- Root cause found before implementation: `web/src/api/types.ts` already includes `AggregationRequest.where`, but `pkg/oss/aggregation.AggregationRequest` has no `Where` field, so `json.Decoder` drops the request member before `pkg/oss.Handler.AggregateObjects` calls the aggregation engine.
+- Existing backend affordances:
+  - `pkg/oss/where.ConvertToBleveQuery` converts canonical WhereClause values to Bleve queries.
+  - `pkg/oss/aggregation.Engine.AggregateWithQuery` already accepts a base query and conjoins downstream metric/groupBy work to that scope.
+  - `pkg/oss/where.MatchClause` evaluates WhereClause trees in memory for non-Bleve paths such as scenario overlays.
+  - `pkg/oss/handlers_aggregate.go` already enforces column policy for aggregation metric and groupBy fields.
+
+## LLM review auto-fix context - 2026-05-21T12:55:43+08:00
+- PR: https://github.com/AlbertLee1/Weave/pull/41
+- Branch: ralph/self-iteration-20260521-110910
+- Reviewed HEAD: 6d7bf207b533
+- Review status: request_changes
+- Summary: Request changes: aggregation filters are exposed in the UI but ignored by the backend.
+- Blocking findings:
+```json
+[
+  {
+    "severity": "warning",
+    "file": "web/src/components/aggregation/AggregationPage.tsx",
+    "line": 55,
+    "issue": "The new Aggregation where filter is UI/request-body only. The frontend now sends `where`, but the server decodes into `pkg/oss/aggregation.AggregationRequest`, which has no `where` field, so `json.Decoder` drops it and the aggregate endpoint still runs over all rows. The added tests only assert the POST body, not filtered aggregate results, so this regression is invisible to the current coverage.",
+    "suggestion": "Implement the server-side where contract end to end: add/parse a where clause for aggregation, convert it to a Bleve query and conjoin it with the aggregate base query, cover scenario overlay if applicable, enforce property policy on where fields, and add a backend or browser test that proves filtered results change."
+  }
+]
+```
+- Recommended fix prompt:
+```text
+Fix P2B-502 end to end: make `/api/v2/ontologies/{ontology}/objects/{objectType}/aggregate` apply `where` filters in the backend, enforce property visibility on where fields, and add result-level tests proving filtered aggregates differ from unfiltered results.
+```
 
 ## Codebase Patterns
 - MCP discovery methods should prefer deterministic full results over silent partial catalogues; `resources/list` is the local precedent for surfacing upstream OMS listing failures as JSON-RPC internal errors.
@@ -24,135 +44,49 @@ Archived previous Ralph files: scripts/ralph/archive/self-iteration-20260521-120
 - Existing Quiver Playwright feature tests intentionally document gaps using absence assertions; replace those assertions with positive BDD checks when the UI capability is implemented.
 - Playwright actual browser runs can silently reuse a Vite server from another checkout because `web/playwright.config.ts` sets `reuseExistingServer: !process.env.CI`; inspect `lsof -nP -iTCP:5173 -sTCP:LISTEN` before treating browser-run output as worktree-local evidence.
 - Aggregation `where` can reuse `web/src/components/browser/FilterBuilder.tsx` and `web/src/lib/whereBuilder.ts`; this keeps object browser and aggregation request bodies on the same WhereClause contract.
+- Backend aggregation `where` must live on `pkg/oss/aggregation.AggregationRequest` and be applied by conjoining `pkg/oss/where.ConvertToBleveQuery` with the aggregation engine base query; scenario overlays need `pkg/oss/where.MatchClause` because they run in memory after fold.
 - Northwind E2E seed replay depends on both layers: `test/fixtures/seed_northwind.Seed` owns DB wipe ordering for non-cascading ontology dependents (`functions`, `query_types`, `ontology_snapshots`, `automation_rules`, and object-type scoped `datasource_bindings`), while `scripts/e2e-setup.sh` should probe the live `/api/v2/ontologies/northwind/objectTypes` endpoint after the seeder returns so a clean exit cannot mask an empty browser fixture.
 
 ## Selected story
-- SELF-601 - Record Scheduled Pipeline Ticks as Run History.
-- Reason: `cmd/server/main.go` currently wires a scheduled pipeline runner that only logs each cron tick. The existing Pipeline run-history API and store contract are already present, so scheduled ticks can be made observable in product surfaces with a small, testable server-side change before broader runtime execution work.
+- SELF-604 - Apply Aggregation Where Filters Server-Side.
+- Reason: This directly addresses the blocking LLM review finding and keeps the repair isolated to backend where execution, policy enforcement, and scenario-overlay parity.
 
-## SELF-601 - Record Scheduled Pipeline Ticks as Run History
+## SELF-604 - Apply Aggregation Where Filters Server-Side
 Status: PASS
 
 BDD/TDD red step:
-- Added `cmd/server/pipeline_scheduler_runner_bdd_test.go` with two scenarios:
-  - A scheduled tick records a failed run-history row when the pipeline runtime is not configured.
-  - Run-history append failures propagate back to the scheduler runner.
-- Command: `go test ./cmd/server -run TestBDD_ScheduledPipelineTick -count=1 -v`
-- Result: exited 1 as expected because `newScheduledPipelineRunRecorder` did not exist.
+- Added `pkg/oss/handlers_aggregate_where_bdd_test.go` with three scenarios:
+  - Backend aggregate results differ when `where.active == true` filters the employee fixture.
+  - Column policy rejects a field-less count aggregation when its `where` references hidden `active`.
+  - Scenario overlay aggregation applies `where.status == "shipped"` after edits are folded and before metrics/groupBy buckets are computed.
+- Command: `go test ./pkg/oss -run TestBDD_SELF604 -count=1 -v`
+- Result: exited 1 as expected. The filtered count remained 3 instead of 2, the hidden `where` field returned 200 instead of 403, and the scenario overlay returned both pending and shipped buckets instead of only the filtered shipped bucket.
 
 Implementation:
-- `cmd/server/pipeline_scheduler_runner.go`
-  - Added `scheduledPipelineRunRecorder`, a `pipeline.PipelineRunner` implementation.
-  - On each cron tick, it appends a terminal `PipelineRun` with `status=failed`, `triggeredBy=schedule`, `startedAt`, `finishedAt`, and `errorMessage="pipeline runtime not configured"`.
-  - It returns the runtime-not-configured error after a successful append so the scheduler logger still records that the runtime executor has not been wired.
-  - It wraps store append errors so `errors.Is` still detects store-level causes such as `pipeline.ErrPipelineNotFound`.
-- `cmd/server/main.go`
-  - Replaced the log-only scheduled pipeline placeholder with `newScheduledPipelineRunRecorder(deps.PipelineStore)`.
+- `pkg/oss/aggregation/engine.go`
+  - Added `AggregationRequest.Where *where.WhereClause`.
+  - Converts `Where` with `where.ConvertToBleveQuery` and conjoins it with the existing aggregation base query before exclusions, metrics, facets, cube/rollup, and sub-aggregation scopes run.
+- `pkg/oss/handlers_aggregate.go`
+  - Walks `where` clause trees and includes referenced fields in the existing property visibility gate.
+  - Returns the existing `PropertyNotAccessible` permission error for hidden `where` fields.
+- `pkg/oss/scenario_aggregate.go`
+  - Filters post-overlay rows with `where.MatchClause` before the in-memory scenario aggregation buckets and metrics are computed.
 
 Verification:
-- RED: `go test ./cmd/server -run TestBDD_ScheduledPipelineTick -count=1 -v` exited 1 with `undefined: newScheduledPipelineRunRecorder`.
-- GREEN targeted: `go test ./cmd/server -run TestBDD_ScheduledPipelineTick -count=1 -v` exited 0.
-- Related packages: `go test ./cmd/server ./pkg/pipeline -count=1` exited 0.
+- RED: `go test ./pkg/oss -run TestBDD_SELF604 -count=1 -v` exited 1 with the expected ignored-filter failures.
+- GREEN targeted: `go test ./pkg/oss -run TestBDD_SELF604 -count=1 -v` exited 0 with all three SELF-604 BDD tests passing.
+- Related packages: `go test ./pkg/oss ./pkg/oss/aggregation ./pkg/oss/where -count=1` exited 0.
 - CI helper tests: `go test ./scripts/ci -count=1` exited 0.
 - Fast Go gate: `go test $(./scripts/ci/go-packages.sh) -count=1` exited 0.
 
 Files changed:
-- `cmd/server/main.go`
-- `cmd/server/pipeline_scheduler_runner.go`
-- `cmd/server/pipeline_scheduler_runner_bdd_test.go`
+- `pkg/oss/aggregation/engine.go`
+- `pkg/oss/handlers_aggregate.go`
+- `pkg/oss/scenario_aggregate.go`
+- `pkg/oss/handlers_aggregate_where_bdd_test.go`
 - `scripts/ralph/prd.json`
 - `scripts/ralph/progress.txt`
 
 Reusable learning:
-- Scheduled pipeline ticks should be observable through the existing Pipeline run-history API before the full DAG runtime is wired. A failed run row with an explicit runtime-not-configured message is less misleading than a success row and more useful than a server log line.
----
-
-## Selected story
-- SELF-602 - Surface Pipeline Run History in the Pipeline Log Panel.
-- Reason: SELF-601 now records scheduled ticks through the existing Pipeline run-history store, but the Web Pipeline page still showed placeholder copy in the log panel. Surfacing `/api/v2/pipelines/{pipelineId}/runs` closes the operator visibility loop with a narrow frontend change.
-
-## SELF-602 - Surface Pipeline Run History in the Pipeline Log Panel
-Status: PASS
-
-BDD/TDD red step:
-- Added SELF-602 scenarios to `web/src/components/pipelines/__tests__/PipelinesPage.test.tsx`:
-  - A selected pipeline with recent runs lists run id, status, trigger, timestamp, and error text in the log panel.
-  - A selected pipeline with no runs shows an empty run-history state and removes the old placeholder copy.
-- Command: `npm --prefix web test -- --run src/components/pipelines/__tests__/PipelinesPage.test.tsx`
-- Result: exited 1 as expected; the new tests could not find `pipeline-run-history` or `pipeline-run-history-empty`.
-
-Implementation:
-- `web/src/api/pipelines.ts`
-  - Added `PipelineRun`, `ListPipelineRunsResponse`, `ListPipelineRunsOptions`, and `listPipelineRuns`.
-  - `listPipelineRuns` calls the mounted `/api/v2/pipelines/{pipelineId}/runs` endpoint with optional `limit` and `cursor` query parameters.
-- `web/src/hooks/usePipelines.ts`
-  - Added `pipelineRuns` query keys and `usePipelineRuns(pipelineId, limit = 10)`.
-- `web/src/components/pipelines/PipelinesPage.tsx`
-  - Fetches recent runs for the selected pipeline.
-  - Replaced the placeholder log-panel copy with a run-history section.
-  - Shows loading, error, empty, and non-empty run-history states.
-  - Displays run status, trigger, UTC timestamp, and error message for recent runs.
-- `web/src/components/pipelines/__tests__/PipelinesPage.test.tsx`
-  - Stubs the run-history fetch for existing Pipeline page tests.
-  - Adds SELF-602 BDD coverage for recent-run and no-run states.
-
-Verification:
-- RED: `npm --prefix web test -- --run src/components/pipelines/__tests__/PipelinesPage.test.tsx` exited 1 with missing run-history test ids.
-- GREEN targeted: `npm --prefix web test -- --run src/components/pipelines/__tests__/PipelinesPage.test.tsx` exited 0 with 8/8 tests passing.
-- Package typecheck: `npm --prefix web run typecheck` exited 0.
-- Web build: `npm --prefix web run build` exited 0; Vite built 1680 modules and bundle budgets passed.
-- CI-shaped typecheck: `npx tsc --noEmit` from `web/` exited 0.
-- Final targeted rerun: `npm --prefix web test -- --run src/components/pipelines/__tests__/PipelinesPage.test.tsx` exited 0 with 8/8 tests passing.
-- Note: `npm --prefix web exec tsc -- --noEmit` exited 1 because the command syntax sent no options to `tsc`; reran the workflow-equivalent `npx tsc --noEmit` from `web/`, which exited 0.
-
-Files changed:
-- `web/src/api/pipelines.ts`
-- `web/src/hooks/usePipelines.ts`
-- `web/src/components/pipelines/PipelinesPage.tsx`
-- `web/src/components/pipelines/__tests__/PipelinesPage.test.tsx`
-- `scripts/ralph/prd.json`
-- `scripts/ralph/progress.txt`
-
-Reusable learning:
-- Pipeline run-history UI should use the existing frontend API/hook pattern from AIP Logic runs: add a typed API client, wrap it in a React Query hook keyed by the selected resource id, and pass query state into the page panel so empty/error/loading states are explicit.
----
-
-## Selected story
-- SELF-603 - Persist Real Scheduled Pipeline DAG Outcomes.
-- Reason: SELF-601 made scheduled ticks observable as runtime-not-configured failures and SELF-602 surfaced those rows in the UI. The remaining gap was the transition path for a configured DAG node runner: scheduled ticks should persist actual RunDAG outcomes instead of always recording placeholder failures.
-
-## SELF-603 - Persist Real Scheduled Pipeline DAG Outcomes
-Status: PASS
-
-BDD/TDD red step:
-- Added SELF-603 scenarios to `cmd/server/pipeline_scheduler_runner_bdd_test.go`:
-  - A scheduled pipeline with a configured DAG node runner records a successful run row with `triggeredBy=schedule`, a persisted `RunDAG` result, and successful node statuses.
-  - A scheduled pipeline whose DAG node runner fails records a failed run row with the partial `RunDAG` result and error message, while returning the node error to the scheduler logger path.
-- Command: `go test ./cmd/server -run 'TestBDD_ScheduledPipelineTick_GivenDAGRunner' -count=1 -v`
-- Result: exited 1 as expected because `newScheduledPipelineDAGRunRecorder` did not exist.
-
-Implementation:
-- `cmd/server/pipeline_scheduler_runner.go`
-  - Extended `scheduledPipelineRunRecorder` with an optional `pipeline.NodeRunner`.
-  - Added `newScheduledPipelineDAGRunRecorder(store, nodeRunner)` for configured runtime use.
-  - Kept the existing nil-runtime path unchanged: it still appends a failed runtime-not-configured row and returns the runtime-not-configured error.
-  - When a node runner is configured, the scheduler runner now calls `pipeline.RunDAG`, appends a terminal `PipelineRun` with `Result`, `status`, `startedAt`, `finishedAt`, `triggeredBy=schedule`, and any error message, then returns the DAG error after the run row is durable.
-
-Verification:
-- RED: `go test ./cmd/server -run 'TestBDD_ScheduledPipelineTick_GivenDAGRunner' -count=1 -v` exited 1 with `undefined: newScheduledPipelineDAGRunRecorder`.
-- GREEN targeted: `go test ./cmd/server -run 'TestBDD_ScheduledPipelineTick_GivenDAGRunner' -count=1 -v` exited 0.
-- Scheduler regression: `go test ./cmd/server -run 'TestBDD_ScheduledPipelineTick' -count=1 -v` exited 0 with all four scheduled tick BDD tests passing.
-- Related packages: `go test ./cmd/server ./pkg/pipeline -count=1` exited 0.
-- CI helper tests: `go test ./scripts/ci -count=1` exited 0.
-- Fast Go gate: `go test $(./scripts/ci/go-packages.sh) -count=1` exited 0.
-
-Files changed:
-- `cmd/server/pipeline_scheduler_runner.go`
-- `cmd/server/pipeline_scheduler_runner_bdd_test.go`
-- `scripts/ralph/prd.json`
-- `scripts/ralph/progress.txt`
-
-Reusable learning:
-- The scheduler runner should treat `pipeline.NodeRunner` presence as the runtime boundary: nil records explicit runtime-not-configured evidence, while non-nil runs the DAG and persists the real `RunResult` before surfacing any execution error to scheduler logging.
-- `pipeline.RunDAG` validates the pipeline model through `BuildDAG`, so BDD fixtures that exercise real DAG execution need a 5- or 6-field cron string such as `0 * * * *`; `@every` descriptors are scheduler-parser inputs, not model-validator inputs.
+- Aggregation request filtering belongs at the shared aggregation-engine base-query boundary so simple metrics, groupBy, cube/rollup, excludedItems, and sub-aggregations inherit the same scope. Scenario overlays are the exception because they bypass Bleve and must evaluate the same WhereClause against folded in-memory rows.
 ---
