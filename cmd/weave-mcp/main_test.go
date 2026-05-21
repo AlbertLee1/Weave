@@ -49,7 +49,7 @@ func stubServer(t *testing.T) *httptest.Server {
 		case "initialize":
 			mustWriteJSON(t, w, map[string]any{
 				"jsonrpc": "2.0",
-				"id":      json.RawMessage(req.ID),
+				"id":      req.ID,
 				"result": map[string]any{
 					"protocolVersion": "2024-11-05",
 					"serverInfo":      map[string]any{"name": "weave-mcp", "version": "0.1.0"},
@@ -63,7 +63,7 @@ func stubServer(t *testing.T) *httptest.Server {
 		case "tools/list":
 			mustWriteJSON(t, w, map[string]any{
 				"jsonrpc": "2.0",
-				"id":      json.RawMessage(req.ID),
+				"id":      req.ID,
 				"result": map[string]any{
 					"tools": []any{
 						map[string]any{"name": "weave_list_ontologies"},
@@ -74,7 +74,7 @@ func stubServer(t *testing.T) *httptest.Server {
 		case "prompts/list":
 			mustWriteJSON(t, w, map[string]any{
 				"jsonrpc": "2.0",
-				"id":      json.RawMessage(req.ID),
+				"id":      req.ID,
 				"result": map[string]any{
 					"prompts": []any{
 						map[string]any{
@@ -216,12 +216,12 @@ func TestBDD_HTTPBridge_Given_MixedJSONRPCBatch_When_Run_Then_StdoutEmitsOneBatc
 		mustWriteJSON(t, w, []any{
 			map[string]any{
 				"jsonrpc": "2.0",
-				"id":      json.RawMessage(requests[0].ID),
+				"id":      requests[0].ID,
 				"result":  map[string]any{"protocolVersion": "2024-11-05"},
 			},
 			map[string]any{
 				"jsonrpc": "2.0",
-				"id":      json.RawMessage(requests[1].ID),
+				"id":      requests[1].ID,
 				"result":  map[string]any{"tools": []any{}},
 			},
 		})
