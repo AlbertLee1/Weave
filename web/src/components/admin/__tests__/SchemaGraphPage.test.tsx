@@ -117,7 +117,17 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-function installFetch() {
+function installFetch({
+  objectTypes = OBJECT_TYPES,
+  linkTypes = LINK_TYPES,
+  interfaces = INTERFACES,
+  attachments = ATTACHMENTS,
+}: {
+  objectTypes?: typeof OBJECT_TYPES;
+  linkTypes?: typeof LINK_TYPES;
+  interfaces?: typeof INTERFACES;
+  attachments?: typeof ATTACHMENTS;
+} = {}) {
   vi.stubGlobal(
     'fetch',
     vi.fn(
@@ -132,26 +142,26 @@ function installFetch() {
           method === 'GET' &&
           url.endsWith('/api/v2/ontologies/northwind/objectTypes')
         ) {
-          return jsonResponse({ data: OBJECT_TYPES });
+          return jsonResponse({ data: objectTypes });
         }
         if (
           method === 'GET' &&
           url.endsWith('/api/v2/ontologies/northwind/linkTypes')
         ) {
-          return jsonResponse({ data: LINK_TYPES });
+          return jsonResponse({ data: linkTypes });
         }
         if (
           method === 'GET' &&
           url.endsWith('/api/v2/ontologies/northwind/interfacesAdmin')
         ) {
-          return jsonResponse({ data: INTERFACES });
+          return jsonResponse({ data: interfaces });
         }
         const attachMatch = url.match(
           /\/api\/v2\/ontologies\/northwind\/objectTypes\/byRid\/([^/]+)\/interfaces$/,
         );
         if (attachMatch && method === 'GET') {
           const rid = decodeURIComponent(attachMatch[1]);
-          return jsonResponse({ data: ATTACHMENTS[rid] ?? [] });
+          return jsonResponse({ data: attachments[rid] ?? [] });
         }
 
         return new Response('{}', { status: 200 });
@@ -275,7 +285,15 @@ describe('SchemaGraphPage', () => {
     // No edges remain (no links connect a single Department node to itself)
     expect(screen.queryAllByTestId('graph-edge')).toHaveLength(0);
     // Counter updates
-    expect(screen.getByText(/1 types · 0 links/)).toBeInTheDocument();
+    expect(screen.getByText(/1 type · 0 links/)).toBeInTheDocument();
+  });
+
+  it('uses plural-safe copy for schema graph summary counts', async () => {
+    installFetch({ linkTypes: [LINK_TYPES[0]] });
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText(/3 types · 1 link/)).toBeInTheDocument();
+    });
   });
 
   it('navigates to the ObjectType admin page when a node is clicked', async () => {
