@@ -78,6 +78,8 @@ type resourceListCursor struct {
 	PageSize int    `json:"pageSize,omitempty"`
 }
 
+const maxResourcePageSize = 500
+
 type resourcesSubscribeParams struct {
 	URI string `json:"uri"`
 }
@@ -178,6 +180,10 @@ func decodeResourcesListParams(req *Request) (resourcesListParams, *Response) {
 	if p.PageSize < 0 {
 		return p, NewErrorResponse(req.ID, CodeInvalidParams, "pageSize must be non-negative", nil)
 	}
+	if p.PageSize > maxResourcePageSize {
+		return p, NewErrorResponse(req.ID, CodeInvalidParams,
+			fmt.Sprintf("pageSize must be <= %d", maxResourcePageSize), nil)
+	}
 	if p.Cursor != "" {
 		c, err := decodeResourceListCursor(p.Cursor)
 		if err != nil {
@@ -198,7 +204,8 @@ func pageResources(resources []Resource, params resourcesListParams) ([]Resource
 			return resources[i].URI > params.Cursor
 		})
 	}
-	if params.PageSize == 0 || start+params.PageSize >= len(resources) {
+	remaining := len(resources) - start
+	if params.PageSize == 0 || params.PageSize >= remaining {
 		return resources[start:], "", nil
 	}
 	end := start + params.PageSize
@@ -237,6 +244,9 @@ func decodeResourceListCursor(cursor string) (resourceListCursor, error) {
 		return resourceListCursor{}, fmt.Errorf("invalid resource cursor boundary")
 	}
 	if c.PageSize < 0 {
+		return resourceListCursor{}, fmt.Errorf("invalid resource cursor page size")
+	}
+	if c.PageSize > maxResourcePageSize {
 		return resourceListCursor{}, fmt.Errorf("invalid resource cursor page size")
 	}
 	return c, nil

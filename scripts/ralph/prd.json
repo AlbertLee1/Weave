@@ -1,23 +1,25 @@
 {
-  "project": "Weave self-iteration CI repair",
+  "project": "Weave self-iteration LLM review repair",
   "branchName": "ralph/self-iteration-20260521-171221",
-  "description": "Focused repair PRD for the current pull-request CI failure on the Ralph self-iteration integration branch.",
+  "description": "Focused repair PRD for the blocking LLM review finding on the Ralph self-iteration integration branch.",
   "userStories": [
     {
-      "id": "RCI-001",
-      "title": "Repair MCP Resource Comment Lint Failure",
+      "id": "RLLM-001",
+      "title": "Harden MCP Resource List Pagination",
       "priority": 1,
-      "area": "CI / MCP backend",
-      "story": "As a Weave maintainer, I want the MCP resource subscription code to satisfy the US-English lint gate so the pull-request CI can continue through the Go test, coverage, contract, and vulnerability stages.",
+      "area": "MCP backend",
+      "story": "As a Weave MCP client operator, I want resources/list pagination to reject unsafe page-size inputs before slicing so crafted cursors cannot panic the public MCP endpoint.",
       "acceptanceCriteria": [
-        "Given the current pull-request CI failure, when golangci-lint checks pkg/mcp/resources.go, then it no longer reports misspell for the resource subscription comment.",
-        "Given the prior MCP resource subscription behavior, when pkg/mcp tests run, then subscribe, unsubscribe, read, and list behavior continue to pass.",
-        "Given the Ralph loop state, when the repair is verified, then this story is marked passes=true and progress records the CI evidence and verification commands."
+        "Given a resources/list request with a valid-looking cursor and an unsafe huge pageSize, when it is posted to the MCP HTTP transport, then the server returns a JSON-RPC invalid params response instead of panicking.",
+        "Given a resources/list request that resumes from a cursor near the end of the resource catalog, when the requested pageSize is larger than the remaining catalog length but within policy, then pagination returns the safe final page without overflow-prone arithmetic.",
+        "Given a resources/list cursor carrying an unsafe decoded pageSize, when the request omits an explicit pageSize, then cursor decoding rejects it with invalid params.",
+        "Given the Ralph loop state, when the repair is verified, then this story is marked passes=true and progress records the review evidence and verification commands."
       ],
       "dependencies": [
         "pkg/mcp/resources.go",
-        ".golangci.yml misspell locale: US",
-        "GitHub Actions run 26218880007"
+        "pkg/mcp/http_transport.go",
+        "pkg/mcp/resources_list_cursor_p2a002_test.go",
+        "LLM review request_changes on PR #42"
       ],
       "passes": true
     }

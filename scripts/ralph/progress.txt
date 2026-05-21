@@ -1,56 +1,69 @@
 # Ralph Progress Log
-Started: 2026-05-21T18:08:39+08:00
+Started: 2026-05-21T18:38:42+08:00
 Branch: ralph/self-iteration-20260521-171221
 
 Archived prior all-passing state:
-- scripts/ralph/archive/self-iteration-20260521-180839/prd.json
-- scripts/ralph/archive/self-iteration-20260521-180839/progress.txt
+- scripts/ralph/archive/self-iteration-20260521-183842/prd.json
+- scripts/ralph/archive/self-iteration-20260521-183842/progress.txt
 
 ## Baseline Inspection
 - Verified branch with `git branch --show-current`: ralph/self-iteration-20260521-171221.
-- Existing PRD belonged to this branch and all five stories had `passes: true`, so this run created a new focused PRD.
-- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the live progress file.
-- Dogfood notes reviewed: DOG-001 Northwind seed still exists as a durable dogfood finding; DOG-002 dashboard total count had already been fixed in prior work.
-- Known fresh-CI risks checked:
-  - `cmd/server/embed.go` now embeds `all:web`, with `cmd/server/web/embed-placeholder.txt` and `cmd/server/embed_ci_bdd_test.go` covering fresh Go builds without generated `web/dist`.
-  - US-453 compliance download coverage includes a streamless `Response.blob()` failure fixture in `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`.
-- GitHub Actions current PR CI checked with `gh run list --branch ralph/self-iteration-20260521-171221 --limit 5`: latest CI run 26218880007 failed.
-- Failure evidence from `gh run view 26218880007 --log-failed`: Go job failed at `golangci-lint`; build and vet passed; web job passed. Lint reported `pkg/mcp/resources.go:310:29: catalogue is a misspelling of catalog (misspell)`.
+- Existing PRD belonged to this branch, but all stories had `passes: true`.
+- A new `LLM review auto-fix context` was appended to the live progress file, so this run created a focused review-repair PRD and preserved the review evidence below.
+- GitHub Actions current PR CI checked with `gh run list --branch ralph/self-iteration-20260521-171221 --limit 5`: latest visible run 26220348402 completed successfully after the previous CI lint repair; earlier run 26218880007 failed on misspell and was repaired by RCI-001.
+- Scope is intentionally limited to the blocking LLM review finding in MCP resources/list pagination.
+
+## LLM Review Auto-Fix Evidence
+- PR: https://github.com/AlbertLee1/Weave/pull/42
+- Branch: ralph/self-iteration-20260521-171221
+- Reviewed HEAD: 6f11ec181858
+- Review status: request_changes
+- Summary: Request changes: the new resources/list cursor path has an overflow-triggered panic/DoS risk. Local verifier evidence was provided, but GitHub checks snapshot reports no checks.
+- Blocking finding: `pkg/mcp/resources.go:201` uses `start+params.PageSize` without bounding PageSize or doing overflow-safe arithmetic. Because cursors are base64 JSON and only require `afterUri` to start with `weave://`, a client can craft a valid-looking cursor plus `pageSize=MaxInt`. When `start` is non-zero, `start+pageSize` overflows, the comparison is bypassed, and `resources[start:end]` / `resources[end-1]` can panic on the public `/mcp` endpoint instead of returning a JSON-RPC error.
+- Required focus: validate or cap pageSize from params and decoded cursors, compute pagination against remaining resources instead of `start+pageSize`, add regression coverage for crafted cursor plus huge pageSize returning a JSON-RPC error or safe final page without panic.
 
 ## Current Story
-- Selected RCI-001 - Repair MCP Resource Comment Lint Failure because current PR CI is failing before Go tests.
+- Selected RLLM-001 - Harden MCP Resource List Pagination because the LLM review blocking finding is the highest-priority gate.
 
-## RCI-001 - Repair MCP Resource Comment Lint Failure
+## RLLM-001 - Harden MCP Resource List Pagination
 Status: PASS
 
 ### Root Cause
-- GitHub Actions run 26218880007 failed in the Go job at `golangci-lint`.
-- Build and vet completed successfully before lint.
-- The only CI-reported new lint issue was `pkg/mcp/resources.go:310:29: catalogue is a misspelling of catalog (misspell)`.
-- Local unscoped lint also showed older MCP lint debt, so the reproducible repair command uses the same patch-scoped mode as pull-request CI.
+- Investigation target: `pkg/mcp/resources.go` currently accepts any non-negative `pageSize` from request params or decoded cursors.
+- Failure path: with a valid cursor whose `afterUri` sorts before a real resource, `start` becomes non-zero; then `start + params.PageSize` can overflow for `math.MaxInt`, leading to unsafe slice bounds.
 
 ### Red
-- Command: `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --new-from-rev d4877d2056503b6cecf5f3afbac49c1f00abf8c3 --timeout=5m ./pkg/mcp`
-- Result: failed as expected with one issue at `pkg/mcp/resources.go:310:29`, `catalogue` -> `catalog`.
+- Added `TestBDD_HTTPTransportResourcesListRejectsUnsafePageSizeCursor_RLLM001` for the public MCP HTTP transport with a valid-looking cursor and `pageSize=MaxInt`.
+- Added `TestResourcesList_GivenCursorWithUnsafeDecodedPageSize_WhenListThenInvalidParams_RLLM001` for decoded cursor page-size validation.
+- Command: `go test ./pkg/mcp -run 'TestBDD_HTTPTransportResourcesListRejectsUnsafePageSizeCursor_RLLM001|TestResourcesList_GivenCursorWithUnsafeDecodedPageSize_WhenListThenInvalidParams_RLLM001' -count=1 -v`
+- Result: failed as expected with `panic: runtime error: index out of range [9223372036854775807] with length 1` from `pkg/mcp/resources.go:205`.
 
 ### Green
-- Updated the MCP resource subscribe comment in `pkg/mcp/resources.go` from `catalogue` to `catalog`.
+- Added `maxResourcePageSize = 500` and reject request `pageSize` values above that cap with JSON-RPC `CodeInvalidParams`.
+- Applied the same cap to decoded cursor `pageSize` values so tampered opaque cursors cannot carry unsafe pagination state.
+- Replaced `start + params.PageSize >= len(resources)` with `remaining := len(resources) - start` and `params.PageSize >= remaining`, so safe page sizes larger than the remaining catalog return the final page without overflow-prone arithmetic.
+- Added `TestResourcesList_GivenCursorNearEndAndSafeLargePageSize_WhenListThenReturnsFinalPage_RLLM001` to lock the safe final-page behavior.
 
 ### Verification
-- `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --new-from-rev d4877d2056503b6cecf5f3afbac49c1f00abf8c3 --timeout=5m ./pkg/mcp` -> pass, `0 issues`.
+- `go test ./pkg/mcp -run 'RLLM001' -count=1 -v` -> pass for all three RLLM-001 tests.
 - `go test ./pkg/mcp -count=1` -> pass.
+- `go test ./cmd/server -run TestMCP -count=1` -> pass.
 - `git diff --check` -> pass.
 - `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --new-from-rev d4877d2056503b6cecf5f3afbac49c1f00abf8c3 --timeout=5m` -> pass, `0 issues`.
+- `go test ./... -count=1` -> pass.
 
 ### Files Changed
 - `pkg/mcp/resources.go`
+- `pkg/mcp/http_transport_test.go`
+- `pkg/mcp/resources_list_cursor_p2a002_test.go`
 - `scripts/ralph/prd.json`
 - `scripts/ralph/progress.txt`
-- `scripts/ralph/archive/self-iteration-20260521-180839/prd.json`
-- `scripts/ralph/archive/self-iteration-20260521-180839/progress.txt`
+- `scripts/ralph/archive/self-iteration-20260521-183842/prd.json`
+- `scripts/ralph/archive/self-iteration-20260521-183842/progress.txt`
 
 ### Reusable Learning
-- For pull-request CI lint failures, reproduce locally with `golangci-lint run --new-from-rev $(git merge-base origin/main HEAD)` to avoid unrelated pre-existing lint debt.
+- MCP resource-list cursors are opaque to clients but still attacker-controlled at the protocol boundary; validate decoded cursor fields with the same policy as request params.
+- Pagination arithmetic should compare requested size against `remaining := len(items) - start` before computing `end`, not add untrusted size to `start` inside the bounds check.
 
 ## Codebase Patterns
 - MCP server dispatch lives in `pkg/mcp/server.go`; method-specific resource behavior lives in `pkg/mcp/resources.go`.

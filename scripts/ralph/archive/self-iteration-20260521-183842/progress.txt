@@ -1,0 +1,89 @@
+# Ralph Progress Log
+Started: 2026-05-21T18:08:39+08:00
+Branch: ralph/self-iteration-20260521-171221
+
+Archived prior all-passing state:
+- scripts/ralph/archive/self-iteration-20260521-180839/prd.json
+- scripts/ralph/archive/self-iteration-20260521-180839/progress.txt
+
+## Baseline Inspection
+- Verified branch with `git branch --show-current`: ralph/self-iteration-20260521-171221.
+- Existing PRD belonged to this branch and all five stories had `passes: true`, so this run created a new focused PRD.
+- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the live progress file.
+- Dogfood notes reviewed: DOG-001 Northwind seed still exists as a durable dogfood finding; DOG-002 dashboard total count had already been fixed in prior work.
+- Known fresh-CI risks checked:
+  - `cmd/server/embed.go` now embeds `all:web`, with `cmd/server/web/embed-placeholder.txt` and `cmd/server/embed_ci_bdd_test.go` covering fresh Go builds without generated `web/dist`.
+  - US-453 compliance download coverage includes a streamless `Response.blob()` failure fixture in `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`.
+- GitHub Actions current PR CI checked with `gh run list --branch ralph/self-iteration-20260521-171221 --limit 5`: latest CI run 26218880007 failed.
+- Failure evidence from `gh run view 26218880007 --log-failed`: Go job failed at `golangci-lint`; build and vet passed; web job passed. Lint reported `pkg/mcp/resources.go:310:29: catalogue is a misspelling of catalog (misspell)`.
+
+## Current Story
+- Selected RCI-001 - Repair MCP Resource Comment Lint Failure because current PR CI is failing before Go tests.
+
+## RCI-001 - Repair MCP Resource Comment Lint Failure
+Status: PASS
+
+### Root Cause
+- GitHub Actions run 26218880007 failed in the Go job at `golangci-lint`.
+- Build and vet completed successfully before lint.
+- The only CI-reported new lint issue was `pkg/mcp/resources.go:310:29: catalogue is a misspelling of catalog (misspell)`.
+- Local unscoped lint also showed older MCP lint debt, so the reproducible repair command uses the same patch-scoped mode as pull-request CI.
+
+### Red
+- Command: `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --new-from-rev d4877d2056503b6cecf5f3afbac49c1f00abf8c3 --timeout=5m ./pkg/mcp`
+- Result: failed as expected with one issue at `pkg/mcp/resources.go:310:29`, `catalogue` -> `catalog`.
+
+### Green
+- Updated the MCP resource subscribe comment in `pkg/mcp/resources.go` from `catalogue` to `catalog`.
+
+### Verification
+- `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --new-from-rev d4877d2056503b6cecf5f3afbac49c1f00abf8c3 --timeout=5m ./pkg/mcp` -> pass, `0 issues`.
+- `go test ./pkg/mcp -count=1` -> pass.
+- `git diff --check` -> pass.
+- `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --new-from-rev d4877d2056503b6cecf5f3afbac49c1f00abf8c3 --timeout=5m` -> pass, `0 issues`.
+
+### Files Changed
+- `pkg/mcp/resources.go`
+- `scripts/ralph/prd.json`
+- `scripts/ralph/progress.txt`
+- `scripts/ralph/archive/self-iteration-20260521-180839/prd.json`
+- `scripts/ralph/archive/self-iteration-20260521-180839/progress.txt`
+
+### Reusable Learning
+- For pull-request CI lint failures, reproduce locally with `golangci-lint run --new-from-rev $(git merge-base origin/main HEAD)` to avoid unrelated pre-existing lint debt.
+
+## Codebase Patterns
+- MCP server dispatch lives in `pkg/mcp/server.go`; method-specific resource behavior lives in `pkg/mcp/resources.go`.
+- MCP initialize capabilities are locked by both package tests and `scripts/ci/ci_workflow_bdd_test.go` string checks, so docs/status tests must be updated with server changes.
+- MCP resource subscription should validate subscribes against the live resource catalog, but unsubscribe should remain idempotent so clients can clean up after resource deletion.
+- MCP `resources/list` accepts optional `pageSize` and opaque `cursor`; cursors resume after the previous page's last URI, so the resource catalog must stay URI-sorted before pagination.
+- `cmd/weave-mcp` bridge options live in `http_bridge.go`; env-to-option wiring lives in `main.go`, and `scripts/ci/ci_workflow_bdd_test.go` has string guards that must follow new bridge env contracts.
+- Frontend component tests use Vitest + React Testing Library under `web/src/components/**/__tests__`.
+- React i18n uses a singleton initialized at `web/src/i18n/index.ts`; component copy should prefer `useTranslation()`.
+- Count-summary UI copy in admin pages should format `0` with plural nouns and reserve singular nouns for exactly `1`.
+
+
+## LLM review auto-fix context - 2026-05-21T18:36:41+08:00
+- PR: https://github.com/AlbertLee1/Weave/pull/42
+- Branch: ralph/self-iteration-20260521-171221
+- Reviewed HEAD: 6f11ec181858
+- Review status: request_changes
+- Summary: Request changes: the new resources/list cursor path has an overflow-triggered panic/DoS risk. Local verifier evidence was provided, but GitHub checks snapshot reports no checks.
+- Blocking findings:
+```json
+[
+  {
+    "severity": "critical",
+    "file": "pkg/mcp/resources.go",
+    "line": 201,
+    "issue": "resources/list pagination uses start+params.PageSize without bounding PageSize or doing overflow-safe arithmetic. Because cursors are just base64 JSON and only require afterUri to start with weave://, a client can craft a valid-looking cursor plus pageSize=MaxInt. When start is non-zero, start+pageSize overflows, the comparison is bypassed, and resources[start:end] / resources[end-1] can panic on the public /mcp endpoint instead of returning a JSON-RPC error.",
+    "suggestion": "Cap accepted pageSize values and compute against remaining := len(resources)-start, e.g. if pageSize == 0 || pageSize >= remaining return the rest. Apply the same validation to decoded cursor PageSize and add a regression test with a crafted cursor and huge pageSize that returns CodeInvalidParams or a safe final page, never a panic."
+  }
+]
+```
+- Recommended fix prompt:
+```text
+Fix MCP resources/list pagination overflow safety: validate/cap pageSize from params and decoded cursors, replace start+pageSize arithmetic with len(resources)-start comparison, and add regression coverage for a crafted cursor plus MaxInt pageSize returning a JSON-RPC error or safe page without panic.
+```
+
+Instruction for Codex/Ralph: treat the LLM review blocking findings above as the highest-priority repair target. Create or update a focused PRD story on this same branch, fix ONLY the review findings with TDD/BDD evidence, commit the fix, and leave the PR branch ready for Hermes verifier, PR update, CI rerun, and LLM review rerun.

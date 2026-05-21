@@ -1,0 +1,25 @@
+{
+  "project": "Weave self-iteration CI repair",
+  "branchName": "ralph/self-iteration-20260521-171221",
+  "description": "Focused repair PRD for the current pull-request CI failure on the Ralph self-iteration integration branch.",
+  "userStories": [
+    {
+      "id": "RCI-001",
+      "title": "Repair MCP Resource Comment Lint Failure",
+      "priority": 1,
+      "area": "CI / MCP backend",
+      "story": "As a Weave maintainer, I want the MCP resource subscription code to satisfy the US-English lint gate so the pull-request CI can continue through the Go test, coverage, contract, and vulnerability stages.",
+      "acceptanceCriteria": [
+        "Given the current pull-request CI failure, when golangci-lint checks pkg/mcp/resources.go, then it no longer reports misspell for the resource subscription comment.",
+        "Given the prior MCP resource subscription behavior, when pkg/mcp tests run, then subscribe, unsubscribe, read, and list behavior continue to pass.",
+        "Given the Ralph loop state, when the repair is verified, then this story is marked passes=true and progress records the CI evidence and verification commands."
+      ],
+      "dependencies": [
+        "pkg/mcp/resources.go",
+        ".golangci.yml misspell locale: US",
+        "GitHub Actions run 26218880007"
+      ],
+      "passes": true
+    }
+  ]
+}

@@ -81,6 +81,54 @@ func TestResourcesList_GivenMalformedCursor_WhenListThenInvalidParams_P2A002(t *
 	}
 }
 
+func TestResourcesList_GivenCursorWithUnsafeDecodedPageSize_WhenListThenInvalidParams_RLLM001(t *testing.T) {
+	srv, _, _, _ := newTestServer(t)
+	cursor, err := encodeResourceListCursor("weave://ontology/ri.weave.main.ontology.demo", maxIntRLLM001())
+	if err != nil {
+		t.Fatalf("encode cursor: %v", err)
+	}
+	params, err := json.Marshal(map[string]any{"cursor": cursor})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+
+	resp := srv.Handle(context.Background(), &Request{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`92`),
+		Method:  "resources/list",
+		Params:  params,
+	})
+	if resp.Error == nil {
+		t.Fatal("expected unsafe decoded cursor page size to fail")
+	}
+	if resp.Error.Code != CodeInvalidParams {
+		t.Fatalf("error code = %d, want %d", resp.Error.Code, CodeInvalidParams)
+	}
+}
+
+func TestResourcesList_GivenCursorNearEndAndSafeLargePageSize_WhenListThenReturnsFinalPage_RLLM001(t *testing.T) {
+	srv, repo, _, _ := newTestServer(t)
+	repo.objectTypes["ri.weave.main.ontology.demo"] = []oms.ObjectType{
+		{RID: "ri.weave.main.objectType.order", APIName: "Order", DisplayName: "Order"},
+		{RID: "ri.weave.main.objectType.customer", APIName: "Customer", DisplayName: "Customer"},
+	}
+
+	first := callResourcesListP2A002(t, srv, map[string]any{"pageSize": 2})
+	if first.NextCursor == "" {
+		t.Fatalf("first page nextCursor empty, want continuation")
+	}
+	final := callResourcesListP2A002(t, srv, map[string]any{
+		"cursor":   first.NextCursor,
+		"pageSize": 10,
+	})
+	if len(final.Resources) != 1 {
+		t.Fatalf("final page len = %d, want 1: %+v", len(final.Resources), final.Resources)
+	}
+	if final.NextCursor != "" {
+		t.Fatalf("final page nextCursor = %q, want empty", final.NextCursor)
+	}
+}
+
 type resourcesListResultP2A002 struct {
 	Resources  []Resource `json:"resources"`
 	NextCursor string     `json:"nextCursor,omitempty"`
@@ -119,4 +167,8 @@ func assertResourcesSortedP2A002(t *testing.T, resources []Resource) {
 			t.Fatalf("resources not URI-sorted: %+v", resources)
 		}
 	}
+}
+
+func maxIntRLLM001() int {
+	return int(^uint(0) >> 1)
 }
