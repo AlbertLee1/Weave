@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ApiRequestError } from '../../api/client';
-import type { Pipeline } from '../../api/pipelines';
-import { usePipeline, usePipelines } from '../../hooks/usePipelines';
+import type { Pipeline, PipelineRun } from '../../api/pipelines';
+import { usePipeline, usePipelineRuns, usePipelines } from '../../hooks/usePipelines';
 import { EmptyState } from '../common/EmptyState';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 
@@ -12,6 +12,14 @@ function describeError(err: unknown): string {
   }
   if (err instanceof Error) return err.message;
   return 'Request failed.';
+}
+
+function formatRunTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toISOString().replace('T', ' ').replace('.000Z', 'Z');
 }
 
 const NODE_KIND_META = {
@@ -269,12 +277,114 @@ function PipelineGraph({ pipeline, onSelect, selectedNode }: PipelineGraphProps)
 interface PipelineLogPanelProps {
   pipeline: Pipeline;
   selectedNode: string | null;
+  runs: PipelineRun[];
+  runsLoading: boolean;
+  runsError: unknown;
 }
 
-// PipelineLogPanel renders structural details + selected-node config. The
-// "log viewer" name reflects the spec; runs persistence lands in US-298 and
-// will plug live execution traces into the same panel.
-function PipelineLogPanel({ pipeline, selectedNode }: PipelineLogPanelProps) {
+function runStatusClass(status: string): string {
+  switch (status.toLowerCase()) {
+    case 'success':
+      return 'bg-teal-500/15 text-teal-300';
+    case 'failed':
+      return 'bg-rose-500/15 text-rose-300';
+    default:
+      return 'bg-amber-500/15 text-amber-200';
+  }
+}
+
+interface PipelineRunHistoryProps {
+  runs: PipelineRun[];
+  loading: boolean;
+  error: unknown;
+}
+
+function PipelineRunHistory({ runs, loading, error }: PipelineRunHistoryProps) {
+  if (loading) {
+    return (
+      <section data-testid="pipeline-run-history-loading">
+        <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+          Recent runs
+        </h4>
+        <div className="flex items-center gap-2 text-text-muted">
+          <LoadingSpinner />
+          <span>Loading run history</span>
+        </div>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section data-testid="pipeline-run-history-error" role="alert">
+        <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+          Recent runs
+        </h4>
+        <p className="text-rose-300">{describeError(error)}</p>
+      </section>
+    );
+  }
+
+  if (runs.length === 0) {
+    return (
+      <section data-testid="pipeline-run-history-empty">
+        <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+          Recent runs
+        </h4>
+        <p className="text-text-muted">No runs recorded for this pipeline yet.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section data-testid="pipeline-run-history">
+      <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+        Recent runs
+      </h4>
+      <ul className="space-y-2">
+        {runs.map((run) => (
+          <li
+            key={run.id}
+            className="rounded-md border border-border/50 bg-bg-primary/50 p-2"
+          >
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[11px] text-text-primary">
+                #{run.id}
+              </span>
+              <span
+                className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${runStatusClass(run.status)}`}
+              >
+                {run.status || 'unknown'}
+              </span>
+              <span className="ml-auto rounded bg-bg-tertiary/80 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
+                {run.triggeredBy || 'manual'}
+              </span>
+            </div>
+            <time
+              dateTime={run.startedAt || run.createdAt}
+              className="mt-1 block font-mono text-[10px] text-text-muted"
+            >
+              {formatRunTimestamp(run.startedAt || run.createdAt)}
+            </time>
+            {run.errorMessage && (
+              <p className="mt-1 text-[11px] text-rose-200">
+                {run.errorMessage}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function PipelineLogPanel({
+  pipeline,
+  selectedNode,
+  runs,
+  runsLoading,
+  runsError,
+}: PipelineLogPanelProps) {
   const layout = useMemo(() => layoutPipeline(pipeline), [pipeline]);
   const node = selectedNode ? layout.byName.get(selectedNode) ?? null : null;
   return (
@@ -285,8 +395,7 @@ function PipelineLogPanel({ pipeline, selectedNode }: PipelineLogPanelProps) {
       <header className="border-b border-border/50 px-3 py-2">
         <h3 className="text-sm font-semibold text-text-primary">Pipeline log</h3>
         <p className="text-[11px] text-text-muted">
-          Live run history will appear here once US-298 lands; for now this
-          panel surfaces the pipeline definition and selected-node config.
+          Recent execution history, pipeline definition, and selected-node config.
         </p>
       </header>
       <div className="flex-1 space-y-4 overflow-y-auto px-3 py-3 text-xs text-text-secondary">
@@ -336,6 +445,12 @@ function PipelineLogPanel({ pipeline, selectedNode }: PipelineLogPanelProps) {
             </div>
           </dl>
         </section>
+
+        <PipelineRunHistory
+          runs={runs}
+          loading={runsLoading}
+          error={runsError}
+        />
 
         {node ? (
           <section data-testid="pipeline-log-selected">
@@ -506,6 +621,7 @@ interface PipelineDetailProps {
 
 function PipelineDetail({ pipelineId }: PipelineDetailProps) {
   const detailQuery = usePipeline(pipelineId);
+  const runsQuery = usePipelineRuns(pipelineId);
   const pipeline = detailQuery.data ?? null;
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
@@ -596,7 +712,13 @@ function PipelineDetail({ pipelineId }: PipelineDetailProps) {
             selectedNode={selectedNode}
           />
         </div>
-        <PipelineLogPanel pipeline={pipeline} selectedNode={selectedNode} />
+        <PipelineLogPanel
+          pipeline={pipeline}
+          selectedNode={selectedNode}
+          runs={runsQuery.data?.runs ?? []}
+          runsLoading={runsQuery.isLoading}
+          runsError={runsQuery.error}
+        />
       </div>
     </section>
   );

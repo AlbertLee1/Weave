@@ -32,6 +32,8 @@ export class AggregationPage {
   readonly chart: Locator;
   readonly metricAddBtn: Locator;
   readonly groupByAddBtn: Locator;
+  readonly activeFilters: Locator;
+  readonly filterAddBtn: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -52,6 +54,8 @@ export class AggregationPage {
     this.chart = page.getByTestId('aggregation-chart');
     this.metricAddBtn = page.getByTestId('metric-add');
     this.groupByAddBtn = page.getByTestId('groupby-add');
+    this.activeFilters = page.getByTestId('active-filters');
+    this.filterAddBtn = page.getByTestId('filter-add-btn');
   }
 
   async goto(ontologyApiName: string, objectTypeApiName: string): Promise<void> {
@@ -91,5 +95,17 @@ export class AggregationPage {
 
   groupByRemoveBtn(index: number): Locator {
     return this.page.getByTestId(`groupby-${index}-remove`);
+  }
+
+  filterFieldSelect(): Locator {
+    return this.page.getByTestId('filter-field-select');
+  }
+
+  filterOperatorSelect(): Locator {
+    return this.page.getByTestId('filter-op-select');
+  }
+
+  filterValueInput(): Locator {
+    return this.page.getByTestId('filter-value-input');
   }
 }

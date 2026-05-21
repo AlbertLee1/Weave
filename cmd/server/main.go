@@ -2237,16 +2237,12 @@ func main() {
 			log.Printf("[comments] mention notifier wired")
 		}
 
-		// US-289: Pipeline cron scheduler. Walks the store at boot and
-		// arms a robfig/cron entry for every enabled pipeline carrying a
-		// non-empty Schedule. The runner is a logging placeholder until a
-		// later story (Pipeline runtime / connector catalogue) wires the
-		// real DAG executor — for now, scheduled ticks land in the server
-		// log so operators can verify the cron entry is alive.
-		pipelineSched := pipeline.NewScheduler(deps.PipelineStore, pipeline.PipelineRunnerFunc(func(_ context.Context, p *pipeline.Pipeline) error {
-			log.Printf("[pipeline] schedule tick: id=%s schedule=%q", p.ID, p.Schedule)
-			return nil
-		}))
+		// US-289 / SELF-601: Pipeline cron scheduler. Walks the store at boot
+		// and arms a robfig/cron entry for every enabled pipeline carrying a
+		// non-empty Schedule. Until the full runtime executor is wired, each
+		// tick records a failed run-history row so operators can see schedules
+		// firing through the existing /runs API instead of only server logs.
+		pipelineSched := pipeline.NewScheduler(deps.PipelineStore, newScheduledPipelineRunRecorder(deps.PipelineStore))
 		if err := pipelineSched.Start(ctx); err != nil {
 			log.Printf("warning: pipeline scheduler start failed: %v", err)
 		} else {

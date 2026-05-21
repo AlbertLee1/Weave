@@ -150,6 +150,54 @@ func TestBDD_GoPackageListExcludesWebDependencyTrees(t *testing.T) {
 	}
 }
 
+func TestBDD_GoPackageListKeepsHeavyDataSuitesOptIn(t *testing.T) {
+	root := repoRoot(t)
+	helper := filepath.Join(root, "scripts", "ci", "go-packages.sh")
+	heavyPackages := []string{
+		"github.com/liyang/weave/test/chinook",
+		"github.com/liyang/weave/test/northwind",
+	}
+
+	defaultCmd := exec.Command(helper)
+	defaultCmd.Dir = root
+	defaultOutput, err := defaultCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run default Go package-list helper: %v\n%s", err, defaultOutput)
+	}
+	defaultPackages := strings.Fields(string(defaultOutput))
+	for _, pkg := range heavyPackages {
+		if containsPackage(defaultPackages, pkg) {
+			t.Fatalf("default Go package-list helper must exclude heavyweight data acceptance package %s; got:\n%s", pkg, defaultOutput)
+		}
+	}
+	if !containsPackage(defaultPackages, "github.com/liyang/weave/pkg/mcp") {
+		t.Fatalf("default Go package-list helper must still include fast backend packages, got:\n%s", defaultOutput)
+	}
+
+	acceptanceCmd := exec.Command(helper, "--acceptance-data")
+	acceptanceCmd.Dir = root
+	acceptanceOutput, err := acceptanceCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run data acceptance package-list helper: %v\n%s", err, acceptanceOutput)
+	}
+	acceptancePackages := strings.Fields(string(acceptanceOutput))
+	for _, pkg := range heavyPackages {
+		if !containsPackage(acceptancePackages, pkg) {
+			t.Fatalf("data acceptance package-list helper must include %s; got:\n%s", pkg, acceptanceOutput)
+		}
+	}
+
+	makefile := readFile(t, filepath.Join(root, "Makefile"))
+	for _, required := range []string{
+		"test-data-acceptance",
+		"./scripts/ci/go-packages.sh --acceptance-data",
+	} {
+		if !strings.Contains(makefile, required) {
+			t.Errorf("Makefile must document the opt-in heavy data acceptance gate with %q", required)
+		}
+	}
+}
+
 func TestBDD_MCPDocsReflectLivePromptsResourcesBridge(t *testing.T) {
 	root := repoRoot(t)
 	docs := readFile(t, filepath.Join(root, "docs", "mcp.md"))
@@ -1070,6 +1118,15 @@ func readBoolInput(v any) bool {
 	default:
 		return false
 	}
+}
+
+func containsPackage(packages []string, want string) bool {
+	for _, pkg := range packages {
+		if pkg == want {
+			return true
+		}
+	}
+	return false
 }
 
 func compareVersions(left, right string) int {

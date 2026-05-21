@@ -2,7 +2,9 @@ package where
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
+	"unicode"
 )
 
 // MatchClause evaluates a WhereClause tree in-memory against a single row
@@ -46,6 +48,8 @@ func MatchClause(clause *WhereClause, row map[string]interface{}) bool {
 		return matchIsNull(clause, row)
 	case "contains":
 		return matchContains(clause, row)
+	case "containsAnyTerm":
+		return matchContainsAnyTerm(clause, row)
 	case "startsWith":
 		return matchStartsWith(clause, row)
 	case "containsAllTermsInOrderPrefixLastTerm":
@@ -64,6 +68,43 @@ func MatchClause(clause *WhereClause, row map[string]interface{}) bool {
 		return !matchBoundingBox(clause, row)
 	default:
 		return false
+	}
+}
+
+// ValidateMatchClauseSupported returns an error when a where tree contains an
+// operator the in-memory matcher would otherwise treat as false. Callers that
+// expose user-authored filters should use this to avoid silently emptying a
+// result set when they cannot delegate to Bleve.
+func ValidateMatchClauseSupported(clause *WhereClause) error {
+	if clause == nil {
+		return nil
+	}
+	switch clause.Type {
+	case "eq", "gt", "gte", "lt", "lte", "isNull", "contains", "containsAnyTerm", "startsWith", "containsAllTermsInOrderPrefixLastTerm", "withinPolygon", "intersectsPolygon", "doesNotIntersectPolygon", "doesNotIntersectBoundingBox":
+		return nil
+	case "and", "or":
+		var subs []WhereClause
+		if err := json.Unmarshal(clause.Value, &subs); err != nil {
+			return fmt.Errorf("invalid %s where value: %w", clause.Type, err)
+		}
+		for i := range subs {
+			if err := ValidateMatchClauseSupported(&subs[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "not":
+		var subs []WhereClause
+		if err := json.Unmarshal(clause.Value, &subs); err == nil && len(subs) > 0 {
+			return ValidateMatchClauseSupported(&subs[0])
+		}
+		var sub WhereClause
+		if err := json.Unmarshal(clause.Value, &sub); err != nil {
+			return fmt.Errorf("invalid not where value: %w", err)
+		}
+		return ValidateMatchClauseSupported(&sub)
+	default:
+		return fmt.Errorf("unsupported where operator %q for in-memory matching", clause.Type)
 	}
 }
 
@@ -198,6 +239,88 @@ func matchContains(clause *WhereClause, row map[string]interface{}) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(rowVal), strings.ToLower(strVal))
+}
+
+func matchContainsAnyTerm(clause *WhereClause, row map[string]interface{}) bool {
+	query, ok := stringOrStringArrayValue(clause.Value)
+	if !ok {
+		return false
+	}
+	queryTerms := tokenSet(query)
+	if len(queryTerms) == 0 {
+		return false
+	}
+	rowValues, ok := rowTextValues(row[clause.Field])
+	if !ok {
+		return false
+	}
+	for _, value := range rowValues {
+		for _, token := range tokenizeText(value) {
+			if queryTerms[token] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func tokenSet(text string) map[string]bool {
+	tokens := tokenizeText(text)
+	if len(tokens) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(tokens))
+	for _, token := range tokens {
+		set[token] = true
+	}
+	return set
+}
+
+func tokenizeText(text string) []string {
+	parts := strings.FieldsFunc(text, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	tokens := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part != "" {
+			tokens = append(tokens, part)
+		}
+	}
+	return tokens
+}
+
+func rowTextValues(raw interface{}) ([]string, bool) {
+	switch v := raw.(type) {
+	case string:
+		return []string{v}, true
+	case []string:
+		return v, true
+	case []interface{}:
+		values := make([]string, 0, len(v))
+		for _, item := range v {
+			str, ok := item.(string)
+			if !ok {
+				continue
+			}
+			values = append(values, str)
+		}
+		return values, len(values) > 0
+	default:
+		return nil, false
+	}
+}
+
+func stringOrStringArrayValue(value json.RawMessage) (string, bool) {
+	var strVal string
+	if err := json.Unmarshal(value, &strVal); err == nil {
+		return strVal, true
+	}
+	var arrVal []string
+	if err := json.Unmarshal(value, &arrVal); err == nil {
+		return strings.Join(arrVal, " "), true
+	}
+	return "", false
 }
 
 func matchStartsWith(clause *WhereClause, row map[string]interface{}) bool {

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"math"
 )
 
 // PropertySchema is the minimal JSON-Schema-flavoured description we expose
@@ -86,17 +87,30 @@ func (d *ToolDefinition) ValidateArgs(args map[string]any) error {
 }
 
 // checkPrimitiveType verifies a Go value matches the JSON Schema primitive
-// type the tool declared. JSON numbers always arrive as float64 from
-// encoding/json, so "integer" accepts both float64 (with no fractional part
-// implied) and int variants — strict integer checking is not the
-// responsibility of this MVP validator.
+// type the tool declared. JSON numbers arrive as float64 from encoding/json,
+// so "integer" accepts whole float values but rejects fractional numbers.
 func checkPrimitiveType(name, want string, v any) error {
 	switch want {
 	case "string":
 		if _, ok := v.(string); !ok {
 			return fmt.Errorf("argument %q must be a string, got %T", name, v)
 		}
-	case "integer", "number":
+	case "integer":
+		switch n := v.(type) {
+		case float64:
+			if math.Trunc(n) != n {
+				return fmt.Errorf("argument %q must be an integer, got fractional number", name)
+			}
+		case float32:
+			if math.Trunc(float64(n)) != float64(n) {
+				return fmt.Errorf("argument %q must be an integer, got fractional number", name)
+			}
+		case int, int32, int64:
+			return nil
+		default:
+			return fmt.Errorf("argument %q must be a %s, got %T", name, want, v)
+		}
+	case "number":
 		switch v.(type) {
 		case float64, float32, int, int32, int64:
 			return nil

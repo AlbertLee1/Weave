@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/liyang/weave/pkg/oss/aggregation"
+	"github.com/liyang/weave/pkg/oss/where"
 	"github.com/liyang/weave/pkg/scenarios"
 )
 
@@ -36,7 +37,13 @@ func AggregateWithOverlayAndConflicts(base []*WireObject, edits []scenarios.Scen
 	if req == nil {
 		return nil, nil, fmt.Errorf("nil aggregation request")
 	}
+	if err := where.ValidateMatchClauseSupported(req.Where); err != nil {
+		return nil, nil, fmt.Errorf("scenario overlay aggregation where: %w", err)
+	}
 	overlaid, conflicts := applyOverlayToObjectSetWithConflicts(base, edits, req.ObjectType)
+	if req.Where != nil {
+		overlaid = filterOverlayRowsByWhere(overlaid, req.Where)
+	}
 
 	// Single-level groupBy only. No groupBy → one synthetic bucket.
 	type bucket struct {
@@ -165,6 +172,23 @@ func applyOverlayToObjectSetWithConflicts(base []*WireObject, edits []scenarios.
 		out = append(out, viewToWireObject(view, template))
 	}
 	return out, allConflicts
+}
+
+func filterOverlayRowsByWhere(rows []*WireObject, clause *where.WhereClause) []*WireObject {
+	if clause == nil {
+		return rows
+	}
+	out := make([]*WireObject, 0, len(rows))
+	for _, row := range rows {
+		props := row.Properties
+		if props == nil {
+			props = map[string]interface{}{}
+		}
+		if where.MatchClause(clause, props) {
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 func computeOverlayMetrics(rows []*WireObject, specs []aggregation.AggregationSpec) ([]aggregation.MetricValue, error) {

@@ -1,66 +1,104 @@
 # Ralph Progress Log
-Started: Thu May 21 09:33:31 CST 2026
-Branch: ralph/self-iteration-20260520-134952
+Started: 2026-05-21T15:08:19+08:00
+Branch: ralph/self-iteration-20260521-110910
+Archived previous Ralph files: scripts/ralph/archive/self-iteration-20260521-150819/
 
-## Fresh PRD Inspection
-- Existing `scripts/ralph/prd.json` belonged to this branch and all stories had `passes: true`.
-- Active `scripts/ralph/progress.txt` contained an `LLM review auto-fix context`, so the new PRD is intentionally a one-story review repair.
-- Archived prior state under `scripts/ralph/archive/self-iteration-20260521-093331/`.
-- Root symlinks remain intact: `prd.json -> scripts/ralph/prd.json` and `progress.txt -> scripts/ralph/progress.txt`.
+## Initial inspection
+- Branch verified: `ralph/self-iteration-20260521-110910`.
+- Previous PRD belonged to this branch and all stories had `passes: true`, so a new focused PRD was created.
+- Root symlinks remain in place: `prd.json -> scripts/ralph/prd.json`, `progress.txt -> scripts/ralph/progress.txt`.
+- `LLM review auto-fix context` was present and is the highest-priority target for this iteration. Scope is limited to the blocking findings: aggregate where regex safety and scenario-overlay where operator parity.
+- Root cause evidence before implementation:
+  - `pkg/oss/aggregation.Engine.AggregateWithQuery` converts `req.Where` to a Bleve query and then aggregation code uses ordinary `idx.Search` calls.
+  - `pkg/oss/service_impl.go` protects object search regex clauses with `SearchInContext` and `where.RegexQueryTimeout`, but aggregation has no equivalent guard.
+  - `pkg/oss/scenario_aggregate.go` filters overlay rows with `where.MatchClause`, and `pkg/oss/where/match.go` does not currently implement `containsAnyTerm`, so valid UI/OpenAPI filters can evaluate to false in scenario overlays.
 
-## Codebase Patterns
-- Root `prd.json` and `progress.txt` are symlinks to `scripts/ralph/prd.json` and `scripts/ralph/progress.txt`; keep the symlinks intact.
-- Vite/Vitest commands should be run with paths relative to `web` when using `npm --prefix web`.
-- `cmd/server/embed_ci_bdd_test.go` is the focused guard for fresh checkout Go builds without generated WebUI assets.
-- `web/src/vertex/scenarioRunStream.ts` is intentionally guarded: default calls throw until the SSE route is mounted, and tests/future callers must opt in with `allowUnimplementedStreamRoute`.
-- The TypeScript Vertex SDK polling path already treats `pending`, `running`, `succeeded`, `failed`, and `canceled` as lifecycle statuses, with `canceled` terminal.
-- `cmd/weave-mcp/RunHTTPBridge` is the production stdio-to-HTTP MCP bridge. It forwards one newline-delimited JSON-RPC envelope per stdin line to `/mcp` and writes at most one normalized stdout line per response-bearing envelope.
-- `pkg/mcp.ParseRequestEnvelope` is the canonical JSON-RPC object-or-batch parser used by in-process HTTP and stdio transports; bridge-side envelope classification should stay aligned with that parser.
-
-## LLM Review Auto-Fix Context - 2026-05-21T09:32:16+08:00
-- PR: https://github.com/AlbertLee1/Weave/pull/40
-- Branch: ralph/self-iteration-20260520-134952
-- Reviewed HEAD: 24f0e4afa1a6
+## LLM review auto-fix context - 2026-05-21T15:05:30+08:00
+- PR: https://github.com/AlbertLee1/Weave/pull/41
+- Branch: ralph/self-iteration-20260521-110910
+- Reviewed HEAD: fa9973029657
 - Review status: request_changes
-- Summary: Request changes: MCP batch support is correct in the in-process HTTP/stdio transports, but it misses the production weave-mcp bridge path. Local verifier is green, but this integration gap is not covered.
+- Summary: Request changes: aggregation where still has a regex timeout/security gap and scenario-overlay operator parity gap.
 - Blocking findings:
 ```json
 [
   {
-    "severity": "critical",
-    "file": "cmd/weave-mcp/http_bridge.go",
-    "line": 101,
-    "issue": "The production weave-mcp bridge still treats any top-level JSON array as a notification because it only sniffs an object-level id. With this PR, /mcp now returns valid JSON-RPC batch responses, but bridge mode drops them whenever a stdio client sends a batch, so the main production stdio-to-HTTP path silently loses all batch results.",
-    "suggestion": "Teach RunHTTPBridge to classify JSON-RPC batch envelopes: if any batch item expects a response or is invalid, do not drop the upstream response; add a focused bridge test for a mixed batch with two requests and one notification."
+    "severity": "warning",
+    "file": "pkg/oss/aggregation/engine.go",
+    "line": 195,
+    "issue": "The aggregate endpoint now accepts the shared WhereClause contract, which includes regex, but the aggregation engine converts req.Where and then runs Bleve searches via idx.Search without the RegexQueryTimeout/SearchInContext guard used by SearchObjects. This violates the documented 500ms regex timeout contract and exposes aggregate requests to unbounded regex term-dictionary scans.",
+    "suggestion": "Thread a context into aggregation searches and use SearchInContext with where.RegexQueryTimeout when where.HasRegexClause(req.Where), or reject regex in aggregation where with a 400 until timeout-safe execution is implemented. Add a backend BDD test for aggregate where regex timeout/rejection."
+  },
+  {
+    "severity": "warning",
+    "file": "pkg/oss/scenario_aggregate.go",
+    "line": 184,
+    "issue": "Scenario-overlay aggregation filters post-overlay rows with where.MatchClause, but MatchClause only implements a subset of the WhereClause operators. The new Aggregation UI and OpenAPI contract allow operators such as containsAnyTerm, while MatchClause treats unsupported operators as false, so a valid aggregate where can silently return an empty scenario result instead of matching the base-path semantics or failing explicitly.",
+    "suggestion": "Either extend the in-memory matcher to cover the where operators exposed for aggregation, especially containsAnyTerm, or validate scenario aggregate where clauses and return an InvalidParameter error for unsupported operators. Add scenario-overlay BDD coverage for a UI-supported non-eq operator."
   }
 ]
 ```
 - Recommended fix prompt:
 ```text
-Update cmd/weave-mcp RunHTTPBridge to understand JSON-RPC batch envelopes when deciding whether stdout should receive the upstream response. Add BDD coverage showing a batch line with request ids is forwarded and emitted as one batch response line, while notification-only batches still produce no output.
+Fix aggregation where parity and safety: enforce the existing regex timeout contract for aggregate where filters or reject regex with 400, and make scenario-overlay aggregation either evaluate all UI/OpenAPI-supported where operators such as containsAnyTerm or reject unsupported operators explicitly; add BDD coverage for both.
 ```
 
-## Selected Story
-- `SELF-502` - Forward JSON-RPC batch responses through weave-mcp bridge.
+## Codebase Patterns
+- MCP discovery methods should prefer deterministic full results over silent partial catalogues; `resources/list` is the local precedent for surfacing upstream OMS listing failures as JSON-RPC internal errors.
+- Quiver editor state lives in `web/src/components/quiver/QuiverPage.tsx`; persisted dashboard payloads use the frontend-owned `QuiverDashboardConfig` in `web/src/api/quiver.ts`.
+- Existing Quiver Playwright feature tests intentionally document gaps using absence assertions; replace those assertions with positive BDD checks when the UI capability is implemented.
+- Playwright actual browser runs can silently reuse a Vite server from another checkout because `web/playwright.config.ts` sets `reuseExistingServer: !process.env.CI`; inspect `lsof -nP -iTCP:5173 -sTCP:LISTEN` before treating browser-run output as worktree-local evidence.
+- Aggregation `where` can reuse `web/src/components/browser/FilterBuilder.tsx` and `web/src/lib/whereBuilder.ts`; this keeps object browser and aggregation request bodies on the same WhereClause contract.
+- Backend aggregation `where` must live on `pkg/oss/aggregation.AggregationRequest` and be applied by conjoining `pkg/oss/where.ConvertToBleveQuery` with the aggregation engine base query; scenario overlays need `pkg/oss/where.MatchClause` because they run in memory after fold.
+- Northwind E2E seed replay depends on both layers: `test/fixtures/seed_northwind.Seed` owns DB wipe ordering for non-cascading ontology dependents (`functions`, `query_types`, `ontology_snapshots`, `automation_rules`, and object-type scoped `datasource_bindings`), while `scripts/e2e-setup.sh` should probe the live `/api/v2/ontologies/northwind/objectTypes` endpoint after the seeder returns so a clean exit cannot mask an empty browser fixture.
 
-## SELF-502 Evidence - Forward JSON-RPC batch responses through weave-mcp bridge
-- Root cause:
-  - `cmd/weave-mcp/RunHTTPBridge` previously unmarshaled every stdin line into an object-only `{id}` sniff struct.
-  - For a top-level JSON-RPC batch array, the sniff left `id` empty and the bridge treated the whole envelope as notification-only, dropping the valid upstream batch response.
-- RED:
-  - Added BDD bridge coverage in `cmd/weave-mcp/main_test.go` for a mixed batch with two requests plus one notification, an invalid batch item, and a notification-only batch.
-  - `go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge_Given_(MixedJSONRPCBatch|InvalidItemInJSONRPCBatch|NotificationOnlyJSONRPCBatch)' -count=1 -v` failed for the expected reasons: mixed and invalid batches produced empty stdout while notification-only batches stayed silent.
-- GREEN:
-  - `RunHTTPBridge` now classifies stdin lines with `pkg/mcp.ParseRequestEnvelope`, matching the in-process HTTP and stdio transports.
-  - Batch envelopes are response-bearing if any item has an id or any item parsed as a JSON-RPC error; only notification-only batches are dropped from stdout.
-- Verification:
-  - `go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge|TestHTTPBridge' -count=1 -v` passed.
-  - `go test ./pkg/mcp -run 'TestBDD_.*Batch|TestStdioTransport_NotificationProducesNoOutput|TestHTTPTransport_DecodesJSONRPC' -count=1` passed.
-  - `go test ./cmd/weave-mcp ./pkg/mcp -count=1` passed.
-- Files changed:
-  - `cmd/weave-mcp/http_bridge.go`
-  - `cmd/weave-mcp/main_test.go`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Reusable learning:
-  - Bridge-mode MCP envelope classification should reuse `pkg/mcp.ParseRequestEnvelope` so array batches, invalid batch items, and object notifications stay aligned across the production stdio-to-HTTP bridge and the in-process transports.
+## Selected story
+- SELF-605 - Harden Aggregation Where Safety and Scenario Parity.
+- Reason: This directly addresses both blocking LLM review findings and avoids broadening scope beyond aggregate where safety/parity.
+
+## SELF-605 - Harden Aggregation Where Safety and Scenario Parity
+Status: PASS
+
+BDD/TDD red step:
+- Added `pkg/oss/handlers_aggregate_where_bdd_test.go` SELF-605 scenarios:
+  - Aggregate endpoint rejects `where.type == "regex"` with 400 INVALID_ARGUMENT instead of running the aggregation search.
+  - Scenario-overlay aggregate evaluates `containsAnyTerm` against post-overlay rows before groupBy buckets and metrics.
+  - Scenario-overlay aggregate rejects unsupported in-memory where operators instead of silently returning empty aggregates.
+- Added `pkg/oss/aggregation/regex_where_bdd_test.go` to prove the aggregation engine itself rejects regex where clauses before any Bleve search path can execute them.
+- Command: `go test ./pkg/oss -run TestBDD_SELF605 -count=1 -v`
+- Result: exited 1 as expected. Regex aggregate returned 200, scenario `containsAnyTerm` returned 0 buckets, and unsupported `wildcard` returned 200 with an empty count.
+- Command: `go test ./pkg/oss/aggregation -run TestBDD_SELF605 -count=1 -v`
+- Result: exited 1 as expected. The direct aggregation engine accepted regex where and returned nil error.
+
+Implementation:
+- `pkg/oss/handlers_aggregate.go`
+  - Rejects aggregate `where` trees containing regex with `AggregationWhereRegexUnsupported` / 400 before the Bleve-backed or scenario-overlay aggregate path runs.
+- `pkg/oss/aggregation/engine.go`
+  - Adds a defensive engine-level regex where guard so internal callers cannot run unbounded aggregate regex searches by bypassing the HTTP handler.
+- `pkg/oss/where/match.go`
+  - Adds in-memory `containsAnyTerm` support for string and string-array values.
+  - Adds `ValidateMatchClauseSupported` so scenario aggregation can reject unsupported matcher operators explicitly.
+- `pkg/oss/scenario_aggregate.go`
+  - Validates scenario-overlay aggregate where clauses before folding/filtering rows.
+
+Verification:
+- RED: `go test ./pkg/oss -run TestBDD_SELF605 -count=1 -v` exited 1 with the expected regex-accepted, containsAnyTerm-empty, and unsupported-operator-silent failures.
+- RED: `go test ./pkg/oss/aggregation -run TestBDD_SELF605 -count=1 -v` exited 1 with the expected direct engine regex acceptance failure.
+- GREEN targeted: `go test ./pkg/oss -run TestBDD_SELF605 -count=1 -v` exited 0 with all three handler BDD tests passing.
+- GREEN targeted: `go test ./pkg/oss/aggregation -run TestBDD_SELF605 -count=1 -v` exited 0 with the engine regex guard BDD test passing.
+- Related packages: `go test ./pkg/oss ./pkg/oss/aggregation ./pkg/oss/where -count=1` exited 0.
+- CI helper tests: `go test ./scripts/ci -count=1` exited 0.
+- Fast Go gate: `go test $(./scripts/ci/go-packages.sh) -count=1` exited 0.
+
+Files changed:
+- `pkg/oss/aggregation/engine.go`
+- `pkg/oss/aggregation/regex_where_bdd_test.go`
+- `pkg/oss/handlers_aggregate.go`
+- `pkg/oss/handlers_aggregate_where_bdd_test.go`
+- `pkg/oss/scenario_aggregate.go`
+- `pkg/oss/where/match.go`
+- `scripts/ralph/prd.json`
+- `scripts/ralph/progress.txt`
+
+Reusable learning:
+- Aggregation regex where is blocked until aggregation search paths can thread a timeout context through every Bleve search call. Scenario-overlay aggregation should validate `where.MatchClause` support before filtering, because the matcher's conservative false fallback is appropriate for live-event filters but misleading for user-visible aggregate requests. Interface aggregate routes must run the same preflight validation as object aggregate routes before dispatching per-type engine work; otherwise per-type engine errors can collapse into misleading empty merged responses.

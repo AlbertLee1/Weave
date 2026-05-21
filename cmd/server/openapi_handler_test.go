@@ -84,6 +84,37 @@ func TestOpenAPISpec_HasSecuritySchemes(t *testing.T) {
 	}
 }
 
+// TestOpenAPISpec_AggregationRequestDocumentsWhere pins the public API
+// contract for SELF-604: aggregation accepts the same WhereClause filter shape
+// as search. SDK generators and docs must not drift behind the server/web
+// behavior.
+func TestOpenAPISpec_AggregationRequestDocumentsWhere(t *testing.T) {
+	doc := loadCanonicalSpec(t)
+	schemas := mustOpenAPIMap(t, mustOpenAPIMap(t, doc, "components"), "schemas")
+
+	whereSchema := mustOpenAPIMap(t, schemas, "WhereClause")
+	if got, _ := whereSchema["additionalProperties"].(bool); !got {
+		t.Fatalf("WhereClause.additionalProperties = %v, want true", whereSchema["additionalProperties"])
+	}
+	if desc, _ := whereSchema["description"].(string); !strings.Contains(desc, "and/or/not") {
+		t.Fatalf("WhereClause.description should document logical operators; got %q", desc)
+	}
+
+	for _, schemaName := range []string{"SearchObjectsRequest", "AggregationRequest"} {
+		schema := mustOpenAPIMap(t, schemas, schemaName)
+		props := mustOpenAPIMap(t, schema, "properties")
+		where := mustOpenAPIMap(t, props, "where")
+		if got, _ := where["$ref"].(string); got != "#/components/schemas/WhereClause" {
+			t.Fatalf("%s.properties.where.$ref = %q, want WhereClause", schemaName, got)
+		}
+		if schemaName == "AggregationRequest" {
+			if desc, _ := where["description"].(string); !strings.Contains(desc, "AggregationWhereRegexUnsupported") {
+				t.Fatalf("AggregationRequest.properties.where.description should document regex rejection; got %q", desc)
+			}
+		}
+	}
+}
+
 // TestOpenAPISpec_DocumentsSagaReadEndpoints (SELF-412) pins the US-044
 // saga read paths used by the Saga Jobs UI and SDK consumers. These routes
 // are already registered on the chi router; this test prevents them from

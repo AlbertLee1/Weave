@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oss/aggregation"
+	"github.com/liyang/weave/pkg/oss/where"
 )
 
 // PropertyFilterProvider resolves the column-level allow list for the
@@ -88,6 +90,100 @@ func (h *Handler) rejectFilteredAggregationFields(ctx context.Context, objectTyp
 			return deny(spec.Field)
 		}
 	}
+	for _, field := range aggregationWhereFields(req.Where) {
+		if _, ok := allowedSet[field]; !ok {
+			return deny(field)
+		}
+	}
+	return rejectFilteredSubAggregationFields(req.SubAggregations, allowedSet, deny)
+}
+
+func rejectFilteredSubAggregationFields(subs []aggregation.SubAggregationSpec, allowedSet map[string]struct{}, deny func(string) *apierror.APIError) *apierror.APIError {
+	for _, sub := range subs {
+		for _, gb := range sub.GroupBy {
+			if gb.Field == "" {
+				continue
+			}
+			if _, ok := allowedSet[gb.Field]; !ok {
+				return deny(gb.Field)
+			}
+		}
+		for _, spec := range sub.Aggregations {
+			if spec.Field == "" {
+				continue
+			}
+			if _, ok := allowedSet[spec.Field]; !ok {
+				return deny(spec.Field)
+			}
+		}
+		if apiErr := rejectFilteredSubAggregationFields(sub.SubAggregations, allowedSet, deny); apiErr != nil {
+			return apiErr
+		}
+	}
+	return nil
+}
+
+func aggregationWhereFields(clause *where.WhereClause) []string {
+	fields := map[string]struct{}{}
+	collectAggregationWhereFields(clause, fields)
+	out := make([]string, 0, len(fields))
+	for field := range fields {
+		out = append(out, field)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func collectAggregationWhereFields(clause *where.WhereClause, fields map[string]struct{}) {
+	if clause == nil {
+		return
+	}
+	switch clause.Type {
+	case "and", "or":
+		var subs []where.WhereClause
+		if err := json.Unmarshal(clause.Value, &subs); err != nil {
+			return
+		}
+		for i := range subs {
+			collectAggregationWhereFields(&subs[i], fields)
+		}
+	case "not":
+		// Keep the column-visibility walker aligned with pkg/oss/where's
+		// executable semantics: `not` accepts the Palantir V2 single-element
+		// array form as well as the older single-object form. Missing the
+		// array form would let hidden fields influence aggregate counts before
+		// the PropertyNotAccessible gate sees them.
+		var subs []where.WhereClause
+		if err := json.Unmarshal(clause.Value, &subs); err == nil && len(subs) > 0 {
+			collectAggregationWhereFields(&subs[0], fields)
+			return
+		}
+		var sub where.WhereClause
+		if err := json.Unmarshal(clause.Value, &sub); err != nil {
+			return
+		}
+		collectAggregationWhereFields(&sub, fields)
+	default:
+		if clause.Field != "" {
+			fields[clause.Field] = struct{}{}
+		}
+	}
+}
+
+func rejectUnsupportedAggregationWhere(req *aggregation.AggregationRequest) *apierror.APIError {
+	if req == nil || req.Where == nil {
+		return nil
+	}
+	if where.HasRegexClause(req.Where) {
+		return apierror.NewInvalidParameter("AggregationWhereRegexUnsupported", map[string]string{
+			"reason": "regex where clauses are not supported for aggregation until timeout-safe execution is available",
+		})
+	}
+	if _, err := where.ConvertToBleveQuery(req.Where); err != nil {
+		return apierror.NewInvalidParameter("InvalidAggregationWhere", map[string]string{
+			"reason": err.Error(),
+		})
+	}
 	return nil
 }
 
@@ -120,6 +216,11 @@ func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 	req.ObjectType = objectType
 
 	if apiErr := h.rejectFilteredAggregationFields(ctx, objectType, &req); apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
+	}
+
+	if apiErr := rejectUnsupportedAggregationWhere(&req); apiErr != nil {
 		apierror.WriteJSON(w, apiErr)
 		return
 	}

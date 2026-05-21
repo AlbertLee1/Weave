@@ -205,6 +205,47 @@ func TestMatchClause_StringOps(t *testing.T) {
 	}
 }
 
+func TestBDD_SELF606_MatchClauseContainsAnyTermUsesTokenSemanticsAndTextArrays(t *testing.T) {
+	cases := []struct {
+		name string
+		row  map[string]interface{}
+		want bool
+	}{
+		{
+			name: "substring inside larger token does not match",
+			row:  map[string]interface{}{"notes": "insurgent queue"},
+			want: false,
+		},
+		{
+			name: "scalar string token matches case insensitively",
+			row:  map[string]interface{}{"notes": "URGENT queue"},
+			want: true,
+		},
+		{
+			name: "string array token matches any element",
+			row:  map[string]interface{}{"notes": []string{"routine", "urgent review"}},
+			want: true,
+		},
+		{
+			name: "json-decoded text array token matches any element",
+			row:  map[string]interface{}{"notes": []interface{}{"routine", "urgent review"}},
+			want: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var c WhereClause
+			if err := json.Unmarshal([]byte(`{"type":"containsAnyTerm","field":"notes","value":"urgent"}`), &c); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got := MatchClause(&c, tc.row); got != tc.want {
+				t.Errorf("MatchClause = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestMatchClause_NilTree — a nil clause is treated as "match everything" so
 // an SSE subscription without a Where keeps streaming all events.
 func TestMatchClause_NilTree(t *testing.T) {

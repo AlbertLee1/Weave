@@ -258,6 +258,141 @@ func TestInterfaceAggregate_CountAcrossTypes(t *testing.T) {
 	}
 }
 
+func TestInterfaceAggregate_RejectsHiddenFieldsBeforePerTypeAggregation(t *testing.T) {
+	h, r, _ := setupInterfaceTest(t)
+	h.SetPropertyFilterProvider(&staticPropertyFilter{
+		allowedByType: map[string][]string{
+			"employee":   {"employeeId", "name", "age"},
+			"contractor": {"contractorId", "name", "hourlyRate"},
+		},
+	})
+
+	cases := []struct {
+		name         string
+		body         string
+		wantProperty string
+	}{
+		{
+			name: "hidden where field",
+			body: `{
+				"where":{"type":"eq","field":"department","value":"eng"},
+				"aggregation":[{"type":"count","name":"total"}]
+			}`,
+			wantProperty: "department",
+		},
+		{
+			name: "hidden groupBy field",
+			body: `{
+				"groupBy":[{"type":"exact","field":"department"}],
+				"aggregation":[{"type":"count","name":"total"}]
+			}`,
+			wantProperty: "department",
+		},
+		{
+			name: "hidden metric field",
+			body: `{
+				"aggregation":[{"type":"sum","field":"department","name":"total"}]
+			}`,
+			wantProperty: "department",
+		},
+		{
+			name: "hidden subAggregation field",
+			body: `{
+				"aggregation":[{"type":"count","name":"total"}],
+				"subAggregations":[{"name":"hidden","aggregation":[{"type":"sum","field":"department","name":"s"}]}]
+			}`,
+			wantProperty: "department",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST",
+				"/api/v2/ontologies/"+testIfaceOntologyRID+"/interfaces/worker/aggregate", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			r.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusForbidden, rr.Body.String())
+			}
+			var apiErr struct {
+				ErrorCode  string            `json:"errorCode"`
+				ErrorName  string            `json:"errorName"`
+				Parameters map[string]string `json:"parameters"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &apiErr); err != nil {
+				t.Fatalf("unmarshal error body: %v", err)
+			}
+			if apiErr.ErrorCode != "PERMISSION_DENIED" {
+				t.Errorf("errorCode = %q, want PERMISSION_DENIED", apiErr.ErrorCode)
+			}
+			if apiErr.ErrorName != "PropertyNotAccessible" {
+				t.Errorf("errorName = %q, want PropertyNotAccessible", apiErr.ErrorName)
+			}
+			if apiErr.Parameters["property"] != tc.wantProperty {
+				t.Errorf("parameters.property = %q, want %s", apiErr.Parameters["property"], tc.wantProperty)
+			}
+		})
+	}
+}
+
+func TestInterfaceAggregate_RejectsRegexWhereBeforePerTypeAggregation(t *testing.T) {
+	_, r, _ := setupInterfaceTest(t)
+
+	body := `{"where":{"type":"regex","field":"name","value":"a.*"},"aggregation":[{"type":"count","name":"total"}]}`
+	req := httptest.NewRequest("POST",
+		"/api/v2/ontologies/"+testIfaceOntologyRID+"/interfaces/worker/aggregate", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusBadRequest, rr.Body.String())
+	}
+	var apiErr struct {
+		ErrorCode string `json:"errorCode"`
+		ErrorName string `json:"errorName"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &apiErr); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	if apiErr.ErrorCode != "INVALID_ARGUMENT" {
+		t.Errorf("errorCode = %q, want INVALID_ARGUMENT", apiErr.ErrorCode)
+	}
+	if apiErr.ErrorName != "AggregationWhereRegexUnsupported" {
+		t.Errorf("errorName = %q, want AggregationWhereRegexUnsupported", apiErr.ErrorName)
+	}
+}
+
+func TestInterfaceAggregate_RejectsInvalidWhereBeforePerTypeAggregation(t *testing.T) {
+	_, r, _ := setupInterfaceTest(t)
+
+	body := `{"where":{"type":"unsupportedForAggregation","field":"name","value":"alice"},"aggregation":[{"type":"count","name":"total"}]}`
+	req := httptest.NewRequest("POST",
+		"/api/v2/ontologies/"+testIfaceOntologyRID+"/interfaces/worker/aggregate", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusBadRequest, rr.Body.String())
+	}
+	var apiErr struct {
+		ErrorCode string `json:"errorCode"`
+		ErrorName string `json:"errorName"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &apiErr); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	if apiErr.ErrorCode != "INVALID_ARGUMENT" {
+		t.Errorf("errorCode = %q, want INVALID_ARGUMENT", apiErr.ErrorCode)
+	}
+	if apiErr.ErrorName != "InvalidAggregationWhere" {
+		t.Errorf("errorName = %q, want InvalidAggregationWhere", apiErr.ErrorName)
+	}
+}
+
 func TestInterfaceAggregate_InterfaceNotFound(t *testing.T) {
 	_, r, _ := setupInterfaceTest(t)
 
@@ -280,10 +415,10 @@ func TestInterfaceLinkedObjects_RouteRegistered(t *testing.T) {
 
 	// Set up interface link type as JSONB on the interface
 	repo.interfaces[testIfaceOntologyRID+":worker"] = &oms.Interface{
-		RID:         "ri.ontology.main.interface.worker",
-		OntologyRID: testIfaceOntologyRID,
-		APIName:     "worker",
-		DisplayName: "Worker",
+		RID:               "ri.ontology.main.interface.worker",
+		OntologyRID:       testIfaceOntologyRID,
+		APIName:           "worker",
+		DisplayName:       "Worker",
 		OutgoingLinkTypes: json.RawMessage(`[{"apiName":"worksAt","displayName":"Works At","linkedEntityTypeApiName":"employee","cardinality":"MANY_TO_MANY"}]`),
 	}
 
