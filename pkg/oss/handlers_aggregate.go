@@ -123,6 +123,16 @@ func collectAggregationWhereFields(clause *where.WhereClause, fields map[string]
 			collectAggregationWhereFields(&subs[i], fields)
 		}
 	case "not":
+		// Keep the column-visibility walker aligned with pkg/oss/where's
+		// executable semantics: `not` accepts the Palantir V2 single-element
+		// array form as well as the older single-object form. Missing the
+		// array form would let hidden fields influence aggregate counts before
+		// the PropertyNotAccessible gate sees them.
+		var subs []where.WhereClause
+		if err := json.Unmarshal(clause.Value, &subs); err == nil && len(subs) > 0 {
+			collectAggregationWhereFields(&subs[0], fields)
+			return
+		}
 		var sub where.WhereClause
 		if err := json.Unmarshal(clause.Value, &sub); err != nil {
 			return

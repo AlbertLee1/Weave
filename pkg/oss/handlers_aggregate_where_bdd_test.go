@@ -56,36 +56,56 @@ func TestBDD_SELF604_AggregateWhereFieldsUsePropertyVisibility(t *testing.T) {
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
 
-	body := `{
-		"where":{"type":"eq","field":"active","value":true},
-		"aggregation":[{"type":"count","name":"n"}]
-	}`
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v2/ontologies/"+testOntologyRID+"/objects/employee/aggregate",
-		strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "direct hidden where field",
+			body: `{
+				"where":{"type":"eq","field":"active","value":true},
+				"aggregation":[{"type":"count","name":"n"}]
+			}`,
+		},
+		{
+			name: "hidden where field under Palantir not array form",
+			body: `{
+				"where":{"type":"not","value":[{"type":"eq","field":"active","value":false}]},
+				"aggregation":[{"type":"count","name":"n"}]
+			}`,
+		},
+	}
 
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
-	}
-	var apiErr struct {
-		ErrorCode  string            `json:"errorCode"`
-		ErrorName  string            `json:"errorName"`
-		Parameters map[string]string `json:"parameters"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &apiErr); err != nil {
-		t.Fatalf("unmarshal error body: %v", err)
-	}
-	if apiErr.ErrorCode != "PERMISSION_DENIED" {
-		t.Errorf("errorCode = %q, want PERMISSION_DENIED", apiErr.ErrorCode)
-	}
-	if apiErr.ErrorName != "PropertyNotAccessible" {
-		t.Errorf("errorName = %q, want PropertyNotAccessible", apiErr.ErrorName)
-	}
-	if apiErr.Parameters["property"] != "active" {
-		t.Errorf("parameters.property = %q, want active", apiErr.Parameters["property"])
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost,
+				"/api/v2/ontologies/"+testOntologyRID+"/objects/employee/aggregate",
+				strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+			}
+			var apiErr struct {
+				ErrorCode  string            `json:"errorCode"`
+				ErrorName  string            `json:"errorName"`
+				Parameters map[string]string `json:"parameters"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &apiErr); err != nil {
+				t.Fatalf("unmarshal error body: %v", err)
+			}
+			if apiErr.ErrorCode != "PERMISSION_DENIED" {
+				t.Errorf("errorCode = %q, want PERMISSION_DENIED", apiErr.ErrorCode)
+			}
+			if apiErr.ErrorName != "PropertyNotAccessible" {
+				t.Errorf("errorName = %q, want PropertyNotAccessible", apiErr.ErrorName)
+			}
+			if apiErr.Parameters["property"] != "active" {
+				t.Errorf("parameters.property = %q, want active", apiErr.Parameters["property"])
+			}
+		})
 	}
 }
 
