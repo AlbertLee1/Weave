@@ -375,7 +375,7 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 建议：下一步补 MCP sampling 以及生产认证/部署说明；prompts/resources 不再是缺失入口。
 
 **Gap-D5 — weave-mcp stdio 真可用**
-- 现状：`weave-mcp` 已有 bridge 模式：设置 `WEAVE_MCP_URL` 后，`cmd/weave-mcp/http_bridge.go` 会把本地 stdio JSON-RPC 转发到运行中的 `/mcp`，并复用同一套 tools/prompts/resources；也会透传 `WEAVE_MCP_TOKEN` / `WEAVE_MCP_API_KEY`。
+- 现状：`weave-mcp` 已有 bridge 模式：设置 `WEAVE_MCP_URL` 后，`cmd/weave-mcp/http_bridge.go` 会把本地 stdio JSON-RPC 转发到运行中的 `/mcp`，并复用同一套 tools/prompts/resources；也会透传 `WEAVE_MCP_TOKEN` / `WEAVE_MCP_API_KEY`，且 `WEAVE_MCP_HTTP_TIMEOUT` 可限制上游 HTTP stall。
 - 建议：remaining local-standalone gap 是独立启动本地服务并嵌入 PG/NATS/Bleve 的模式；bridge 模式已经可供本地 AI 客户端使用。
 
 ---

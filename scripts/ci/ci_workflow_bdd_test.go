@@ -939,6 +939,7 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 		"`pkg/mcp/resources.go`",
 		"`cmd/weave-mcp/http_bridge.go`",
 		"`WEAVE_MCP_URL`",
+		"`WEAVE_MCP_HTTP_TIMEOUT`",
 		"`prompts/list`",
 		"`prompts/get`",
 		"`resources/list`",
@@ -957,6 +958,7 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 	for _, required := range []string{
 		"`cmd/weave-mcp` binary (stdio HTTP bridge)",
 		"`WEAVE_MCP_URL`",
+		"`WEAVE_MCP_HTTP_TIMEOUT`",
 		"`prompts/list` | List prompts synthesized from OMS ActionType metadata",
 		"`prompts/get` | Render one ActionType prompt with supplied arguments",
 		"`resources/list` | List ontologies, ObjectTypes, and temporary ObjectSets as MCP resources",
@@ -994,12 +996,12 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 			t.Errorf("pkg/mcp/resources.go must expose resources fragment %q", required)
 		}
 	}
-	for _, required := range []string{"WEAVE_MCP_URL", "RunHTTPBridge", "bridgeAuthOptionsFromEnv"} {
+	for _, required := range []string{"WEAVE_MCP_URL", "WEAVE_MCP_HTTP_TIMEOUT", "RunHTTPBridge", "bridgeOptionsFromEnv"} {
 		if !strings.Contains(bridgeMain, required) {
 			t.Errorf("cmd/weave-mcp/main.go must wire bridge fragment %q", required)
 		}
 	}
-	for _, required := range []string{"RunHTTPBridge", `http.MethodPost`, "Authorization", "X-Weave-API-Key"} {
+	for _, required := range []string{"RunHTTPBridge", "WithHTTPTimeout", `http.MethodPost`, "Authorization", "X-Weave-API-Key"} {
 		if !strings.Contains(httpBridge, required) {
 			t.Errorf("cmd/weave-mcp/http_bridge.go must expose bridge fragment %q", required)
 		}

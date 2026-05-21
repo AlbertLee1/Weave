@@ -33,7 +33,8 @@ Typical local-client configuration:
       "env": {
         "WEAVE_MCP_URL": "http://127.0.0.1:9117/mcp",
         "WEAVE_MCP_TOKEN": "<jwt-or-bearer-access-token>",
-        "WEAVE_MCP_API_KEY": "wvk_..."
+        "WEAVE_MCP_API_KEY": "wvk_...",
+        "WEAVE_MCP_HTTP_TIMEOUT": "30s"
       }
     }
   }
@@ -43,6 +44,9 @@ Typical local-client configuration:
 `WEAVE_MCP_TOKEN` and its alias `WEAVE_MCP_BEARER` are forwarded as
 `Authorization: Bearer ...`. `WEAVE_MCP_API_KEY` is forwarded as
 `X-Weave-API-Key`. If both are present, the bearer token wins.
+`WEAVE_MCP_HTTP_TIMEOUT` accepts a Go duration such as `5s`, `30s`, or
+`2m`; invalid or non-positive values make `weave-mcp` exit before it
+starts forwarding requests.
 
 ## Protocol
 
