@@ -78,3 +78,39 @@ func TestRegistry_Call_DispatchesToTool(t *testing.T) {
 		t.Errorf("last = %+v", tool.last)
 	}
 }
+
+func TestRegistry_Call_GivenIntegerSchema_WhenFractionalJSONNumber_ThenInvalidParamsAndToolNotInvoked(t *testing.T) {
+	r := NewRegistry()
+	tool := &fakeTool{
+		def: ToolDefinition{
+			Name: "paged",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"pageSize": {Type: "integer"},
+				},
+			},
+		},
+	}
+	if err := r.Register(tool); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	_, err := r.Call(context.Background(), "paged", map[string]any{"pageSize": float64(2.5)})
+	if err == nil {
+		t.Fatalf("expected invalid params for fractional integer")
+	}
+	if !isInvalidParamsError(err) {
+		t.Fatalf("error = %v, want invalid params", err)
+	}
+	if tool.called != 0 {
+		t.Fatalf("called = %d, want 0", tool.called)
+	}
+
+	if _, err := r.Call(context.Background(), "paged", map[string]any{"pageSize": float64(2)}); err != nil {
+		t.Fatalf("whole JSON number should remain valid: %v", err)
+	}
+	if tool.called != 1 {
+		t.Fatalf("called = %d, want 1", tool.called)
+	}
+}

@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-integration-phase6 test-integration-phase7 test-bdd test-cover test-cover-html test-cover-check test-cover-update test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity bench bench-update pact-broker-up pact-broker-down pact-publish pact-list help
+.PHONY: test test-unit test-data-acceptance test-integration test-integration-phase6 test-integration-phase7 test-bdd test-cover test-cover-html test-cover-check test-cover-update test-contract web-test-cover build run docker-up docker-down lint lint-fix vulncheck web-install web-dev web-build web-test web-e2e build-with-ui dev e2e-up e2e-down e2e-seed test-parity bench bench-update pact-broker-up pact-broker-down pact-publish pact-list help
 
 test: test-unit
 
@@ -7,6 +7,9 @@ help: ## Show available targets and clarify build variants
 
 test-unit:
 	go test $$(./scripts/ci/go-packages.sh)
+
+test-data-acceptance: ## Run opt-in Chinook/Northwind data acceptance suites
+	go test $$(./scripts/ci/go-packages.sh --acceptance-data)
 
 test-integration:
 	go test -tags integration ./...

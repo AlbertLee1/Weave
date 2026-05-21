@@ -15,13 +15,18 @@ import (
 // It embeds oms.Repository so unused methods panic if called by accident.
 type fakeOmsRepo struct {
 	oms.Repository
-	ontologies  []oms.Ontology
-	objectTypes map[string][]oms.ObjectType // ontology rid/apiName -> object types
-	actionTypes map[string][]oms.ActionType
-	actionLogs  []*oms.ActionLog
+	ontologies         []oms.Ontology
+	listOntologiesErr  error
+	objectTypes        map[string][]oms.ObjectType // ontology rid/apiName -> object types
+	actionTypes        map[string][]oms.ActionType
+	listActionTypesErr map[string]error
+	actionLogs         []*oms.ActionLog
 }
 
 func (f *fakeOmsRepo) ListOntologies(ctx context.Context) ([]oms.Ontology, error) {
+	if f.listOntologiesErr != nil {
+		return nil, f.listOntologiesErr
+	}
 	return f.ontologies, nil
 }
 
@@ -47,6 +52,11 @@ func (f *fakeOmsRepo) ListObjectTypes(ctx context.Context, ontologyRID string) (
 }
 
 func (f *fakeOmsRepo) ListActionTypes(ctx context.Context, ontologyRID string) ([]oms.ActionType, error) {
+	if f.listActionTypesErr != nil {
+		if err := f.listActionTypesErr[ontologyRID]; err != nil {
+			return nil, err
+		}
+	}
 	if v, ok := f.actionTypes[ontologyRID]; ok {
 		return v, nil
 	}
@@ -82,15 +92,15 @@ func (f *fakeOmsRepo) GetActionTypeByAPIName(ctx context.Context, ontologyRID, a
 
 // fakeOssService is a stub oss.Service for the MCP tools.
 type fakeOssService struct {
-	getErr      error
-	listErr     error
-	searchErr   error
-	getResult   *oss.WireObject
-	listResult  *oss.ObjectPage
+	getErr       error
+	listErr      error
+	searchErr    error
+	getResult    *oss.WireObject
+	listResult   *oss.ObjectPage
 	searchResult *oss.ObjectPage
-	lastGet     oss.GetObjectRequest
-	lastList    oss.ListObjectsRequest
-	lastSearch  oss.SearchObjectsRequest
+	lastGet      oss.GetObjectRequest
+	lastList     oss.ListObjectsRequest
+	lastSearch   oss.SearchObjectsRequest
 }
 
 func (f *fakeOssService) GetObject(ctx context.Context, req oss.GetObjectRequest) (*oss.WireObject, error) {
@@ -128,8 +138,6 @@ func (f *fakeOssService) GetLinkedObject(ctx context.Context, req oss.GetLinkedO
 func (f *fakeOssService) CountObjects(ctx context.Context, req oss.CountObjectsRequest) (*oss.CountObjectsResponse, error) {
 	return &oss.CountObjectsResponse{Count: 0}, nil
 }
-
-
 
 // stubPublisher is a no-op funnel publisher for the action executor.
 type stubPublisher struct{}
