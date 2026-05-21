@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { changeLocale } from '../../../i18n';
 import { DashboardPage } from '../DashboardPage';
 
 // DOG-002 BDD — Dashboard global "Object Types" stat must reflect actual
@@ -92,8 +93,9 @@ function renderPage() {
 }
 
 describe('DashboardPage — total Object Types stat (DOG-002)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useRealTimers();
+    await changeLocale('en');
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -109,7 +111,7 @@ describe('DashboardPage — total Object Types stat (DOG-002)', () => {
       const cards = screen.getAllByTestId('dashboard-ontology-card-wrapper');
       expect(cards.length).toBe(2);
       for (const card of cards) {
-        expect(within(card).getByText(/\d+\s*types?/)).toBeInTheDocument();
+        expect(within(card).getByText(/\d+\s*object types?/)).toBeInTheDocument();
       }
     });
 
@@ -133,8 +135,8 @@ describe('DashboardPage — total Object Types stat (DOG-002)', () => {
       const cards = screen.getAllByTestId('dashboard-ontology-card-wrapper');
       let sum = 0;
       for (const card of cards) {
-        const chip = within(card).getByText(/^(\d+)\s*types?$/);
-        const match = chip.textContent?.match(/^(\d+)\s*types?$/);
+        const chip = within(card).getByText(/^(\d+)\s*object types?$/);
+        const match = chip.textContent?.match(/^(\d+)\s*object types?$/);
         sum += match ? Number(match[1]) : 0;
       }
       const value = within(screen.getByTestId('stat-object-types')).getByTestId('stat-value');
