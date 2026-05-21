@@ -27,7 +27,8 @@ VITE_PID_FILE="$PID_DIR/vite.pid"
 WEAVE_LOG="$LOG_DIR/weave.log"
 VITE_LOG="$LOG_DIR/vite.log"
 
-WEAVE_HEALTH_URL="http://localhost:9117/health"
+WEAVE_URL="${WEAVE_URL:-http://localhost:9117}"
+WEAVE_HEALTH_URL="$WEAVE_URL/health"
 VITE_URL="http://localhost:5173"
 
 # Environment defaults — weave reads PG_DSN / NATS_URL at startup, so the
@@ -66,6 +67,28 @@ wait_http_ok() {
     sleep 1
   done
   return 1
+}
+
+json_has_api_name() {
+  local payload="$1" api_name="$2"
+  printf '%s' "$payload" | grep -Eq '"apiName"[[:space:]]*:[[:space:]]*"'"$api_name"'"'
+}
+
+verify_seeded_object_types() {
+  local endpoint="$WEAVE_URL/api/v2/ontologies/northwind/objectTypes"
+  local body api_name
+
+  if ! body="$(curl -fsS --max-time 5 "$endpoint")"; then
+    fail "Northwind objectTypes probe failed after seed ($endpoint)"
+  fi
+
+  for api_name in customer order product; do
+    if ! json_has_api_name "$body" "$api_name"; then
+      fail "Northwind seed probe missing object type $api_name at $endpoint"
+    fi
+  done
+
+  log "Northwind objectTypes probe returned customer/order/product"
 }
 
 # ── 1. Docker services ──────────────────────────────────────────────
@@ -136,12 +159,13 @@ fi
 # /api/admin/indexes/rebuild endpoint so Bleve reflects the fresh rows.
 # Any non-zero exit aborts the setup.
 log "Seeding Playwright baseline data (Northwind + test users)..."
-WEAVE_URL="http://localhost:9117" PG_DSN="${PG_DSN:-postgres://weave:weave@localhost:5432/weave?sslmode=disable}" \
+WEAVE_URL="$WEAVE_URL" PG_DSN="${PG_DSN:-postgres://weave:weave@localhost:5432/weave?sslmode=disable}" \
   "$ROOT/test/fixtures/e2e_seed.sh"
+verify_seeded_object_types
 
 cat <<EOF
 [e2e-setup] Stack is up.
-    API    http://localhost:9117
+    API    $WEAVE_URL
     Web    http://localhost:5173
     Logs   $LOG_DIR/{weave,vite}.log
 Run tests:   (cd web && npm run test:e2e)

@@ -31,6 +31,7 @@ function renderPage(initialPath = '/quiver/test') {
       <MemoryRouter initialEntries={[initialPath]}>
         <Routes>
           <Route path="/quiver/:ontology" element={<QuiverPage />} />
+          <Route path="/quiver/:ontology/:rid" element={<QuiverPage />} />
           <Route path="*" element={<QuiverPage />} />
         </Routes>
       </MemoryRouter>
@@ -59,6 +60,11 @@ describe('QuiverPage', () => {
     expect(screen.getByTestId('quiver-page')).toBeInTheDocument();
     expect(screen.getByText(/no series yet/i)).toBeInTheDocument();
     expect(screen.getByTestId('quiver-add-button')).toBeDisabled();
+  });
+
+  it('disables JSON export until the workbench has at least one series', () => {
+    renderPage();
+    expect(screen.getByTestId('quiver-export-json-button')).toBeDisabled();
   });
 
   it('disables the Add button until all required fields are filled', () => {
@@ -109,6 +115,93 @@ describe('QuiverPage', () => {
     expect(screen.getByTestId(`quiver-sum-${rid}`)).toHaveTextContent('40.00');
     expect(screen.getByTestId(`quiver-avg-${rid}`)).toHaveTextContent('20.00');
     expect(screen.getByTestId(`quiver-max-${rid}`)).toHaveTextContent('30.00');
+  });
+
+  it('exports the current workbench as JSON with ontology, name, rid, and series config', async () => {
+    vi.spyOn(timeseriesApi, 'streamTimeSeriesPoints').mockResolvedValue([]);
+    const createObjectURL = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:quiver-export');
+    const revokeObjectURL = vi
+      .spyOn(URL, 'revokeObjectURL')
+      .mockImplementation(() => {});
+    const originalCreateElement = document.createElement.bind(document);
+    let clickedDownload = '';
+    let clickedHref = '';
+    vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      const el = originalCreateElement(tagName);
+      if (tagName.toLowerCase() === 'a') {
+        const anchor = el as HTMLAnchorElement;
+        anchor.click = () => {
+          clickedDownload = anchor.download;
+          clickedHref = anchor.href;
+        };
+      }
+      return el;
+    });
+
+    quiverMocks.getQuiverDashboard.mockResolvedValue({
+      rid: 'ri.quiver.main.dashboard.loaded',
+      name: 'Loaded Dashboard',
+      owner: 'user:test',
+      config: { ontologyApiName: 'test', series: [] },
+      createdAt: '2026-04-18T10:00:00Z',
+      updatedAt: '2026-04-18T10:00:00Z',
+    });
+    renderPage('/quiver/test/ri.quiver.main.dashboard.loaded');
+
+    fireEvent.change(screen.getByTestId('quiver-input-objectType'), {
+      target: { value: 'Server' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-input-primaryKey'), {
+      target: { value: 's1' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-input-property'), {
+      target: { value: 'cpu' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-input-label'), {
+      target: { value: 'CPU Load' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-input-branch'), {
+      target: { value: 'feature-x' },
+    });
+    fireEvent.change(screen.getByTestId('quiver-dashboard-name'), {
+      target: { value: 'Capacity Review' },
+    });
+    fireEvent.click(screen.getByTestId('quiver-add-button'));
+
+    fireEvent.click(screen.getByTestId('quiver-export-json-button'));
+
+    await waitFor(() => {
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+    });
+    expect(clickedHref).toBe('blob:quiver-export');
+    expect(clickedDownload).toBe('capacity-review.quiver.json');
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:quiver-export');
+
+    const blob = createObjectURL.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe('application/json');
+    const payload = JSON.parse(await blob.text());
+    expect(payload).toMatchObject({
+      ontologyApiName: 'test',
+      rid: 'ri.quiver.main.dashboard.loaded',
+      name: 'Capacity Review',
+      config: {
+        ontologyApiName: 'test',
+        series: [
+          {
+            objectType: 'Server',
+            primaryKey: 's1',
+            property: 'cpu',
+            label: 'CPU Load',
+            branch: 'feature-x',
+          },
+        ],
+      },
+    });
+    expect(payload.config.series[0].id).toMatch(/^Server\|s1\|cpu\|feature-x\|/);
+    expect(payload.config.series[0].color).toMatch(/^#/);
+    expect(payload.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it('uses distinct colors for additional series', async () => {

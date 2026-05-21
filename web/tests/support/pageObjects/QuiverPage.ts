@@ -15,7 +15,8 @@ import { type Locator, type Page } from '@playwright/test';
  * The QuiverPage component exposes its picker form via `quiver-input-*`
  * testids, the saved list via `quiver-saved-*` / `quiver-load-*` /
  * `quiver-share-*` / `quiver-delete-*` testids keyed by dashboard RID,
- * and the aggregate panel via `quiver-row-{id}` / `quiver-count-{id}` /
+ * the JSON export control via `quiver-export-json-button`, and the
+ * aggregate panel via `quiver-row-{id}` / `quiver-count-{id}` /
  * `quiver-sum-{id}` / `quiver-avg-{id}` / `quiver-max-{id}` testids
  * keyed by SeriesSpec.id.
  */
@@ -25,6 +26,7 @@ export class QuiverPage {
   readonly saveControls: Locator;
   readonly dashboardNameInput: Locator;
   readonly saveBtn: Locator;
+  readonly exportJsonBtn: Locator;
   readonly newBtn: Locator;
   readonly saveError: Locator;
   readonly savedList: Locator;
@@ -55,6 +57,7 @@ export class QuiverPage {
     this.saveControls = page.getByTestId('quiver-save-controls');
     this.dashboardNameInput = page.getByTestId('quiver-dashboard-name');
     this.saveBtn = page.getByTestId('quiver-save-button');
+    this.exportJsonBtn = page.getByTestId('quiver-export-json-button');
     this.newBtn = page.getByTestId('quiver-new-button');
     this.saveError = page.getByTestId('quiver-save-error');
     this.savedList = page.getByTestId('quiver-saved-list');

@@ -35,8 +35,8 @@ import {
  *     workbench renders fixed `Count / Sum / Avg / Min / Max` columns
  *     over the entire (or selected) range; bucket size / step is fully
  *     implicit. Lock with triple role-based absence assertions.
- *   - "导出 dashboard" → no CSV/PNG/JSON export today; absence assertions
- *     mirror the US-028/033 button+link double pattern.
+ *   - "导出 dashboard" → the editable workbench exposes a JSON export
+ *     control that downloads the current frontend-owned dashboard config.
  *   - "共享链接" → click the `quiver-share-{rid}` button on a saved row
  *     and verify the page navigates to the read-only view route. The
  *     read-only view does NOT render the save controls or per-row remove
@@ -474,14 +474,9 @@ describeFeature('Quiver Workbench', () => {
     });
   });
 
-  test('Scenario: dashboard export (CSV / PNG / JSON) has no affordance today', async ({
+  test('Scenario: dashboard JSON export downloads the configured workbench @smoke', async ({
     page,
   }) => {
-    // Honest mapping for AC "导出 dashboard": no export
-    // button/link/menu surfaces a CSV / PNG / JSON dump today. Mirror
-    // the US-028/033 button + link double absence pattern with a
-    // regex covering Export Dashboard / Download CSV / Export PNG /
-    // bare "CSV" / "JSON" labels.
     const quiver = new QuiverPage(page);
     const stubs = newStubs();
     stubs.pointsBySlot.set('Server|s1|cpu', [
@@ -492,8 +487,10 @@ describeFeature('Quiver Workbench', () => {
       await stubQuiverEndpoints(page, stubs);
     });
 
-    await When('the user adds a series to reveal the chart + aggregate surfaces', async () => {
+    await When('the user names the dashboard and adds a series', async () => {
       await quiver.goto(ONTOLOGY);
+      await expect(quiver.exportJsonBtn).toBeDisabled();
+      await quiver.dashboardNameInput.fill('Capacity Review');
       await quiver.addSeries({
         objectType: 'Server',
         primaryKey: 's1',
@@ -502,12 +499,12 @@ describeFeature('Quiver Workbench', () => {
       await expect(quiver.chartPanel).toBeVisible();
     });
 
-    await Then('no export button or link is rendered anywhere on the page', async () => {
-      const exportRegex =
-        /export\s*(dashboard|chart|series|data)?\s*(csv|png|json|svg)?|download\s*(csv|png|json|svg|dashboard|chart)|\bcsv\b|\bpng\b/i;
-      await expect(page.getByRole('button', { name: exportRegex })).toHaveCount(0);
-      await expect(page.getByRole('link', { name: exportRegex })).toHaveCount(0);
-      await expect(page.getByRole('menuitem', { name: exportRegex })).toHaveCount(0);
+    await Then('the JSON export control downloads a dashboard artifact', async () => {
+      await expect(quiver.exportJsonBtn).toBeEnabled();
+      const downloadPromise = page.waitForEvent('download');
+      await quiver.exportJsonBtn.click();
+      const download = await downloadPromise;
+      expect(download.suggestedFilename()).toBe('capacity-review.quiver.json');
     });
   });
 
