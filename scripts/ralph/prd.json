@@ -1,178 +1,84 @@
 {
-  "project": "Weave parallel2 self-iteration",
+  "project": "Weave self-iteration 20260521",
   "branchName": "ralph/self-iteration-20260521-110910",
-  "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
+  "description": "Small branch-local Ralph cycle focused on verifiable Pipeline service/operator gaps after PR CI was confirmed green.",
   "userStories": [
     {
-      "id": "P2A-001",
-      "title": "Fail MCP Prompt Discovery Loudly on OMS Errors",
-      "description": "As an MCP client, I want prompts/list to fail when OMS discovery fails so that action prompt catalogues are never silently incomplete.",
+      "id": "SELF-601",
+      "title": "Record Scheduled Pipeline Ticks as Run History",
+      "description": "As a pipeline operator, I want cron-triggered pipeline ticks to create durable run-history rows even before the full runtime executor is wired, so the product surface shows that schedules are firing instead of leaving only server logs.",
       "priority": "high",
       "passes": true,
       "acceptanceCriteria": [
         {
-          "given": "an MCP server with an OMS repository whose ontology listing fails",
-          "when": "the client calls prompts/list",
-          "then": "the JSON-RPC response is an internal error that includes the list failure reason"
+          "given": "an enabled scheduled pipeline and the server scheduler runner receives a cron tick",
+          "when": "the runtime executor is not configured",
+          "then": "the pipeline store receives a terminal run row for that pipeline with triggeredBy=schedule"
         },
         {
-          "given": "an MCP server with multiple ontologies and one action-type listing failure",
-          "when": "the client calls prompts/list",
-          "then": "the JSON-RPC response is an internal error rather than a partial prompts array"
+          "given": "the scheduler records a runtime-not-configured tick",
+          "when": "the run row is inspected through the existing run-history store contract",
+          "then": "it includes startedAt, finishedAt, failed status, and an explanatory errorMessage"
         },
         {
-          "given": "an MCP server with healthy OMS metadata",
-          "when": "the client calls prompts/list",
-          "then": "the existing prompt catalogue shape and deterministic ordering are preserved"
+          "given": "recording the run row fails",
+          "when": "the scheduler runner returns",
+          "then": "the error is propagated to the scheduler logger instead of being swallowed silently"
         }
       ],
       "dependencies": [
-        "pkg/mcp prompts/list",
-        "pkg/oms Repository metadata listing"
-      ],
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260521-110910-A"
+        "pkg/pipeline.Scheduler",
+        "pkg/pipeline.Store run-history contract",
+        "cmd/server pipeline scheduler wiring"
+      ]
     },
     {
-      "id": "P2A-002",
-      "title": "Reject Fractional MCP Integer Arguments",
-      "description": "As an MCP tool caller, I want integer schema fields to reject fractional JSON numbers so page sizes and similar controls are not silently truncated.",
+      "id": "SELF-602",
+      "title": "Surface Pipeline Run History in the Pipeline Log Panel",
+      "description": "As a pipeline operator, I want the Web Pipeline log panel to read the existing runs endpoint so I can see recent scheduled ticks and failures without leaving the UI.",
       "priority": "medium",
-      "passes": true,
+      "passes": false,
       "acceptanceCriteria": [
         {
-          "given": "a tool input schema declares an integer field",
-          "when": "a tools/call request supplies a fractional JSON number",
-          "then": "the registry returns invalid params and the tool is not invoked"
+          "given": "a selected pipeline has recent runs",
+          "when": "the Pipelines page renders its log panel",
+          "then": "the panel lists recent run status, trigger, timestamp, and error text"
         },
         {
-          "given": "a tool input schema declares an integer field",
-          "when": "a tools/call request supplies a whole JSON number",
-          "then": "the request continues to validate successfully"
+          "given": "a selected pipeline has no runs",
+          "when": "the Pipelines page renders",
+          "then": "the log panel shows an empty run-history state instead of saying run history is not implemented"
         }
       ],
       "dependencies": [
-        "pkg/mcp ToolDefinition validation"
-      ],
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260521-110910-A"
+        "web/src/api/pipelines.ts",
+        "web/src/hooks/usePipelines.ts",
+        "web/src/components/pipelines/PipelinesPage.tsx"
+      ]
     },
     {
-      "id": "P2A-003",
-      "title": "Keep Heavy Go Data Suites out of Fast Unit Gates",
-      "description": "As a CI maintainer, I want heavyweight Chinook/Northwind acceptance packages classified separately from fast unit packages so the Go unit gate stays inside the PR feedback budget.",
+      "id": "SELF-603",
+      "title": "Persist Real Scheduled Pipeline DAG Outcomes",
+      "description": "As a pipeline operator, I want scheduled pipelines with an available runtime runner to persist actual DAG success/failure results, so run history evolves from tick evidence into execution evidence.",
       "priority": "medium",
-      "passes": true,
+      "passes": false,
       "acceptanceCriteria": [
         {
-          "given": "scripts/ci/go-packages.sh is used for the unit/race/coverage gate",
-          "when": "the package list is generated",
-          "then": "heavy data acceptance packages are excluded or explicitly opt-in through a documented mode"
+          "given": "a scheduled pipeline and a configured DAG node runner",
+          "when": "the scheduler fires",
+          "then": "the stored pipeline run includes the RunDAG result and success status"
         },
         {
-          "given": "the heavy data suites remain valuable regression coverage",
-          "when": "a developer runs the documented command",
-          "then": "test/chinook and test/northwind still run intentionally"
+          "given": "a scheduled pipeline whose DAG execution fails",
+          "when": "the scheduler records the run",
+          "then": "the stored run includes failed status, the RunDAG partial result, and the error message"
         }
       ],
       "dependencies": [
-        "scripts/ci/go-packages.sh",
-        ".github/workflows/ci.yml",
-        "test/chinook",
-        "test/northwind"
-      ],
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260521-110910-A"
-    },
-    {
-      "id": "P2B-501",
-      "title": "Export Quiver Workbench Dashboards as JSON",
-      "priority": 1,
-      "status": "completed",
-      "passes": true,
-      "description": "Replace the documented Quiver dashboard export absence with a browser-visible JSON export for the current editable workbench state.",
-      "dependencies": [
-        "web/src/components/quiver/QuiverPage.tsx",
-        "web/src/components/quiver/__tests__/QuiverPage.test.tsx",
-        "web/tests/feature.quiver.spec.ts"
-      ],
-      "acceptanceCriteria": [
-        "Given a Quiver workbench has at least one series, when the operator opens the save controls, then an Export JSON control is visible and enabled.",
-        "Given the operator clicks Export JSON, when the browser download is prepared, then the payload includes ontologyApiName, dashboard name when supplied, dashboard rid when loaded, and the current series list including branch/color/labels.",
-        "Given the workbench has no series, then Export JSON is disabled so empty dashboard shells are not downloaded as misleading artifacts.",
-        "Given the existing Playwright feature for Quiver export, then it no longer asserts export absence and instead verifies the JSON export affordance is present."
-      ],
-      "verification": [
-        "RED: npx vitest run src/components/quiver/__tests__/QuiverPage.test.tsx failed because quiver-export-json-button did not exist.",
-        "npx vitest run src/components/quiver/__tests__/QuiverPage.test.tsx",
-        "npx vitest run src/components/quiver/__tests__/QuiverPage.test.tsx src/components/quiver/__tests__/QuiverWorkbenchView.test.tsx",
-        "npx playwright test --list tests/feature.quiver.spec.ts",
-        "npx playwright test --list us444/ phase6/ phase7/ vtx-099-system-graph-render.spec.ts dogfood-verify.spec.ts dogfood-diagnose.spec.ts dogfood-empty-states.spec.ts us-456-perf-dashboard.spec.ts us-457-timeseries-tab.spec.ts us-458-hotkey-help.spec.ts zzz-login-rate-limit.spec.ts tests/feature.quiver.spec.ts",
-        "npm test",
-        "npm run build",
-        "npm run typecheck"
-      ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260521-110910-B"
-    },
-    {
-      "id": "P2B-502",
-      "title": "Add Aggregation Where Filter Affordance",
-      "priority": 2,
-      "status": "completed",
-      "passes": true,
-      "description": "Replace the documented Aggregation page filter absence with a minimal where-clause UI that sends the existing optional AggregationRequest.where contract.",
-      "dependencies": [
-        "web/src/components/aggregation/AggregationPage.tsx",
-        "web/tests/feature.aggregation.spec.ts"
-      ],
-      "acceptanceCriteria": [
-        "Given an operator opens the Aggregation page, then a basic filter/where control is available in the config panel.",
-        "Given a filter is configured and Execute is clicked, then the aggregate request body includes a where clause.",
-        "Given no filter is configured, then the aggregate request omits where as it does today."
-      ],
-      "verification": [
-        "RED: npx vitest run src/components/aggregation/__tests__/AggregationPage.where.bdd.test.tsx failed because filter-field-select did not exist.",
-        "npx vitest run src/components/aggregation/__tests__/AggregationPage.where.bdd.test.tsx",
-        "npx vitest run src/components/aggregation/__tests__/AggregationPage.where.bdd.test.tsx src/components/aggregation/__tests__/MetricSelector.test.tsx src/components/aggregation/__tests__/SimpleChart.test.tsx src/components/browser/__tests__/FilterBuilder.whereContract.bdd.test.tsx src/components/browser/__tests__/FilterBuilder.whereOperators.bdd.test.tsx",
-        "npm run typecheck",
-        "npx playwright test --list tests/feature.aggregation.spec.ts",
-        "npm test",
-        "npm run build"
-      ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260521-110910-B"
-    },
-    {
-      "id": "P2B-503",
-      "title": "Guard Northwind E2E Seed Replays from FK Wipe Failures",
-      "priority": 3,
-      "status": "completed",
-      "passes": true,
-      "description": "Repair the dogfood-reported Northwind seed wipe failure path so browser E2E fixtures remain populated after repeated scripts/e2e-setup.sh runs.",
-      "dependencies": [
-        "scripts/e2e-setup.sh",
-        "internal/e2e/e2e_setup_scripts_test.go",
-        "test/fixtures/e2e_seed.sh",
-        "test/fixtures/seed_northwind"
-      ],
-      "acceptanceCriteria": [
-        "Given the E2E seed is replayed against a database with function rows referencing the ontology, then the wipe step does not fail on functions_ontology_rid_fkey.",
-        "Given scripts/e2e-setup.sh completes, then /api/v2/ontologies/northwind/objectTypes returns seeded object types.",
-        "Given the seed repair is verified, then the progress log records any required database/table-order learning for future streams."
-      ],
-      "verification": [
-        "RED: go test ./internal/e2e -run TestBDD_E2ESetupVerifiesNorthwindObjectTypesAfterSeed -count=1 failed because scripts/e2e-setup.sh had no post-seed objectTypes probe.",
-        "go test ./internal/e2e -run TestBDD_E2ESetupVerifiesNorthwindObjectTypesAfterSeed -count=1",
-        "go test ./internal/e2e -count=1",
-        "go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1",
-        "go test -tags integration ./test/fixtures/seed_northwind -count=1",
-        "go test ./test/fixtures/seed_northwind/cmd -count=1",
-        "go test ./internal/e2e ./test/fixtures/seed_northwind/cmd -count=1",
-        "go test $(./scripts/ci/go-packages.sh)"
-      ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260521-110910-B"
+        "pkg/pipeline.RunDAG",
+        "pkg/pipeline.PipelineRun",
+        "cmd/server pipeline runtime wiring"
+      ]
     }
   ]
 }
