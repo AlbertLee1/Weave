@@ -18,7 +18,8 @@ export type RunEvent =
   | { kind: 'log'; line: string }
   | { kind: 'retry'; activityId: string; attempt: number; error: string }
   | { kind: 'completed'; scenarioRunRid: string }
-  | { kind: 'failed'; scenarioRunRid: string; error: string };
+  | { kind: 'failed'; scenarioRunRid: string; error: string }
+  | { kind: 'canceled'; scenarioRunRid: string; error?: string };
 
 export interface ScenarioRunStreamOptions {
   scenarioRid: string;
@@ -105,7 +106,7 @@ export function openScenarioRunStream(opts: ScenarioRunStreamOptions): Handle {
       try {
         const parsed = JSON.parse(messageEvent.data) as RunEvent;
         emit(parsed);
-        if (parsed.kind === 'completed' || parsed.kind === 'failed') {
+        if (isTerminalRunEvent(parsed)) {
           end();
         }
       } catch {
@@ -154,7 +155,7 @@ export function openScenarioRunStream(opts: ScenarioRunStreamOptions): Handle {
 }
 
 // pollFinalState hits the rest fallback after maxReconnects exhausts. It
-// returns a synthetic completed/failed RunEvent if the server has a
+// returns a synthetic completed/failed/canceled RunEvent if the server has a
 // terminal state, or null when even the REST call fails (caller treats
 // that as "stopped" and surfaces an error toast).
 export async function pollFinalState(
@@ -180,8 +181,16 @@ export async function pollFinalState(
       if (!body.rid) return null;
       return { kind: 'failed', scenarioRunRid: body.rid, error: body.error ?? 'failed' };
     }
+    if (body.status === 'canceled') {
+      if (!body.rid) return null;
+      return { kind: 'canceled', scenarioRunRid: body.rid, error: body.error };
+    }
     return null;
   } catch {
     return null;
   }
+}
+
+function isTerminalRunEvent(ev: RunEvent): boolean {
+  return ev.kind === 'completed' || ev.kind === 'failed' || ev.kind === 'canceled';
 }

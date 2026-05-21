@@ -1,68 +1,66 @@
 # Ralph Progress Log
-Started: Wed May 20 12:32:19 CST 2026
+Started: Thu May 21 09:33:31 CST 2026
+Branch: ralph/self-iteration-20260520-134952
 
-Archived previous passing PRD:
-- scripts/ralph/archive/self-iteration-20260520-123219/prd.json
-- scripts/ralph/archive/self-iteration-20260520-123219/progress.txt
+## Fresh PRD Inspection
+- Existing `scripts/ralph/prd.json` belonged to this branch and all stories had `passes: true`.
+- Active `scripts/ralph/progress.txt` contained an `LLM review auto-fix context`, so the new PRD is intentionally a one-story review repair.
+- Archived prior state under `scripts/ralph/archive/self-iteration-20260521-093331/`.
+- Root symlinks remain intact: `prd.json -> scripts/ralph/prd.json` and `progress.txt -> scripts/ralph/progress.txt`.
 
-Fresh health evidence:
-- main: `gh run list --branch main --limit 5` showed latest CI run 26109104836 success and latest Codespaces prebuild 26109104180 success.
-- branch: `gh run list --branch ralph/self-iteration-20260520-002052 --limit 8` showed latest pull_request CI run 26141075643 success.
-- local inspection: `dogfood-output/weave-webui-dogfood-20260517.md` remains the latest web dogfood output; no newer dogfood-output file targets this review blocker.
+## Codebase Patterns
+- Root `prd.json` and `progress.txt` are symlinks to `scripts/ralph/prd.json` and `scripts/ralph/progress.txt`; keep the symlinks intact.
+- Vite/Vitest commands should be run with paths relative to `web` when using `npm --prefix web`.
+- `cmd/server/embed_ci_bdd_test.go` is the focused guard for fresh checkout Go builds without generated WebUI assets.
+- `web/src/vertex/scenarioRunStream.ts` is intentionally guarded: default calls throw until the SSE route is mounted, and tests/future callers must opt in with `allowUnimplementedStreamRoute`.
+- The TypeScript Vertex SDK polling path already treats `pending`, `running`, `succeeded`, `failed`, and `canceled` as lifecycle statuses, with `canceled` terminal.
+- `cmd/weave-mcp/RunHTTPBridge` is the production stdio-to-HTTP MCP bridge. It forwards one newline-delimited JSON-RPC envelope per stdin line to `/mcp` and writes at most one normalized stdout line per response-bearing envelope.
+- `pkg/mcp.ParseRequestEnvelope` is the canonical JSON-RPC object-or-batch parser used by in-process HTTP and stdio transports; bridge-side envelope classification should stay aligned with that parser.
 
-LLM review auto-fix evidence:
-- PR: https://github.com/AlbertLee1/Weave/pull/39
-- Branch: ralph/self-iteration-20260520-002052
-- Reviewed HEAD: 25cfd23ae809
+## LLM Review Auto-Fix Context - 2026-05-21T09:32:16+08:00
+- PR: https://github.com/AlbertLee1/Weave/pull/40
+- Branch: ralph/self-iteration-20260520-134952
+- Reviewed HEAD: 24f0e4afa1a6
 - Review status: request_changes
-- Summary: Request changes: the main SDKs mostly follow start-and-poll, but web scenario-run helpers/tests still preserve stale terminal-response semantics and the stream REST fallback is not aligned with the mounted run-record schema.
+- Summary: Request changes: MCP batch support is correct in the in-process HTTP/stdio transports, but it misses the production weave-mcp bridge path. Local verifier is green, but this integration gap is not covered.
 - Blocking findings:
 ```json
 [
   {
-    "severity": "warning",
-    "file": "web/src/features/vertex/scenarioPane/scenarioRun.ts",
-    "line": 305,
-    "issue": "The sync scenario-run helper still models POST /api/vertex/v1/scenarios/{rid}/runs as a terminal 200 response with {status:'success', durationMs, scenario}. The same helper's request builder now targets the mounted /runs start route, whose contract is 202 {runRid,status} followed by GET /runs/{runRid} polling. Any caller using this helper against the real route will parse the accepted response as malformed instead of polling, and the BDD test at scenarioRun.test.ts:474 still documents the impossible 200 OK flow.",
-    "suggestion": "Replace or quarantine the old sync terminal response helpers. Make the web run flow parse the 202 start response and poll GET /runs/{runRid} until terminal, or route callers through scenarioRunAsync. Update scenarioRun.test.ts to cover the real start-and-poll contract instead of a mocked 200 success payload."
-  },
-  {
-    "severity": "warning",
-    "file": "web/src/vertex/scenarioRunStream.ts",
-    "line": 176,
-    "issue": "pollFinalState now calls the mounted GET /runs/{runRid} route, but it reads body.runRid/body.scenarioRunRid. The documented/server VertexScenarioRun record uses rid, so the fallback returns null for real terminal records. It also treats any non-'succeeded' status as failed, which would misreport valid pending/running/canceled records.",
-    "suggestion": "Parse the mounted run-record shape: use body.rid for the run RID, return completed only for succeeded, failed only for failed (and handle canceled explicitly or return null), and leave pending/running as null. Update scenarioRunStream.test.ts fixtures to use {rid, status} from the OpenAPI contract."
+    "severity": "critical",
+    "file": "cmd/weave-mcp/http_bridge.go",
+    "line": 101,
+    "issue": "The production weave-mcp bridge still treats any top-level JSON array as a notification because it only sniffs an object-level id. With this PR, /mcp now returns valid JSON-RPC batch responses, but bridge mode drops them whenever a stdio client sends a batch, so the main production stdio-to-HTTP path silently loses all batch results.",
+    "suggestion": "Teach RunHTTPBridge to classify JSON-RPC batch envelopes: if any batch item expects a response or is invalid, do not drop the upstream response; add a focused bridge test for a mixed batch with two requests and one notification."
   }
 ]
 ```
-- Required repair: fix only the stale sync scenario-run helper/tests and `pollFinalState` run-record parsing described above.
-
-Codebase Patterns:
-- CI pins golangci-lint in `.github/workflows/ci.yml` and uses `only-new-issues: true`; local reproductions should use the same pinned version when the binary is not installed.
-- Go SDK Vertex scenario-run routes are covered in `sdk/go/vertex_test.go` and should stay aligned with `/api/vertex/v1/scenarios/{scenarioRid}/runs`.
-- Mounted Vertex scenario-run server contract is start/poll/cancel only: `POST /api/vertex/v1/scenarios/{scenarioRid}/runs`, `GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}`, and `POST /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}/cancel`.
-- OpenAPI schemas `VertexScenarioRunStartResponse` and `VertexScenarioRun` define start as `{runRid,status}` and terminal polling as the persisted run record.
+- Recommended fix prompt:
+```text
+Update cmd/weave-mcp RunHTTPBridge to understand JSON-RPC batch envelopes when deciding whether stdout should receive the upstream response. Add BDD coverage showing a batch line with request ids is forwarded and emitted as one batch response line, while notification-only batches still produce no output.
+```
 
 ## Selected Story
-- `SELF-473` - Repair web scenario-run contract drift.
+- `SELF-502` - Forward JSON-RPC batch responses through weave-mcp bridge.
 
-## SELF-473 Evidence
-- Root cause: the web single-function scenario-run helper still documented and parsed POST `/api/vertex/v1/scenarios/{scenarioRid}/runs` as a terminal 200-style response with `{durationMs,scenario}`, while the mounted route accepts the run as `202 {runRid,status}` and requires GET `/runs/{runRid}` for terminal state. The stream fallback was already polling the mounted GET route, but it read stale `runRid`/`scenarioRunRid` response fields instead of the OpenAPI/server `VertexScenarioRun.rid` field and collapsed every non-`succeeded` status into failure.
+## SELF-502 Evidence - Forward JSON-RPC batch responses through weave-mcp bridge
+- Root cause:
+  - `cmd/weave-mcp/RunHTTPBridge` previously unmarshaled every stdin line into an object-only `{id}` sniff struct.
+  - For a top-level JSON-RPC batch array, the sniff left `id` empty and the bridge treated the whole envelope as notification-only, dropping the valid upstream batch response.
 - RED:
-  - `npm test -- scenarioRun.test.ts scenarioRunStream.test.ts` from `web/` failed as expected: 9 failures. `scenarioRun.test.ts` lacked `parseScenarioRunAcceptedResponse`/`buildGetRunScenarioRequest`; `scenarioRunStream.test.ts` returned `null` for `{rid,status:'succeeded'|'failed'}` fixtures.
+  - Added BDD bridge coverage in `cmd/weave-mcp/main_test.go` for a mixed batch with two requests plus one notification, an invalid batch item, and a notification-only batch.
+  - `go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge_Given_(MixedJSONRPCBatch|InvalidItemInJSONRPCBatch|NotificationOnlyJSONRPCBatch)' -count=1 -v` failed for the expected reasons: mixed and invalid batches produced empty stdout while notification-only batches stayed silent.
 - GREEN:
-  - `web/src/features/vertex/scenarioPane/scenarioRun.ts` now exposes accepted-response parsing for `202 {runRid,status}` and a mounted GET `/runs/{runRid}` request builder. The stale terminal POST parser/types/comments were removed from the helper and tests.
-  - `web/src/vertex/scenarioRunStream.ts` now parses `VertexScenarioRun.rid`, returns completed only for `succeeded`, failed only for `failed`, and returns `null` for `pending`, `running`, and `canceled`.
+  - `RunHTTPBridge` now classifies stdin lines with `pkg/mcp.ParseRequestEnvelope`, matching the in-process HTTP and stdio transports.
+  - Batch envelopes are response-bearing if any item has an id or any item parsed as a JSON-RPC error; only notification-only batches are dropped from stdout.
 - Verification:
-  - `npm test -- scenarioRun.test.ts scenarioRunStream.test.ts` from `web/` passed: 2 files, 62 tests.
-  - `npm test -- scenarioRun.test.ts scenarioRunAsync.test.ts scenarioRunStream.test.ts` from `web/` passed: 3 files, 144 tests.
-  - `npm run typecheck` from `web/` passed.
-  - `git diff --check` passed.
+  - `go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge|TestHTTPBridge' -count=1 -v` passed.
+  - `go test ./pkg/mcp -run 'TestBDD_.*Batch|TestStdioTransport_NotificationProducesNoOutput|TestHTTPTransport_DecodesJSONRPC' -count=1` passed.
+  - `go test ./cmd/weave-mcp ./pkg/mcp -count=1` passed.
 - Files changed:
-  - `web/src/features/vertex/scenarioPane/scenarioRun.ts`
-  - `web/src/features/vertex/scenarioPane/scenarioRun.test.ts`
-  - `web/src/vertex/scenarioRunStream.ts`
-  - `web/src/vertex/scenarioRunStream.test.ts`
+  - `cmd/weave-mcp/http_bridge.go`
+  - `cmd/weave-mcp/main_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
-- Reusable learning: web scenario-run helpers should treat POST `/runs` as start-only. Any terminal UI transition must be driven by the persisted run record from GET `/runs/{runRid}`; stream fallbacks must parse the same `VertexScenarioRun` shape as the mounted REST endpoint.
+- Reusable learning:
+  - Bridge-mode MCP envelope classification should reuse `pkg/mcp.ParseRequestEnvelope` so array batches, invalid batch items, and object notifications stay aligned across the production stdio-to-HTTP bridge and the in-process transports.

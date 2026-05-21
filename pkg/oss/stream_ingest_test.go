@@ -147,6 +147,79 @@ func TestStreamIngestInvalidJSON(t *testing.T) {
 	}
 }
 
+// TestBDD_StreamIngestRejectsMalformedEditEnvelope is the P2A-001
+// acceptance guard: the API must not publish edits whose envelope is
+// structurally invalid, because once a batch is accepted the caller expects
+// it to be consumer-safe.
+func TestBDD_StreamIngestRejectsMalformedEditEnvelope(t *testing.T) {
+	cases := []struct {
+		name        string
+		body        string
+		wantReason  string
+		wantPointer string
+	}{
+		{
+			name:        "unknown edit type",
+			body:        `{"edits":[{"type":"UPSERT","primaryKey":"order-1","properties":{"total":100}}]}`,
+			wantReason:  `edits[0].type must be one of CREATE, MODIFY, DELETE, LINK_CREATE, LINK_DELETE`,
+			wantPointer: "edits[0].type",
+		},
+		{
+			name:        "object edit missing primary key",
+			body:        `{"edits":[{"type":"CREATE","properties":{"total":100}}]}`,
+			wantReason:  `edits[0].primaryKey is required`,
+			wantPointer: "edits[0].primaryKey",
+		},
+		{
+			name:        "link edit missing link type",
+			body:        `{"edits":[{"type":"LINK_CREATE","primaryKey":"customer-1","targetPrimaryKey":"order-1"}]}`,
+			wantReason:  `edits[0].linkTypeRid is required`,
+			wantPointer: "edits[0].linkTypeRid",
+		},
+		{
+			name:        "link edit missing target primary key",
+			body:        `{"edits":[{"type":"LINK_DELETE","primaryKey":"customer-1","linkTypeRid":"ri.lt.customer-orders"}]}`,
+			wantReason:  `edits[0].targetPrimaryKey is required`,
+			wantPointer: "edits[0].targetPrimaryKey",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pub := &mockIngestPublisher{}
+			r := newIngestRouter(pub)
+
+			req := httptest.NewRequest(http.MethodPost,
+				"/api/v2/ontologies/northwind/streams/Order/ingest",
+				strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			r.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusBadRequest, rr.Body.String())
+			}
+			var errResp map[string]interface{}
+			if err := json.Unmarshal(rr.Body.Bytes(), &errResp); err != nil {
+				t.Fatalf("unmarshal error response: %v", err)
+			}
+			if name, _ := errResp["errorName"].(string); name != "InvalidEdit" {
+				t.Fatalf("errorName = %q, want InvalidEdit; body = %#v", name, errResp)
+			}
+			params, _ := errResp["parameters"].(map[string]interface{})
+			if got, _ := params["reason"].(string); got != tc.wantReason {
+				t.Fatalf("parameters.reason = %q, want %q", got, tc.wantReason)
+			}
+			if got, _ := params["field"].(string); got != tc.wantPointer {
+				t.Fatalf("parameters.field = %q, want %q", got, tc.wantPointer)
+			}
+			if len(pub.batches) != 0 {
+				t.Fatalf("publisher received %d batches, want 0", len(pub.batches))
+			}
+		})
+	}
+}
+
 // mockIngestPolicyChecker is a test double for IngestPolicyChecker.
 type mockIngestPolicyChecker struct {
 	allowed bool

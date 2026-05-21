@@ -1,0 +1,31 @@
+{
+  "project": "Weave self-iteration",
+  "branchName": "ralph/self-iteration-20260520-134952",
+  "description": "Focused follow-up after green branch CI: close one Vertex scenario-run terminal-state gap so upper-layer stream fallback behavior matches the mounted polling contract.",
+  "userStories": [
+    {
+      "id": "SELF-501",
+      "title": "Emit canceled Vertex scenario-run stream fallback events",
+      "priority": 1,
+      "area": "web/Vertex scenario runs",
+      "problem": "Vertex scenario-run polling treats canceled runs as terminal, but the guarded stream helper's REST fallback returns null for canceled records after reconnect exhaustion. A caller using the stream fallback can end without learning that the run was canceled.",
+      "userStory": "As a Vertex operator watching a scenario run, I want a canceled run to surface as a terminal stream event so the UI can stop waiting and show the operator cancellation state.",
+      "bddAcceptance": [
+        "Given the scenario-run stream reconnect path exhausts retries and the REST fallback returns status canceled with a run RID and error, when pollFinalState resolves, then it emits a terminal canceled RunEvent carrying the run RID and error.",
+        "Given an SSE message arrives with kind canceled, when openScenarioRunStream handles it, then the async iterator yields that canceled event and closes the EventSource.",
+        "Given the REST fallback returns pending or running, when pollFinalState resolves, then it still returns null because those statuses are non-terminal.",
+        "Given the TypeScript SDK polling path waits for scenario runs, when its existing canceled-run test runs, then it still treats canceled as a terminal lifecycle record."
+      ],
+      "dependencies": [
+        "web/src/vertex/scenarioRunStream.ts",
+        "web/src/vertex/scenarioRunStream.test.ts",
+        "web/src/vertex/SdkVertexClient.test.ts"
+      ],
+      "verification": [
+        "npm --prefix web test -- --run src/vertex/scenarioRunStream.test.ts src/vertex/SdkVertexClient.test.ts",
+        "npm --prefix web run typecheck"
+      ],
+      "passes": true
+    }
+  ]
+}

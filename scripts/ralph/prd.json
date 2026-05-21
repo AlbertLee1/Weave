@@ -1,29 +1,32 @@
 {
-  "project": "Weave Self-Iteration Vertex Web Scenario Run Contract Repair",
-  "branchName": "ralph/self-iteration-20260520-002052",
-  "description": "Small Ralph self-iteration for branch ralph/self-iteration-20260520-002052. The previous active PRD had all stories passing and was archived under scripts/ralph/archive/self-iteration-20260520-123219/. Fresh GitHub health at 2026-05-20 12:32 CST: latest main CI run 26109104836 completed success and latest branch pull_request CI run 26141075643 completed success. A newer LLM review auto-fix context requested changes because web scenario-run helpers/tests still preserve stale terminal POST semantics and the stream REST fallback does not parse the mounted VertexScenarioRun record shape. This PRD fixes only those review-blocking findings before adding any new OSv2-related capability work.",
+  "project": "Weave self-iteration",
+  "branchName": "ralph/self-iteration-20260520-134952",
+  "description": "Focused LLM review repair: keep JSON-RPC batch responses visible through the production weave-mcp stdio-to-HTTP bridge.",
   "userStories": [
     {
-      "id": "SELF-473",
-      "name": "Repair web scenario-run contract drift",
-      "phase": "LLM Review Repair",
-      "active": true,
+      "id": "SELF-502",
+      "title": "Forward JSON-RPC batch responses through weave-mcp bridge",
       "priority": 1,
-      "passes": true,
-      "dependencies": [],
-      "description": "Align the web scenario-run helper tests and stream fallback with the mounted scenario-run contract: POST /api/vertex/v1/scenarios/{scenarioRid}/runs accepts a run as 202 {runRid,status}; terminal state comes from GET /runs/{runRid}; the stream fallback parses VertexScenarioRun.rid/status without misreporting pending, running, or canceled states.",
-      "bdd_acceptance": [
-        "Given the mounted run start route returns 202 {runRid,status}, When the web scenario-run helper parses the response, Then it preserves the accepted run RID and status instead of expecting durationMs or a terminal scenario payload.",
-        "Given a started run, When the web helper needs terminal state, Then it builds the mounted GET /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid} route and leaves terminal parsing to the run-record polling helper.",
-        "Given the stream fallback polls a mounted VertexScenarioRun record with {rid,status:'succeeded'}, When the record is terminal success, Then it emits a completed event using rid as scenarioRunRid.",
-        "Given the stream fallback polls a mounted VertexScenarioRun record with {rid,status:'failed',error}, When the record is terminal failure, Then it emits a failed event using rid and the server error.",
-        "Given the stream fallback polls a mounted VertexScenarioRun record with pending, running, or canceled status, When the status is not succeeded or failed, Then it returns null rather than inventing a failed event."
+      "area": "cmd/weave-mcp HTTP bridge",
+      "problem": "RunHTTPBridge classifies requests by sniffing an object-level id. A top-level JSON-RPC batch array therefore looks notification-only to the bridge, so mixed batches with request ids are forwarded upstream but their valid batch response is dropped from stdout.",
+      "userStory": "As a local MCP client using weave-mcp over stdio, I want batch request results to be forwarded back as one response line so tool discovery and other batched calls do not silently hang or lose results.",
+      "bddAcceptance": [
+        "Given a stdio client sends one JSON-RPC batch line with two requests and one notification, when RunHTTPBridge forwards it to /mcp and receives a batch response, then stdout emits exactly one batch response line containing the two request ids.",
+        "Given a stdio client sends a JSON-RPC batch line that contains only notifications, when RunHTTPBridge forwards it to /mcp and receives no response body, then stdout emits no output line.",
+        "Given a JSON-RPC batch contains any item that expects a response or is invalid, when RunHTTPBridge classifies the envelope before forwarding, then it does not treat the envelope as notification-only.",
+        "Given a single JSON-RPC notification object is forwarded through RunHTTPBridge, when upstream returns no body, then existing no-output notification behavior is preserved."
       ],
-      "quality_gates": [
-        "`npm test -- scenarioRun.test.ts scenarioRunAsync.test.ts scenarioRunStream.test.ts` from web/",
-        "`npm run typecheck` from web/",
-        "`git diff --check`"
-      ]
+      "dependencies": [
+        "cmd/weave-mcp/http_bridge.go",
+        "cmd/weave-mcp/main_test.go",
+        "pkg/mcp/protocol.go"
+      ],
+      "verification": [
+        "go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge|TestHTTPBridge' -count=1 -v",
+        "go test ./pkg/mcp -run 'TestBDD_.*Batch|TestStdioTransport_NotificationProducesNoOutput|TestHTTPTransport_DecodesJSONRPC' -count=1",
+        "go test ./cmd/weave-mcp ./pkg/mcp -count=1"
+      ],
+      "passes": true
     }
   ]
 }

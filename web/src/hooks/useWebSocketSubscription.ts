@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 
 export interface WebSocketChangeEvent {
   state: 'ADDED_OR_UPDATED' | 'DELETED';
@@ -41,21 +41,24 @@ export function useWebSocketSubscription(
   // Keep onEvent in a ref so reconnect logic always calls the latest
   // callback without triggering an effect re-run.
   const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
 
   const onStatusChangeRef = useRef(onStatusChange);
-  onStatusChangeRef.current = onStatusChange;
 
   // Keep subscription params in refs for re-subscribe after reconnect.
   const objectTypeRef = useRef(objectType);
-  objectTypeRef.current = objectType;
   const whereRef = useRef(where);
-  whereRef.current = where;
   const selectRef = useRef(select);
-  selectRef.current = select;
 
   // Track backoff state across reconnections.
   const backoffRef = useRef(1000);
+
+  useLayoutEffect(() => {
+    onEventRef.current = onEvent;
+    onStatusChangeRef.current = onStatusChange;
+    objectTypeRef.current = objectType;
+    whereRef.current = where;
+    selectRef.current = select;
+  }, [objectType, onEvent, onStatusChange, select, where]);
 
   const buildUrl = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

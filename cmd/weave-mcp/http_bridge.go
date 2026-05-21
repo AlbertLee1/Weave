@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/liyang/weave/pkg/mcp"
 )
 
 // BridgeOption mutates a bridgeOptions value before the bridge starts. It
@@ -91,29 +93,24 @@ func RunHTTPBridge(ctx context.Context, in io.Reader, out io.Writer, url string,
 		if len(line) == 0 {
 			continue
 		}
-		// Sniff out id + notification status before forwarding so error
-		// responses can echo the right id and notifications can skip the
-		// output write per the JSON-RPC spec.
-		var sniff struct {
-			ID json.RawMessage `json:"id"`
-		}
-		_ = json.Unmarshal(line, &sniff)
-		isNotification := len(sniff.ID) == 0 || string(sniff.ID) == "null"
+		// Classify the envelope before forwarding so upstream errors can echo a
+		// useful id and notification-only envelopes can skip stdout.
+		classification := classifyBridgeEnvelope(line)
 
 		respBytes, fwdErr := forwardOnce(ctx, client, url, line, cfg)
 		if fwdErr != nil {
-			if isNotification {
+			if !classification.expectsResponse {
 				// Notifications never produce a response per JSON-RPC 2.0,
 				// even when the upstream is unreachable.
 				continue
 			}
-			errLine := makeErrorLine(sniff.ID, fwdErr)
+			errLine := makeErrorLine(classification.errorID, fwdErr)
 			if _, err := out.Write(errLine); err != nil {
 				return err
 			}
 			continue
 		}
-		if isNotification {
+		if !classification.expectsResponse {
 			// Some MCP-over-HTTP servers reply with an empty body to
 			// notifications; in that case we drop the line entirely.
 			continue
@@ -132,6 +129,44 @@ func RunHTTPBridge(ctx context.Context, in io.Reader, out io.Writer, url string,
 		return fmt.Errorf("stdio scan: %w", err)
 	}
 	return nil
+}
+
+type bridgeEnvelopeClassification struct {
+	expectsResponse bool
+	errorID         json.RawMessage
+}
+
+func classifyBridgeEnvelope(line []byte) bridgeEnvelopeClassification {
+	envelope, err := mcp.ParseRequestEnvelope(line)
+	if err != nil {
+		return bridgeEnvelopeClassification{
+			expectsResponse: true,
+			errorID:         sniffBridgeRequestID(line),
+		}
+	}
+	for _, item := range envelope.Items {
+		if item.Error != nil {
+			return bridgeEnvelopeClassification{
+				expectsResponse: true,
+				errorID:         item.Error.ID,
+			}
+		}
+		if item.Request != nil && !item.Request.IsNotification() {
+			return bridgeEnvelopeClassification{
+				expectsResponse: true,
+				errorID:         item.Request.ID,
+			}
+		}
+	}
+	return bridgeEnvelopeClassification{}
+}
+
+func sniffBridgeRequestID(data []byte) json.RawMessage {
+	var sniff struct {
+		ID json.RawMessage `json:"id"`
+	}
+	_ = json.Unmarshal(data, &sniff)
+	return sniff.ID
 }
 
 // forwardOnce POSTs a single JSON-RPC envelope to the upstream URL and

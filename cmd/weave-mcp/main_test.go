@@ -49,7 +49,7 @@ func stubServer(t *testing.T) *httptest.Server {
 		case "initialize":
 			mustWriteJSON(t, w, map[string]any{
 				"jsonrpc": "2.0",
-				"id":      json.RawMessage(req.ID),
+				"id":      req.ID,
 				"result": map[string]any{
 					"protocolVersion": "2024-11-05",
 					"serverInfo":      map[string]any{"name": "weave-mcp", "version": "0.1.0"},
@@ -63,7 +63,7 @@ func stubServer(t *testing.T) *httptest.Server {
 		case "tools/list":
 			mustWriteJSON(t, w, map[string]any{
 				"jsonrpc": "2.0",
-				"id":      json.RawMessage(req.ID),
+				"id":      req.ID,
 				"result": map[string]any{
 					"tools": []any{
 						map[string]any{"name": "weave_list_ontologies"},
@@ -74,7 +74,7 @@ func stubServer(t *testing.T) *httptest.Server {
 		case "prompts/list":
 			mustWriteJSON(t, w, map[string]any{
 				"jsonrpc": "2.0",
-				"id":      json.RawMessage(req.ID),
+				"id":      req.ID,
 				"result": map[string]any{
 					"prompts": []any{
 						map[string]any{
@@ -188,6 +188,164 @@ func TestHTTPBridge_Given_PromptsListRequest_When_Run_Then_StdoutEchoesUpstreamP
 	}
 	if resp.Result.Prompts[0].Name != "northwind__create-order" {
 		t.Errorf("name = %q, want northwind__create-order", resp.Result.Prompts[0].Name)
+	}
+}
+
+func TestBDD_HTTPBridge_Given_MixedJSONRPCBatch_When_Run_Then_StdoutEmitsOneBatchResponseLine(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var requests []struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.Unmarshal(body, &requests); err != nil {
+			t.Fatalf("decode upstream batch: %v; body=%s", err, body)
+		}
+		if len(requests) != 3 {
+			t.Fatalf("upstream batch request count = %d, want 3", len(requests))
+		}
+		if requests[0].Method != "initialize" || requests[1].Method != "tools/list" || requests[2].Method != "notifications/initialized" {
+			t.Fatalf("unexpected methods: %+v", requests)
+		}
+		if len(requests[0].ID) == 0 || len(requests[1].ID) == 0 {
+			t.Fatalf("first two batch items should carry ids: %+v", requests)
+		}
+		if len(requests[2].ID) != 0 {
+			t.Fatalf("notification item should not carry id: %+v", requests[2])
+		}
+		mustWriteJSON(t, w, []any{
+			map[string]any{
+				"jsonrpc": "2.0",
+				"id":      requests[0].ID,
+				"result":  map[string]any{"protocolVersion": "2024-11-05"},
+			},
+			map[string]any{
+				"jsonrpc": "2.0",
+				"id":      requests[1].ID,
+				"result":  map[string]any{"tools": []any{}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	in := bytes.NewBufferString(`[{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}},{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}},{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}]` + "\n")
+	var out bytes.Buffer
+	if err := RunHTTPBridge(context.Background(), in, &out, srv.URL+"/mcp"); err != nil {
+		t.Fatalf("RunHTTPBridge: %v", err)
+	}
+	line := strings.TrimSpace(out.String())
+	if line == "" {
+		t.Fatal("expected one JSON-RPC batch response line, got empty stdout")
+	}
+	if strings.Contains(line, "\n") {
+		t.Fatalf("expected one response line, got multiple lines: %q", out.String())
+	}
+	var responses []struct {
+		ID    json.RawMessage `json:"id"`
+		Error any             `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(line), &responses); err != nil {
+		t.Fatalf("decode batch response: %v; line=%s", err, line)
+	}
+	if len(responses) != 2 {
+		t.Fatalf("response count = %d, want 2: %+v", len(responses), responses)
+	}
+	for i, resp := range responses {
+		if resp.Error != nil {
+			t.Fatalf("response %d error = %+v", i, resp.Error)
+		}
+		var id int
+		if err := json.Unmarshal(resp.ID, &id); err != nil {
+			t.Fatalf("response %d id decode: %v", i, err)
+		}
+		if want := i + 1; id != want {
+			t.Fatalf("response %d id = %d, want %d", i, id, want)
+		}
+	}
+}
+
+func TestBDD_HTTPBridge_Given_InvalidItemInJSONRPCBatch_When_Run_Then_StdoutEmitsUpstreamBatchError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var requests []map[string]any
+		if err := json.Unmarshal(body, &requests); err != nil {
+			t.Fatalf("decode upstream batch: %v; body=%s", err, body)
+		}
+		if len(requests) != 2 {
+			t.Fatalf("upstream batch request count = %d, want 2", len(requests))
+		}
+		mustWriteJSON(t, w, []any{
+			map[string]any{
+				"jsonrpc": "2.0",
+				"id":      nil,
+				"error":   map[string]any{"code": -32600, "message": "method is required"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	in := bytes.NewBufferString(`[{"jsonrpc":"2.0","method":"notifications/initialized","params":{}},{"jsonrpc":"2.0","params":{}}]` + "\n")
+	var out bytes.Buffer
+	if err := RunHTTPBridge(context.Background(), in, &out, srv.URL+"/mcp"); err != nil {
+		t.Fatalf("RunHTTPBridge: %v", err)
+	}
+	line := strings.TrimSpace(out.String())
+	if line == "" {
+		t.Fatal("expected upstream batch error line, got empty stdout")
+	}
+	var responses []struct {
+		ID    json.RawMessage `json:"id"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(line), &responses); err != nil {
+		t.Fatalf("decode batch error response: %v; line=%s", err, line)
+	}
+	if len(responses) != 1 {
+		t.Fatalf("response count = %d, want 1: %+v", len(responses), responses)
+	}
+	if string(responses[0].ID) != "null" {
+		t.Fatalf("error id = %s, want null", responses[0].ID)
+	}
+	if responses[0].Error == nil || responses[0].Error.Code != -32600 {
+		t.Fatalf("error = %+v, want code -32600", responses[0].Error)
+	}
+}
+
+func TestBDD_HTTPBridge_Given_NotificationOnlyJSONRPCBatch_When_Run_Then_StdoutStaysEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var requests []struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.Unmarshal(body, &requests); err != nil {
+			t.Fatalf("decode upstream batch: %v; body=%s", err, body)
+		}
+		if len(requests) != 2 {
+			t.Fatalf("upstream batch request count = %d, want 2", len(requests))
+		}
+		for i, req := range requests {
+			if req.Method != "notifications/initialized" {
+				t.Fatalf("request %d method = %q, want notifications/initialized", i, req.Method)
+			}
+			if len(req.ID) != 0 {
+				t.Fatalf("request %d should not carry id: %+v", i, req)
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	in := bytes.NewBufferString(`[{"jsonrpc":"2.0","method":"notifications/initialized","params":{}},{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}]` + "\n")
+	var out bytes.Buffer
+	if err := RunHTTPBridge(context.Background(), in, &out, srv.URL+"/mcp"); err != nil {
+		t.Fatalf("RunHTTPBridge: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("expected notification-only batch to produce no stdout, got %q", out.String())
 	}
 }
 
