@@ -124,6 +124,10 @@ func (h *Handler) InterfaceAggregateObjects(w http.ResponseWriter, r *http.Reque
 		}))
 		return
 	}
+	if apiErr := rejectUnsupportedAggregationWhere(&req); apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
+	}
 
 	result, err := h.aggregateAcrossTypes(ontologyRID, objectTypes, &req)
 	if err != nil {

@@ -37,6 +37,9 @@ func AggregateWithOverlayAndConflicts(base []*WireObject, edits []scenarios.Scen
 	if req == nil {
 		return nil, nil, fmt.Errorf("nil aggregation request")
 	}
+	if err := where.ValidateMatchClauseSupported(req.Where); err != nil {
+		return nil, nil, fmt.Errorf("scenario overlay aggregation where: %w", err)
+	}
 	overlaid, conflicts := applyOverlayToObjectSetWithConflicts(base, edits, req.ObjectType)
 	if req.Where != nil {
 		overlaid = filterOverlayRowsByWhere(overlaid, req.Where)

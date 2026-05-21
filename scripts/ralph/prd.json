@@ -1,36 +1,35 @@
 {
   "project": "Weave self-iteration 20260521",
   "branchName": "ralph/self-iteration-20260521-110910",
-  "description": "Focused LLM review repair for backend aggregation where-filter execution.",
+  "description": "Focused LLM review repair for aggregation where regex safety and scenario-overlay operator parity.",
   "userStories": [
     {
-      "id": "SELF-604",
-      "title": "Apply Aggregation Where Filters Server-Side",
-      "description": "As a pipeline and operations analyst using Aggregation, I want the backend aggregate endpoint to apply the where filter sent by the UI, so aggregate results reflect the filtered object set and column policy cannot be bypassed through where fields.",
+      "id": "SELF-605",
+      "title": "Harden Aggregation Where Safety and Scenario Parity",
+      "description": "As an operations analyst using Aggregation with saved filters and scenario overlays, I want aggregate where clauses to honor the platform's regex safety boundary and text-operator semantics, so aggregate requests cannot bypass regex protections or silently drop valid scenario-overlay results.",
       "priority": "high",
       "passes": true,
       "acceptanceCriteria": [
         {
-          "given": "an aggregate request includes a where clause that matches only active employees",
+          "given": "an aggregate request includes a where clause with the regex operator",
           "when": "the caller posts to /api/v2/ontologies/{ontology}/objects/{objectType}/aggregate",
-          "then": "the returned count is scoped to matching rows and differs from the unfiltered aggregate"
+          "then": "the request is rejected with a 400 INVALID_ARGUMENT response instead of executing an unbounded Bleve aggregation search"
         },
         {
-          "given": "the caller can aggregate visible properties but the where clause references a hidden property",
-          "when": "the aggregate endpoint evaluates the request policy",
-          "then": "the request is rejected with PropertyNotAccessible for the hidden where field"
+          "given": "a scenario-overlay aggregate request includes a where clause with containsAnyTerm",
+          "when": "scenario edits are folded over base rows",
+          "then": "the in-memory overlay aggregation filters the post-overlay rows with the same UI-supported operator before metrics and groupBy buckets are computed"
         },
         {
-          "given": "a scenario-overlay aggregate request includes a where clause",
-          "when": "scenario edits are folded over the base rows",
-          "then": "the where clause filters the post-overlay rows before metrics and groupBy buckets are computed"
+          "given": "a scenario-overlay aggregate request includes a where operator that the in-memory matcher does not support",
+          "when": "the handler validates the scenario aggregate request",
+          "then": "the request is rejected with a 400 INVALID_ARGUMENT response instead of silently returning an empty aggregate"
         }
       ],
       "dependencies": [
-        "pkg/oss/aggregation.AggregationRequest",
-        "pkg/oss/where.ConvertToBleveQuery",
-        "pkg/oss/where.MatchClause",
-        "pkg/oss.Handler AggregateObjects policy gate",
+        "pkg/oss/handlers_aggregate.go aggregate where validation",
+        "pkg/oss/aggregation.Engine aggregate where safety guard",
+        "pkg/oss/where.MatchClause in-memory operator coverage",
         "pkg/oss scenario aggregation overlay"
       ]
     }

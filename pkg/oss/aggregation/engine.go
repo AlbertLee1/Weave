@@ -193,6 +193,9 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 		baseQuery = bleve.NewMatchAllQuery()
 	}
 	if req.Where != nil {
+		if where.HasRegexClause(req.Where) {
+			return nil, fmt.Errorf("regex where clauses are not supported for aggregation")
+		}
 		whereQuery, err := where.ConvertToBleveQuery(req.Where)
 		if err != nil {
 			return nil, fmt.Errorf("where: %w", err)

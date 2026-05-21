@@ -145,6 +145,15 @@ func collectAggregationWhereFields(clause *where.WhereClause, fields map[string]
 	}
 }
 
+func rejectUnsupportedAggregationWhere(req *aggregation.AggregationRequest) *apierror.APIError {
+	if req == nil || !where.HasRegexClause(req.Where) {
+		return nil
+	}
+	return apierror.NewInvalidParameter("AggregationWhereRegexUnsupported", map[string]string{
+		"reason": "regex where clauses are not supported for aggregation until timeout-safe execution is available",
+	})
+}
+
 // AggregateObjects handles POST /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate.
 func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
@@ -174,6 +183,11 @@ func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 	req.ObjectType = objectType
 
 	if apiErr := h.rejectFilteredAggregationFields(ctx, objectType, &req); apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
+	}
+
+	if apiErr := rejectUnsupportedAggregationWhere(&req); apiErr != nil {
 		apierror.WriteJSON(w, apiErr)
 		return
 	}
