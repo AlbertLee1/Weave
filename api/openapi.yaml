@@ -1813,25 +1813,27 @@ components:
         count:
           type: integer
       required: [value, count]
+    WhereClause:
+      type: object
+      additionalProperties: true
+      description: |
+        WhereClause filter (see pkg/oss/where). Supported `type` values
+        include eq, gt/gte/lt/lte, isNull, contains, fuzzy, phrase, regex,
+        containsAllTerms, containsAnyTerm, containsAllTermsInOrder,
+        containsAllTermsInOrderPrefixLastTerm, startsWith, wildcard,
+        and/or/not, and the geospatial operators. The `phrase` operator
+        accepts either a structured value
+        `{"phrase": "quick fox", "slop": 2}` or a Lucene-style string
+        `"quick fox"~2`; slop is clamped to [0, 32]. The `regex` operator
+        takes a RE2 (Go regexp/syntax Perl) pattern as the value, is
+        lowercased to match the standard analyser's indexed form, and
+        executes under a 500ms server-side timeout.
     SearchObjectsRequest:
       type: object
       required: [select]
       properties:
         where:
-          type: object
-          additionalProperties: true
-          description: |
-            WhereClause filter (see pkg/oss/where). Supported `type` values
-            include eq, gt/gte/lt/lte, isNull, contains, fuzzy, phrase, regex,
-            containsAllTerms, containsAnyTerm, containsAllTermsInOrder,
-            containsAllTermsInOrderPrefixLastTerm, startsWith, wildcard,
-            and/or/not, and the geospatial operators. The `phrase` operator
-            accepts either a structured value
-            `{"phrase": "quick fox", "slop": 2}` or a Lucene-style string
-            `"quick fox"~2`; slop is clamped to [0, 32]. The `regex` operator
-            takes a RE2 (Go regexp/syntax Perl) pattern as the value, is
-            lowercased to match the standard analyser's indexed form, and
-            executes under a 500ms server-side timeout.
+          $ref: "#/components/schemas/WhereClause"
         fuzzy:
           type: object
           description: |
@@ -2157,6 +2159,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/GroupBySpec"
+        where:
+          $ref: "#/components/schemas/WhereClause"
         subAggregations:
           type: array
           description: |

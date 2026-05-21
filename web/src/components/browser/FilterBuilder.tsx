@@ -14,9 +14,13 @@ const OPERATORS = [
 ] as const;
 
 const NUMERIC_OPERATORS = new Set(['gt', 'gte', 'lt', 'lte']);
+const NUMERIC_DATA_TYPES = new Set(['byte', 'short', 'integer', 'long', 'float', 'double', 'decimal', 'number']);
+const BOOLEAN_DATA_TYPES = new Set(['boolean', 'bool']);
+
+type FilterProperty = { dataType: { type: string; itemType?: unknown }; rid: string };
 
 interface FilterBuilderProps {
-  properties: Record<string, { dataType: { type: string; itemType?: unknown }; rid: string }>;
+  properties: Record<string, FilterProperty>;
   filters: FilterCondition[];
   onFiltersChange: (filters: FilterCondition[]) => void;
 }
@@ -30,29 +34,58 @@ export function FilterBuilder({
   const [selectedField, setSelectedField] = useState(propertyNames[0] ?? '');
   const [selectedOp, setSelectedOp] = useState<string>(OPERATORS[0].value);
   const [value, setValue] = useState('');
+  const selectedType = properties[selectedField]?.dataType.type.toLowerCase() ?? '';
+  const selectedIsNumeric = NUMERIC_DATA_TYPES.has(selectedType);
+  const selectedIsBooleanEquality = BOOLEAN_DATA_TYPES.has(selectedType) && selectedOp === 'eq';
+
+  function isBooleanEquality(field: string, op: string): boolean {
+    const type = properties[field]?.dataType.type.toLowerCase() ?? '';
+    return BOOLEAN_DATA_TYPES.has(type) && op === 'eq';
+  }
+
+  function handleFieldChange(nextField: string) {
+    setSelectedField(nextField);
+    if (isBooleanEquality(nextField, selectedOp)) {
+      setValue(value === 'false' ? 'false' : 'true');
+    }
+  }
+
+  function handleOperatorChange(nextOp: string) {
+    setSelectedOp(nextOp);
+    if (isBooleanEquality(selectedField, nextOp)) {
+      setValue(value === 'false' ? 'false' : 'true');
+    }
+  }
+
+  function parseValue(raw: string): unknown {
+    const trimmed = raw.trim();
+    if (selectedOp === 'containsAnyTerm') {
+      return trimmed
+        .split(/\s+/)
+        .filter((t) => t.length > 0)
+        .join(' ');
+    }
+    if (selectedIsBooleanEquality) {
+      return trimmed.toLowerCase() === 'true';
+    }
+    if (selectedIsNumeric && (selectedOp === 'eq' || NUMERIC_OPERATORS.has(selectedOp))) {
+      const num = Number(trimmed);
+      if (Number.isFinite(num)) return num;
+    }
+    return trimmed;
+  }
 
   function handleAdd() {
     if (!selectedField || !value.trim()) return;
 
-    let parsedValue: unknown = value.trim();
-    if (selectedOp === 'containsAnyTerm') {
-      parsedValue = (parsedValue as string)
-        .split(/\s+/)
-        .filter((t: string) => t.length > 0)
-        .join(' ');
-    } else if (NUMERIC_OPERATORS.has(selectedOp)) {
-      const num = Number(parsedValue);
-      if (!isNaN(num)) parsedValue = num;
-    }
-
     const newFilter: FilterCondition = {
       field: selectedField,
       op: selectedOp,
-      value: parsedValue,
+      value: parseValue(value),
     };
 
     onFiltersChange([...filters, newFilter]);
-    setValue('');
+    setValue(selectedIsBooleanEquality ? 'true' : '');
   }
 
   function handleRemove(index: number) {
@@ -93,7 +126,7 @@ export function FilterBuilder({
       <div className="flex items-center gap-2">
         <select
           value={selectedField}
-          onChange={(e) => setSelectedField(e.target.value)}
+          onChange={(e) => handleFieldChange(e.target.value)}
           aria-label="Filter field"
           className="px-2 py-1.5 bg-bg-primary border border-border rounded text-xs font-mono text-text-primary focus:outline-none focus:border-accent-cyan focus-visible:ring-2 focus-visible:ring-accent-cyan/50"
           data-testid="filter-field-select"
@@ -107,7 +140,7 @@ export function FilterBuilder({
 
         <select
           value={selectedOp}
-          onChange={(e) => setSelectedOp(e.target.value)}
+          onChange={(e) => handleOperatorChange(e.target.value)}
           aria-label="Filter operator"
           className="px-2 py-1.5 bg-bg-primary border border-border rounded text-xs font-mono text-text-primary focus:outline-none focus:border-accent-cyan focus-visible:ring-2 focus-visible:ring-accent-cyan/50"
           data-testid="filter-op-select"
@@ -119,16 +152,29 @@ export function FilterBuilder({
           ))}
         </select>
 
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Value"
-          aria-label="Filter value"
-          className="flex-1 px-2 py-1.5 bg-bg-primary border border-border rounded text-xs font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-cyan focus-visible:ring-2 focus-visible:ring-accent-cyan/50"
-          data-testid="filter-value-input"
-        />
+        {selectedIsBooleanEquality ? (
+          <select
+            value={value || 'true'}
+            onChange={(e) => setValue(e.target.value)}
+            aria-label="Filter value"
+            className="flex-1 px-2 py-1.5 bg-bg-primary border border-border rounded text-xs font-mono text-text-primary focus:outline-none focus:border-accent-cyan focus-visible:ring-2 focus-visible:ring-accent-cyan/50"
+            data-testid="filter-boolean-value-select"
+          >
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+        ) : (
+          <input
+            type={selectedIsNumeric ? 'number' : 'text'}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Value"
+            aria-label="Filter value"
+            className="flex-1 px-2 py-1.5 bg-bg-primary border border-border rounded text-xs font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-cyan focus-visible:ring-2 focus-visible:ring-accent-cyan/50"
+            data-testid="filter-value-input"
+          />
+        )}
 
         <button
           onClick={handleAdd}
