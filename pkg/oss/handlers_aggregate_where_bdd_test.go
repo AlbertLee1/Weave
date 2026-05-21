@@ -74,6 +74,20 @@ func TestBDD_SELF604_AggregateWhereFieldsUsePropertyVisibility(t *testing.T) {
 				"aggregation":[{"type":"count","name":"n"}]
 			}`,
 		},
+		{
+			name: "hidden metric field inside subAggregation",
+			body: `{
+				"aggregation":[{"type":"count","name":"n"}],
+				"subAggregations":[{"name":"hiddenMetric","aggregation":[{"type":"sum","field":"active","name":"s"}]}]
+			}`,
+		},
+		{
+			name: "hidden groupBy field inside subAggregation",
+			body: `{
+				"aggregation":[{"type":"count","name":"n"}],
+				"subAggregations":[{"name":"hiddenGroup","aggregation":[{"type":"count","name":"m"}],"groupBy":[{"type":"exact","field":"active"}]}]
+			}`,
+		},
 	}
 
 	for _, tc := range cases {
@@ -203,6 +217,44 @@ func TestBDD_SELF605_AggregateWhereRejectsRegexInsteadOfUnboundedSearch(t *testi
 	}
 	if !strings.Contains(apiErr.Parameters["reason"], "regex") {
 		t.Errorf("reason = %q, want it to mention regex", apiErr.Parameters["reason"])
+	}
+}
+
+func TestBDD_SELF607_AggregateWhereRejectsInvalidWhereInsteadOfInternalError(t *testing.T) {
+	svc, mgr, _, _ := setupOSSTest(t)
+
+	h := oss.NewHandler(svc)
+	h.SetAggregation(aggregation.NewEngine(), mgr)
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+
+	body := `{
+		"where":{"type":"unsupportedForAggregation","field":"name","value":"alice"},
+		"aggregation":[{"type":"count","name":"n"}]
+	}`
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v2/ontologies/"+testOntologyRID+"/objects/employee/aggregate",
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+	var apiErr struct {
+		ErrorCode string `json:"errorCode"`
+		ErrorName string `json:"errorName"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &apiErr); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	if apiErr.ErrorCode != "INVALID_ARGUMENT" {
+		t.Errorf("errorCode = %q, want INVALID_ARGUMENT", apiErr.ErrorCode)
+	}
+	if apiErr.ErrorName != "InvalidAggregationWhere" {
+		t.Errorf("errorName = %q, want InvalidAggregationWhere", apiErr.ErrorName)
 	}
 }
 

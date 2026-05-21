@@ -295,6 +295,14 @@ func TestInterfaceAggregate_RejectsHiddenFieldsBeforePerTypeAggregation(t *testi
 			}`,
 			wantProperty: "department",
 		},
+		{
+			name: "hidden subAggregation field",
+			body: `{
+				"aggregation":[{"type":"count","name":"total"}],
+				"subAggregations":[{"name":"hidden","aggregation":[{"type":"sum","field":"department","name":"s"}]}]
+			}`,
+			wantProperty: "department",
+		},
 	}
 
 	for _, tc := range cases {
@@ -354,6 +362,34 @@ func TestInterfaceAggregate_RejectsRegexWhereBeforePerTypeAggregation(t *testing
 	}
 	if apiErr.ErrorName != "AggregationWhereRegexUnsupported" {
 		t.Errorf("errorName = %q, want AggregationWhereRegexUnsupported", apiErr.ErrorName)
+	}
+}
+
+func TestInterfaceAggregate_RejectsInvalidWhereBeforePerTypeAggregation(t *testing.T) {
+	_, r, _ := setupInterfaceTest(t)
+
+	body := `{"where":{"type":"unsupportedForAggregation","field":"name","value":"alice"},"aggregation":[{"type":"count","name":"total"}]}`
+	req := httptest.NewRequest("POST",
+		"/api/v2/ontologies/"+testIfaceOntologyRID+"/interfaces/worker/aggregate", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusBadRequest, rr.Body.String())
+	}
+	var apiErr struct {
+		ErrorCode string `json:"errorCode"`
+		ErrorName string `json:"errorName"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &apiErr); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	if apiErr.ErrorCode != "INVALID_ARGUMENT" {
+		t.Errorf("errorCode = %q, want INVALID_ARGUMENT", apiErr.ErrorCode)
+	}
+	if apiErr.ErrorName != "InvalidAggregationWhere" {
+		t.Errorf("errorName = %q, want InvalidAggregationWhere", apiErr.ErrorName)
 	}
 }
 

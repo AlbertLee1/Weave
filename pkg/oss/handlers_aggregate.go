@@ -95,6 +95,31 @@ func (h *Handler) rejectFilteredAggregationFields(ctx context.Context, objectTyp
 			return deny(field)
 		}
 	}
+	return rejectFilteredSubAggregationFields(req.SubAggregations, allowedSet, deny)
+}
+
+func rejectFilteredSubAggregationFields(subs []aggregation.SubAggregationSpec, allowedSet map[string]struct{}, deny func(string) *apierror.APIError) *apierror.APIError {
+	for _, sub := range subs {
+		for _, gb := range sub.GroupBy {
+			if gb.Field == "" {
+				continue
+			}
+			if _, ok := allowedSet[gb.Field]; !ok {
+				return deny(gb.Field)
+			}
+		}
+		for _, spec := range sub.Aggregations {
+			if spec.Field == "" {
+				continue
+			}
+			if _, ok := allowedSet[spec.Field]; !ok {
+				return deny(spec.Field)
+			}
+		}
+		if apiErr := rejectFilteredSubAggregationFields(sub.SubAggregations, allowedSet, deny); apiErr != nil {
+			return apiErr
+		}
+	}
 	return nil
 }
 
@@ -146,12 +171,20 @@ func collectAggregationWhereFields(clause *where.WhereClause, fields map[string]
 }
 
 func rejectUnsupportedAggregationWhere(req *aggregation.AggregationRequest) *apierror.APIError {
-	if req == nil || !where.HasRegexClause(req.Where) {
+	if req == nil || req.Where == nil {
 		return nil
 	}
-	return apierror.NewInvalidParameter("AggregationWhereRegexUnsupported", map[string]string{
-		"reason": "regex where clauses are not supported for aggregation until timeout-safe execution is available",
-	})
+	if where.HasRegexClause(req.Where) {
+		return apierror.NewInvalidParameter("AggregationWhereRegexUnsupported", map[string]string{
+			"reason": "regex where clauses are not supported for aggregation until timeout-safe execution is available",
+		})
+	}
+	if _, err := where.ConvertToBleveQuery(req.Where); err != nil {
+		return apierror.NewInvalidParameter("InvalidAggregationWhere", map[string]string{
+			"reason": err.Error(),
+		})
+	}
+	return nil
 }
 
 // AggregateObjects handles POST /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/aggregate.

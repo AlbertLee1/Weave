@@ -396,7 +396,7 @@ func (h *Handler) aggregateAcrossTypes(ontologyAPIName string, objectTypes []oms
 
 		result, err := h.aggEngine.Aggregate(idx, &perTypeReq)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		if merged == nil {
