@@ -1,66 +1,246 @@
-# Ralph Progress Log
-Started: Thu May 21 09:33:31 CST 2026
-Branch: ralph/self-iteration-20260520-134952
+# Ralph Progress Log - Parallel2 Integration
+Integrated: 2026-05-21T11:48:50+08:00
+Integration branch: ralph/self-iteration-20260521-110910
 
-## Fresh PRD Inspection
-- Existing `scripts/ralph/prd.json` belonged to this branch and all stories had `passes: true`.
-- Active `scripts/ralph/progress.txt` contained an `LLM review auto-fix context`, so the new PRD is intentionally a one-story review repair.
-- Archived prior state under `scripts/ralph/archive/self-iteration-20260521-093331/`.
-- Root symlinks remain intact: `prd.json -> scripts/ralph/prd.json` and `progress.txt -> scripts/ralph/progress.txt`.
+## Stream A: ralph/self-iteration-20260521-110910-A
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260521-110910-A
+HEAD: 8a6f00d31262
+
+# Ralph Progress Log - Parallel2 Stream A
+Started: 2026-05-21T11:19:38+08:00
+Integration branch: ralph/self-iteration-20260521-110910
+Stream branch: ralph/self-iteration-20260521-110910-A
+Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
+Archived previous empty PRD/progress under scripts/ralph/archive/self-iteration-20260521-111938/
+---
+
+## Initial inspection
+- Branch verified: `ralph/self-iteration-20260521-110910-A`.
+- Existing stream PRD had no user stories; treated as complete/empty runtime state and regenerated this stream-local PRD.
+- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the previous progress file.
+- Root symlink check: `prd.json -> scripts/ralph/prd.json` and `progress.txt -> scripts/ralph/progress.txt` remain in place.
+- Known CI concerns checked:
+  - `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -count=1 -v` passed.
+  - `go build $(./scripts/ci/go-packages.sh --build)` passed.
+- Dogfood reports checked:
+  - DOG-001 Northwind seed FK cleanup is already covered in `test/fixtures/seed_northwind/seed_test.go`.
+  - DOG-003 stream ingest index readiness/bootstrap is already covered in OMS/OSS tests.
+  - DOG-004 containsAnyTerm array compatibility is already covered in `pkg/oss/where/converter_dog004_bdd_test.go`.
+- Local backend unit gate:
+  - `make test` exited 0.
+  - Slow packages observed: `test/chinook` ~266.8s and `test/northwind` ~181.3s.
+
+## Selected story
+- P2A-001 - Fail MCP Prompt Discovery Loudly on OMS Errors.
+- Reason: `pkg/mcp/resources.go` already treats metadata discovery as all-or-nothing, but `pkg/mcp/prompts.go` currently swallows `ListOntologies` / `ListActionTypes` failures and can return an incomplete action prompt catalogue. This is a backend/MCP reliability gap with a small, verifiable blast radius.
 
 ## Codebase Patterns
-- Root `prd.json` and `progress.txt` are symlinks to `scripts/ralph/prd.json` and `scripts/ralph/progress.txt`; keep the symlinks intact.
-- Vite/Vitest commands should be run with paths relative to `web` when using `npm --prefix web`.
-- `cmd/server/embed_ci_bdd_test.go` is the focused guard for fresh checkout Go builds without generated WebUI assets.
-- `web/src/vertex/scenarioRunStream.ts` is intentionally guarded: default calls throw until the SSE route is mounted, and tests/future callers must opt in with `allowUnimplementedStreamRoute`.
-- The TypeScript Vertex SDK polling path already treats `pending`, `running`, `succeeded`, `failed`, and `canceled` as lifecycle statuses, with `canceled` terminal.
-- `cmd/weave-mcp/RunHTTPBridge` is the production stdio-to-HTTP MCP bridge. It forwards one newline-delimited JSON-RPC envelope per stdin line to `/mcp` and writes at most one normalized stdout line per response-bearing envelope.
-- `pkg/mcp.ParseRequestEnvelope` is the canonical JSON-RPC object-or-batch parser used by in-process HTTP and stdio transports; bridge-side envelope classification should stay aligned with that parser.
+- MCP discovery methods should prefer deterministic full results over silent partial catalogues; `resources/list` is the local precedent for surfacing upstream OMS listing failures as JSON-RPC internal errors.
 
-## LLM Review Auto-Fix Context - 2026-05-21T09:32:16+08:00
-- PR: https://github.com/AlbertLee1/Weave/pull/40
-- Branch: ralph/self-iteration-20260520-134952
-- Reviewed HEAD: 24f0e4afa1a6
-- Review status: request_changes
-- Summary: Request changes: MCP batch support is correct in the in-process HTTP/stdio transports, but it misses the production weave-mcp bridge path. Local verifier is green, but this integration gap is not covered.
-- Blocking findings:
-```json
-[
-  {
-    "severity": "critical",
-    "file": "cmd/weave-mcp/http_bridge.go",
-    "line": 101,
-    "issue": "The production weave-mcp bridge still treats any top-level JSON array as a notification because it only sniffs an object-level id. With this PR, /mcp now returns valid JSON-RPC batch responses, but bridge mode drops them whenever a stdio client sends a batch, so the main production stdio-to-HTTP path silently loses all batch results.",
-    "suggestion": "Teach RunHTTPBridge to classify JSON-RPC batch envelopes: if any batch item expects a response or is invalid, do not drop the upstream response; add a focused bridge test for a mixed batch with two requests and one notification."
-  }
-]
-```
-- Recommended fix prompt:
-```text
-Update cmd/weave-mcp RunHTTPBridge to understand JSON-RPC batch envelopes when deciding whether stdout should receive the upstream response. Add BDD coverage showing a batch line with request ids is forwarded and emitted as one batch response line, while notification-only batches still produce no output.
-```
+## P2A-001 - Fail MCP Prompt Discovery Loudly on OMS Errors
+Status: PASS
 
-## Selected Story
-- `SELF-502` - Forward JSON-RPC batch responses through weave-mcp bridge.
+BDD/TDD red step:
+- Added MCP prompts/list tests for two observable failure scenarios:
+  - OMS ontology listing fails.
+  - OMS action-type listing fails for one ontology after another ontology has prompts.
+- Command: `go test ./pkg/mcp -run 'TestPromptsList_Given_(OntologyListingFails|ActionTypeListingFails)' -count=1 -v`
+- Result: exited 1 as expected. Both tests failed because `prompts/list` returned success instead of an error.
 
-## SELF-502 Evidence - Forward JSON-RPC batch responses through weave-mcp bridge
-- Root cause:
-  - `cmd/weave-mcp/RunHTTPBridge` previously unmarshaled every stdin line into an object-only `{id}` sniff struct.
-  - For a top-level JSON-RPC batch array, the sniff left `id` empty and the bridge treated the whole envelope as notification-only, dropping the valid upstream batch response.
-- RED:
-  - Added BDD bridge coverage in `cmd/weave-mcp/main_test.go` for a mixed batch with two requests plus one notification, an invalid batch item, and a notification-only batch.
-  - `go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge_Given_(MixedJSONRPCBatch|InvalidItemInJSONRPCBatch|NotificationOnlyJSONRPCBatch)' -count=1 -v` failed for the expected reasons: mixed and invalid batches produced empty stdout while notification-only batches stayed silent.
-- GREEN:
-  - `RunHTTPBridge` now classifies stdin lines with `pkg/mcp.ParseRequestEnvelope`, matching the in-process HTTP and stdio transports.
-  - Batch envelopes are response-bearing if any item has an id or any item parsed as a JSON-RPC error; only notification-only batches are dropped from stdout.
+Implementation:
+- `pkg/mcp/prompts.go`
+  - Changed `collectPrompts` to return `([]Prompt, error)`.
+  - `ListOntologies` errors now return `list ontologies: ...`.
+  - Per-ontology `ListActionTypes` errors now return `list action types for <ontology>: ...`.
+  - `handlePromptsList` propagates those errors to the existing JSON-RPC internal-error path.
+- `pkg/mcp/prompts_test.go`
+  - Added BDD regressions for ontology-list and action-type-list failures.
+- `pkg/mcp/tools_test.go`
+  - Extended the shared fake OMS repo with injectable list errors.
+
+Verification:
+- `go test ./pkg/mcp -run 'TestPromptsList_Given_(OMSWithActionTypes|DeclaredParameters|NilOMS|OntologyListingFails|ActionTypeListingFails)' -count=1 -v` exited 0.
+- `go test ./pkg/mcp -count=1` exited 0.
+- `go test -race ./pkg/mcp -count=1` exited 0.
+
+Reusable learning:
+- Prompt catalogue discovery should not silently drop an ontology when action metadata cannot be listed; incomplete prompt lists hide available Weave Actions from MCP clients and are harder to diagnose than an internal-error response with the upstream cause.
+
+## P2A-002 - Reject Fractional MCP Integer Arguments
+Status: PASS
+
+Selected story:
+- P2A-002 was the highest-priority story with `passes != true`.
+- Scope kept to shared MCP tool argument validation so all integer schema fields get consistent behavior before tool invocation.
+
+BDD/TDD red step:
+- Added a registry-level regression for a tool with an integer `pageSize` argument.
+- Command: `go test ./pkg/mcp -run TestRegistry_Call_GivenIntegerSchema_WhenFractionalJSONNumber_ThenInvalidParamsAndToolNotInvoked -count=1 -v`
+- Result: exited 1 as expected. The fractional `float64(2.5)` was accepted and the fake tool was invoked.
+
+Implementation:
+- `pkg/mcp/tool.go`
+  - Split JSON Schema `integer` validation from `number` validation.
+  - Whole JSON numbers decoded as `float64` remain valid integers.
+  - Fractional `float64`/`float32` values now return a validation error before tool dispatch.
+- `pkg/mcp/registry_test.go`
+  - Added BDD regression proving fractional integer arguments return invalid params and do not invoke the tool, while whole JSON numbers still invoke successfully.
+
+Verification:
+- `go test ./pkg/mcp -run TestRegistry_Call_GivenIntegerSchema_WhenFractionalJSONNumber_ThenInvalidParamsAndToolNotInvoked -count=1 -v` exited 0.
+- `go test ./pkg/mcp -run 'Test(Tool_ValidateArgs_TypeMismatch|Tool_ListObjects|Registry_Call)' -count=1 -v` exited 0.
+- `go test ./pkg/mcp -count=1` exited 0.
+- `go test -race ./pkg/mcp -count=1` exited 0.
+- `go test ./pkg/... -count=1` exited 0.
+
+Reusable learning:
+- MCP `integer` and `number` schemas need separate primitive validation paths because `encoding/json` decodes both whole and fractional JSON numbers as `float64`; relying on the Go type alone silently truncates pagination-style controls downstream.
+
+## P2A-003 - Keep Heavy Go Data Suites out of Fast Unit Gates
+Status: PASS
+Completed: 2026-05-21T11:38:54+08:00
+
+Selected story:
+- P2A-003 was the only remaining story with `passes != true`.
+- Scope kept to Go package discovery and local/CI gate documentation so stream A avoids frontend overlap.
+
+BDD/TDD red step:
+- Added a CI BDD regression for `scripts/ci/go-packages.sh`.
+- Command: `go test ./scripts/ci -run TestBDD_GoPackageListKeepsHeavyDataSuitesOptIn -count=1 -v`
+- Result: exited 1 as expected because the default package helper emitted `github.com/liyang/weave/test/chinook`.
+
+Implementation:
+- `scripts/ci/go-packages.sh`
+  - Added `--acceptance-data` mode that lists `./test/chinook` and `./test/northwind`.
+  - Kept default `--test` and `--build` package lists filtered for `node_modules`.
+  - Excluded `/test/chinook` and `/test/northwind` from default fast package discovery.
+- `Makefile`
+  - Added `test-data-acceptance` target that runs `go test $(./scripts/ci/go-packages.sh --acceptance-data)`.
+- `scripts/ci/ci_workflow_bdd_test.go`
+  - Added BDD coverage proving default discovery excludes the heavy suites, opt-in discovery includes them, and the Makefile documents the opt-in gate.
+
+Verification:
+- `go test ./scripts/ci -run TestBDD_GoPackageListKeepsHeavyDataSuitesOptIn -count=1 -v` exited 0.
+- `go test ./scripts/ci -count=1 -v` exited 0.
+- `./scripts/ci/go-packages.sh | rg '/test/(chinook|northwind)$|/test/(chinook|northwind)/'` exited 1 with no output, confirming the default fast list excludes both suites.
+- `./scripts/ci/go-packages.sh --acceptance-data` exited 0 and printed `github.com/liyang/weave/test/chinook` and `github.com/liyang/weave/test/northwind`.
+- `make -n test-data-acceptance` exited 0 and printed `go test $(./scripts/ci/go-packages.sh --acceptance-data)`.
+- `go test $(./scripts/ci/go-packages.sh --acceptance-data) -run '^$' -count=1` exited 0 and compiled both opt-in acceptance packages.
+- `go test -race -coverprofile=/tmp/weave-p2a003-coverage.out -covermode=atomic ./scripts/ci -count=1` exited 0.
+- `go test $(./scripts/ci/go-packages.sh) -count=1` exited 0.
+
+Reusable learning:
+- The helper-generated default Go package list is part of the CI contract. Heavy data acceptance packages should stay discoverable through a named opt-in path, not through the fast unit/race/coverage selector.
+
+
+---
+
+## Stream B: ralph/self-iteration-20260521-110910-B
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260521-110910-B
+HEAD: 5ce62dbc2e10
+
+# Ralph Progress Log - Parallel2 Stream B
+Started: 2026-05-21T11:11:27+08:00
+Integration branch: ralph/self-iteration-20260521-110910
+Stream branch: ralph/self-iteration-20260521-110910-B
+Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
+Archived previous empty state: scripts/ralph/archive/self-iteration-20260521-111127/
+
+## Inspection Evidence
+- Branch verified: ralph/self-iteration-20260521-110910-B.
+- No PR CI auto-fix context or LLM review auto-fix context in the previous progress file.
+- GitHub PR health lookup command `gh pr list --head ralph/self-iteration-20260521-110910-B --json number,headRefName,statusCheckRollup,url` timed out during TLS handshake.
+- Installed web dependencies with `cd web && npm ci`.
+- `cd web && npm run typecheck` passed.
+- `cd web && npx vitest run src/components/dashboard/__tests__/DashboardPage.totalObjectTypes.bdd.test.tsx src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx src/components/explorer/__tests__/PropertiesTable.dog005.bdd.test.tsx src/components/admin/__tests__/ComplianceReportsPage.test.tsx` passed: 4 files, 18 tests.
+- `cd web && npm test` passed: 281 files, 2894 tests.
+- `cd web && npx playwright test --list us444/ phase6/ phase7/ vtx-099-system-graph-render.spec.ts dogfood-verify.spec.ts dogfood-diagnose.spec.ts dogfood-empty-states.spec.ts us-456-perf-dashboard.spec.ts us-457-timeseries-tab.spec.ts us-458-hotkey-help.spec.ts zzz-login-rate-limit.spec.ts` passed: 71 discovered tests.
+- DOG-002, DOG-004, and DOG-005 dogfood findings are already fixed with BDD coverage in this checkout.
+
+## Current Story
+- P2B-503 - Guard Northwind E2E Seed Replays from FK Wipe Failures
+- Status: completed
+
+## P2B-501 Implementation Evidence
+- RED: `cd web && npx vitest run src/components/quiver/__tests__/QuiverPage.test.tsx` failed as expected: 2 failed tests because `quiver-export-json-button` was not found.
+- Implemented `Export JSON` in `web/src/components/quiver/QuiverPage.tsx`.
+  - Added a shared dashboard config builder so Save and Export use the same `QuiverDashboardConfig` shape.
+  - Export payload includes `exportedAt`, `ontologyApiName`, optional `rid`, optional `name`, and `config.series`.
+  - Export button is disabled until the workbench has at least one series.
+- Updated BDD coverage:
+  - `web/src/components/quiver/__tests__/QuiverPage.test.tsx` covers disabled empty export and exported JSON payload.
+  - `web/tests/feature.quiver.spec.ts` now checks the JSON export affordance instead of asserting no export exists.
+  - `web/tests/support/pageObjects/QuiverPage.ts` exposes `quiver-export-json-button`.
 - Verification:
-  - `go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge|TestHTTPBridge' -count=1 -v` passed.
-  - `go test ./pkg/mcp -run 'TestBDD_.*Batch|TestStdioTransport_NotificationProducesNoOutput|TestHTTPTransport_DecodesJSONRPC' -count=1` passed.
-  - `go test ./cmd/weave-mcp ./pkg/mcp -count=1` passed.
+  - `cd web && npx vitest run src/components/quiver/__tests__/QuiverPage.test.tsx` passed: 1 file, 12 tests.
+  - `cd web && npx vitest run src/components/quiver/__tests__/QuiverPage.test.tsx src/components/quiver/__tests__/QuiverWorkbenchView.test.tsx` passed: 2 files, 18 tests.
+  - `cd web && npm run typecheck` passed.
+  - `cd web && npx playwright test --list tests/feature.quiver.spec.ts` passed: 7 discovered tests.
+  - `cd web && npx playwright test --list us444/ phase6/ phase7/ vtx-099-system-graph-render.spec.ts dogfood-verify.spec.ts dogfood-diagnose.spec.ts dogfood-empty-states.spec.ts us-456-perf-dashboard.spec.ts us-457-timeseries-tab.spec.ts us-458-hotkey-help.spec.ts zzz-login-rate-limit.spec.ts tests/feature.quiver.spec.ts` passed: 78 discovered tests.
+  - `cd web && npm test` passed: 281 files, 2896 tests.
+  - `cd web && npm run build` passed; bundle budgets passed.
+- Browser-run caveat:
+  - `cd web && npx playwright test tests/feature.quiver.spec.ts -g "dashboard JSON export"` failed because Playwright reused an already-running Vite listener from `/Users/liyang/Documents/Community/Weave/web` on `127.0.0.1:5173`, not this isolated worktree. I did not stop or modify that external checkout/process.
 - Files changed:
-  - `cmd/weave-mcp/http_bridge.go`
-  - `cmd/weave-mcp/main_test.go`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- Reusable learning:
-  - Bridge-mode MCP envelope classification should reuse `pkg/mcp.ParseRequestEnvelope` so array batches, invalid batch items, and object notifications stay aligned across the production stdio-to-HTTP bridge and the in-process transports.
+  - `web/src/components/quiver/QuiverPage.tsx`
+  - `web/src/components/quiver/__tests__/QuiverPage.test.tsx`
+  - `web/tests/feature.quiver.spec.ts`
+  - `web/tests/support/pageObjects/QuiverPage.ts`
+
+## P2B-502 Implementation Evidence
+- Timestamp: 2026-05-21T11:29:39+0800
+- RED: `cd web && npx vitest run src/components/aggregation/__tests__/AggregationPage.where.bdd.test.tsx` failed as expected: `filter-field-select` was not found because AggregationPage rendered Metrics and Group By controls only.
+- Implemented `Where Filter` in `web/src/components/aggregation/AggregationPage.tsx`.
+  - Reused the existing browser `FilterBuilder` UI and `buildWhereClause` serializer.
+  - Added aggregation-local filter state.
+  - `handleExecute` now sends `where` when filters exist and omits it from the JSON request when no filters are configured.
+- Updated BDD coverage:
+  - `web/src/components/aggregation/__tests__/AggregationPage.where.bdd.test.tsx` covers configured where submission and no-filter omission with MSW-captured aggregate bodies.
+  - `web/tests/feature.aggregation.spec.ts` now replaces the documented no-filter-affordance gap with a positive where-filter scenario.
+  - `web/tests/support/pageObjects/AggregationPage.ts` exposes the filter controls for browser specs.
+- Verification:
+  - `cd web && npx vitest run src/components/aggregation/__tests__/AggregationPage.where.bdd.test.tsx` passed: 1 file, 2 tests.
+  - `cd web && npx vitest run src/components/aggregation/__tests__/AggregationPage.where.bdd.test.tsx src/components/aggregation/__tests__/MetricSelector.test.tsx src/components/aggregation/__tests__/SimpleChart.test.tsx src/components/browser/__tests__/FilterBuilder.whereContract.bdd.test.tsx src/components/browser/__tests__/FilterBuilder.whereOperators.bdd.test.tsx` passed: 5 files, 13 tests.
+  - `cd web && npm run typecheck` passed.
+  - `cd web && npx playwright test --list tests/feature.aggregation.spec.ts` passed: 7 discovered tests.
+  - `cd web && npm test` passed: 282 files, 2898 tests.
+  - `cd web && npm run build` passed; bundle budgets passed.
+- Browser-run caveat:
+  - `lsof -nP -iTCP:5173 -sTCP:LISTEN` showed PID 65130 is `/Users/liyang/Documents/Community/Weave/web/node_modules/.bin/vite`, outside this isolated worktree. I did not reuse or stop that external checkout process; Playwright coverage was limited to spec discovery plus local Vitest/MSW BDD.
+- Files changed:
+  - `web/src/components/aggregation/AggregationPage.tsx`
+  - `web/src/components/aggregation/__tests__/AggregationPage.where.bdd.test.tsx`
+  - `web/tests/feature.aggregation.spec.ts`
+  - `web/tests/support/pageObjects/AggregationPage.ts`
+
+## Codebase Patterns
+- Quiver editor state lives in `web/src/components/quiver/QuiverPage.tsx`; persisted dashboard payloads use the frontend-owned `QuiverDashboardConfig` in `web/src/api/quiver.ts`.
+- Existing Quiver Playwright feature tests intentionally document gaps using absence assertions; replace those assertions with positive BDD checks when the UI capability is implemented.
+- Playwright actual browser runs can silently reuse a Vite server from another checkout because `web/playwright.config.ts` sets `reuseExistingServer: !process.env.CI`; inspect `lsof -nP -iTCP:5173 -sTCP:LISTEN` before treating browser-run output as worktree-local evidence.
+- Aggregation `where` can reuse `web/src/components/browser/FilterBuilder.tsx` and `web/src/lib/whereBuilder.ts`; this keeps object browser and aggregation request bodies on the same WhereClause contract.
+- Northwind E2E seed replay depends on both layers: `test/fixtures/seed_northwind.Seed` owns DB wipe ordering for non-cascading ontology dependents (`functions`, `query_types`, `ontology_snapshots`, `automation_rules`, and object-type scoped `datasource_bindings`), while `scripts/e2e-setup.sh` should probe the live `/api/v2/ontologies/northwind/objectTypes` endpoint after the seeder returns so a clean exit cannot mask an empty browser fixture.
+
+## P2B-503 Implementation Evidence
+- Timestamp: 2026-05-21T11:43:58+0800
+- Root cause / pattern:
+  - The FK cleanup path already existed in `test/fixtures/seed_northwind/seed.go` and is covered by the integration-tagged `TestBDD_SeedSurvivesNonCascadingFKDependents`.
+  - The remaining acceptance gap was the wrapper-level contract: `scripts/e2e-setup.sh` seeded data but did not verify the live API returned the canonical Northwind object types before declaring the stack ready.
+- RED: `go test ./internal/e2e -run TestBDD_E2ESetupVerifiesNorthwindObjectTypesAfterSeed -count=1` failed as expected because `scripts/e2e-setup.sh` did not contain `verify_seeded_object_types`, the `/api/v2/ontologies/northwind/objectTypes` probe, or `customer`/`order`/`product` checks.
+- Implemented `verify_seeded_object_types` in `scripts/e2e-setup.sh`.
+  - Added a reusable `WEAVE_URL` default and continued passing it through to `test/fixtures/e2e_seed.sh`.
+  - After the seeder returns, the wrapper now calls `/api/v2/ontologies/northwind/objectTypes` and fails setup if `customer`, `order`, or `product` is missing.
+  - Added `internal/e2e/e2e_setup_scripts_test.go` so the wrapper contract and `bash -n` syntax check run in normal Go unit gates.
+- Verification:
+  - `go test ./internal/e2e -run TestBDD_E2ESetupVerifiesNorthwindObjectTypesAfterSeed -count=1` passed.
+  - `go test ./internal/e2e -count=1` passed.
+  - `go test -tags integration ./test/fixtures/seed_northwind -run TestBDD_SeedSurvivesNonCascadingFKDependents -count=1` passed.
+  - `go test -tags integration ./test/fixtures/seed_northwind -count=1` passed.
+  - `go test ./test/fixtures/seed_northwind/cmd -count=1` passed.
+  - `go test ./internal/e2e ./test/fixtures/seed_northwind/cmd -count=1` passed.
+  - `go test $(./scripts/ci/go-packages.sh)` passed.
+- Files changed:
+  - `scripts/e2e-setup.sh`
+  - `internal/e2e/e2e_setup_scripts_test.go`
+
+
+---
