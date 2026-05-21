@@ -258,6 +258,77 @@ func TestInterfaceAggregate_CountAcrossTypes(t *testing.T) {
 	}
 }
 
+func TestInterfaceAggregate_RejectsHiddenFieldsBeforePerTypeAggregation(t *testing.T) {
+	h, r, _ := setupInterfaceTest(t)
+	h.SetPropertyFilterProvider(&staticPropertyFilter{
+		allowedByType: map[string][]string{
+			"employee":   {"employeeId", "name", "age"},
+			"contractor": {"contractorId", "name", "hourlyRate"},
+		},
+	})
+
+	cases := []struct {
+		name         string
+		body         string
+		wantProperty string
+	}{
+		{
+			name: "hidden where field",
+			body: `{
+				"where":{"type":"eq","field":"department","value":"eng"},
+				"aggregation":[{"type":"count","name":"total"}]
+			}`,
+			wantProperty: "department",
+		},
+		{
+			name: "hidden groupBy field",
+			body: `{
+				"groupBy":[{"type":"exact","field":"department"}],
+				"aggregation":[{"type":"count","name":"total"}]
+			}`,
+			wantProperty: "department",
+		},
+		{
+			name: "hidden metric field",
+			body: `{
+				"aggregation":[{"type":"sum","field":"department","name":"total"}]
+			}`,
+			wantProperty: "department",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST",
+				"/api/v2/ontologies/"+testIfaceOntologyRID+"/interfaces/worker/aggregate", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			r.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d; body = %s", rr.Code, http.StatusForbidden, rr.Body.String())
+			}
+			var apiErr struct {
+				ErrorCode  string            `json:"errorCode"`
+				ErrorName  string            `json:"errorName"`
+				Parameters map[string]string `json:"parameters"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &apiErr); err != nil {
+				t.Fatalf("unmarshal error body: %v", err)
+			}
+			if apiErr.ErrorCode != "PERMISSION_DENIED" {
+				t.Errorf("errorCode = %q, want PERMISSION_DENIED", apiErr.ErrorCode)
+			}
+			if apiErr.ErrorName != "PropertyNotAccessible" {
+				t.Errorf("errorName = %q, want PropertyNotAccessible", apiErr.ErrorName)
+			}
+			if apiErr.Parameters["property"] != tc.wantProperty {
+				t.Errorf("parameters.property = %q, want %s", apiErr.Parameters["property"], tc.wantProperty)
+			}
+		})
+	}
+}
+
 func TestInterfaceAggregate_RejectsRegexWhereBeforePerTypeAggregation(t *testing.T) {
 	_, r, _ := setupInterfaceTest(t)
 

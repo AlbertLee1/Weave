@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/httputil"
+	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/pagination"
@@ -124,6 +125,15 @@ func (h *Handler) InterfaceAggregateObjects(w http.ResponseWriter, r *http.Reque
 		}))
 		return
 	}
+
+	ctx := index.WithOntologyScope(r.Context(), ontologyRID)
+	for _, ot := range objectTypes {
+		if apiErr := h.rejectFilteredAggregationFields(ctx, ot.APIName, &req); apiErr != nil {
+			apierror.WriteJSON(w, apiErr)
+			return
+		}
+	}
+
 	if apiErr := rejectUnsupportedAggregationWhere(&req); apiErr != nil {
 		apierror.WriteJSON(w, apiErr)
 		return
