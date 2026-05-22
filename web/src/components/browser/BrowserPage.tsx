@@ -429,17 +429,20 @@ function BrowserPageContent({
   // Handlers
   const handleSearch = useCallback((text: string) => {
     setSearchText(text);
+    setSelectedRowMap(new Map());
     setPageTokens([]);
     setCurrentPage(1);
   }, []);
 
   const handleFiltersChange = useCallback((newFilters: FilterCondition[]) => {
     setFilters(newFilters);
+    setSelectedRowMap(new Map());
     setPageTokens([]);
     setCurrentPage(1);
   }, []);
 
   const handleToggleFacet = useCallback((field: string, value: string) => {
+    setSelectedRowMap(new Map());
     setSelectedFacets((prev) => {
       const cur = prev[field] ?? [];
       const next = cur.includes(value)
@@ -455,6 +458,7 @@ function BrowserPageContent({
 
   const handleClearFacets = useCallback(() => {
     setSelectedFacets({});
+    setSelectedRowMap(new Map());
     setPageTokens([]);
     setCurrentPage(1);
   }, []);
@@ -489,6 +493,7 @@ function BrowserPageContent({
       setSearchText(def.searchText ?? '');
       setFilters(def.filters ?? []);
       setSelectedFacets(def.facets ?? {});
+      setSelectedRowMap(new Map());
       if (def.sort) {
         setSortField(def.sort.field);
         setSortDirection(def.sort.direction);
