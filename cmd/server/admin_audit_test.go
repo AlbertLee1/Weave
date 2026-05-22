@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -317,16 +318,44 @@ func TestAuditEventsEndpoint_Unauthenticated(t *testing.T) {
 }
 
 func TestAuditEventsEndpoint_InvalidPageToken(t *testing.T) {
-	store := audit.NewMemoryStore()
-	h := auditRouter(store)
+	tests := map[string]string{
+		"not base64":      "not-valid-base64!",
+		"missing offset":  base64.URLEncoding.EncodeToString([]byte(`{}`)),
+		"negative offset": base64.URLEncoding.EncodeToString([]byte(`{"o":-1}`)),
+	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v2/admin/auditEvents?pageToken=not-valid-base64!", nil)
-	req = withAdminUser(req)
-	rw := httptest.NewRecorder()
-	h.ServeHTTP(rw, req)
+	for name, token := range tests {
+		t.Run(name, func(t *testing.T) {
+			store := audit.NewMemoryStore()
+			seedAuditEvents(t, store)
+			h := auditRouter(store)
 
-	if rw.Code != http.StatusBadRequest {
-		t.Errorf("invalid token status = %d, want 400", rw.Code)
+			req := httptest.NewRequest(http.MethodGet, "/api/v2/admin/auditEvents?pageToken="+token, nil)
+			req = withAdminUser(req)
+			rw := httptest.NewRecorder()
+			h.ServeHTTP(rw, req)
+
+			if rw.Code != http.StatusBadRequest {
+				t.Fatalf("invalid token status = %d, want 400; body = %s", rw.Code, rw.Body.String())
+			}
+			var body struct {
+				ErrorCode  string            `json:"errorCode"`
+				ErrorName  string            `json:"errorName"`
+				Parameters map[string]string `json:"parameters"`
+			}
+			if err := json.Unmarshal(rw.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode error response: %v", err)
+			}
+			if body.ErrorCode != "INVALID_ARGUMENT" {
+				t.Errorf("errorCode = %q, want INVALID_ARGUMENT", body.ErrorCode)
+			}
+			if body.ErrorName != "InvalidParameter:pageToken" {
+				t.Errorf("errorName = %q, want InvalidParameter:pageToken", body.ErrorName)
+			}
+			if body.Parameters["parameter"] != "pageToken" {
+				t.Errorf("parameter = %q, want pageToken", body.Parameters["parameter"])
+			}
+		})
 	}
 }
 
