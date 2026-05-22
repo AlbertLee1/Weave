@@ -36,3 +36,23 @@ Selected story:
   - Relevant project gate: `go test ./pkg/vertex/... -count=1` passed.
 - Codebase Patterns:
   - JSON-decoded graph payloads expose arrays as `[]any`; masking helpers that operate on HTTP payloads should support that shape in addition to test-friendly typed slices.
+
+Selected story:
+- SI-002 - Reject whitespace-only Vertex Model Mesh IDs
+
+## 2026-05-22T17:48:35+08:00 - SI-002
+- Implemented whitespace-only model ID rejection for Vertex Model Mesh planning by treating `strings.TrimSpace(id) == ""` as `ErrEmptyModelID` in the shared dependency graph builder.
+- The HTTP plan endpoint now returns 400 `InvalidParameter:id` for IDs made only of spaces/tabs, and the graph is not planned.
+- Existing non-empty ID topological behavior remains covered by the package regression suite.
+- Files changed:
+  - `pkg/vertex/modelmesh/dag.go`
+  - `pkg/vertex/modelmesh/handler_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- TDD evidence:
+  - RED: `go test ./pkg/vertex/modelmesh -run TestHandler_Given_WhitespaceOnlyModelID_When_PostPlan_Then_400InvalidParameterID -count=1 -v` failed because the endpoint returned 200 with layers containing `" \t "`.
+  - GREEN targeted: `go test ./pkg/vertex/modelmesh -run TestHandler_Given_WhitespaceOnlyModelID_When_PostPlan_Then_400InvalidParameterID -count=1 -v` passed.
+  - Package gate: `go test ./pkg/vertex/modelmesh -count=1` passed.
+  - Relevant project gate: `go test ./pkg/vertex/... -count=1` passed.
+- Codebase Patterns:
+  - Model Mesh request validation that affects planning should live in `BuildDependencyGraph` so plan, run, runner, and direct planner callers share the same rejection semantics.

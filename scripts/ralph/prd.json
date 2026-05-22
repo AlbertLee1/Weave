@@ -62,7 +62,7 @@
         "pkg/vertex/modelmesh/dag.go",
         "pkg/vertex/modelmesh/handler.go"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "SI-003",

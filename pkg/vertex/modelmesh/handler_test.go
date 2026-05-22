@@ -127,6 +127,36 @@ func TestHandler_Given_Cycle_When_PostPlan_Then_400CycleDetected(t *testing.T) {
 	}
 }
 
+func TestHandler_Given_WhitespaceOnlyModelID_When_PostPlan_Then_400InvalidParameterID(t *testing.T) {
+	resolver := &stubResolver{byAPIName: map[string]string{"main": "ri.oms.main.ontology.x"}}
+	h := modelmesh.NewHandler(resolver, nil)
+	router := newRouter(t, h)
+
+	body := map[string]any{
+		"models": []map[string]any{
+			{"id": " \t ", "outputProperties": []string{"A"}},
+			{"id": "m2", "inputProperties": []string{"A"}},
+		},
+	}
+	w := postJSON(t, router, "/api/vertex/v1/ontologies/main/model-mesh/plan", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+	}
+	var env struct {
+		ErrorName  string            `json:"errorName"`
+		Parameters map[string]string `json:"parameters"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode error envelope: %v body=%s", err, w.Body.String())
+	}
+	if env.ErrorName != "InvalidParameter:id" {
+		t.Fatalf("expected errorName=InvalidParameter:id, got %q body=%s", env.ErrorName, w.Body.String())
+	}
+	if env.Parameters["reason"] != "model id is required" {
+		t.Fatalf("expected model id required reason, got %q", env.Parameters["reason"])
+	}
+}
+
 func TestHandler_Given_Cycle_When_PostRun_Then_400CycleDetected(t *testing.T) {
 	resolver := &stubResolver{byAPIName: map[string]string{"main": "ri.oms.main.ontology.x"}}
 	exec := &stubExecutor{}
