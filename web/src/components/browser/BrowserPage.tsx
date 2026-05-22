@@ -784,6 +784,7 @@ function BrowserPageContent({
 
       {/* Search bar */}
       <SearchBar
+        value={searchText}
         onSearch={handleSearch}
         onToggleFilters={() => setShowFilters((v) => !v)}
       />

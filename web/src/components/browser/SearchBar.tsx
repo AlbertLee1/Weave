@@ -1,25 +1,30 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 interface SearchBarProps {
+  value: string;
   onSearch: (searchText: string) => void;
   onToggleFilters: () => void;
 }
 
-export function SearchBar({ onSearch, onToggleFilters }: SearchBarProps) {
-  const [text, setText] = useState('');
+export function SearchBar({ value, onSearch, onToggleFilters }: SearchBarProps) {
+  const [draftText, setDraftText] = useState(value);
+
+  useEffect(() => {
+    setDraftText(value);
+  }, [value]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === 'Enter') {
-        onSearch(text);
+        onSearch(draftText);
       }
     },
-    [text, onSearch],
+    [draftText, onSearch],
   );
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      setText(e.target.value);
+      setDraftText(e.target.value);
       if (e.target.value === '') {
         onSearch('');
       }
@@ -42,7 +47,7 @@ export function SearchBar({ onSearch, onToggleFilters }: SearchBarProps) {
         </svg>
         <input
           type="search"
-          value={text}
+          value={draftText}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           placeholder="Search objects..."
