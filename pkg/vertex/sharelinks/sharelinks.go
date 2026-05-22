@@ -62,10 +62,10 @@ func GenerateToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// EvaluateAccess: revoked / expired → Gone; same-org → ReadOnly;
+// EvaluateAccess: revoked / expired-at-or-after-boundary → Gone; same-org → ReadOnly;
 // everything else (including unauthenticated viewers) → Masked.
 func EvaluateAccess(link Link, req AccessRequest) AccessResult {
-	if link.Revoked || (!link.ExpiresAt.IsZero() && req.Now.After(link.ExpiresAt)) {
+	if link.Revoked || (!link.ExpiresAt.IsZero() && !req.Now.Before(link.ExpiresAt)) {
 		return AccessResult{Decision: DecisionGone}
 	}
 	if req.ViewerOrg != "" && req.ViewerOrg == link.OwnerOrg {

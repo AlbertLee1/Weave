@@ -54,6 +54,18 @@ func TestEvaluateAccess_Given_ExpiredLink_Then_Gone(t *testing.T) {
 	}
 }
 
+func TestEvaluateAccess_Given_ExpiryEqualsRequestTime_Then_Gone(t *testing.T) {
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	link := Link{
+		OwnerOrg:  "acme",
+		ExpiresAt: now,
+	}
+	got := EvaluateAccess(link, AccessRequest{Now: now, ViewerOrg: "acme"})
+	if got.Decision != DecisionGone {
+		t.Errorf("got %v, want Gone", got.Decision)
+	}
+}
+
 func TestEvaluateAccess_Given_SameOrg_Then_ReadOnly(t *testing.T) {
 	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 	link := Link{

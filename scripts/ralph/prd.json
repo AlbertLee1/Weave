@@ -90,7 +90,7 @@
         "pkg/vertex/sharelinks/sharelinks.go",
         "pkg/vertex/sharelinks/sharelinks_test.go"
       ],
-      "passes": false
+      "passes": true
     }
   ]
 }

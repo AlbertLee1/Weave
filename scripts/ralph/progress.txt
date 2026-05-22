@@ -56,3 +56,22 @@ Selected story:
   - Relevant project gate: `go test ./pkg/vertex/... -count=1` passed.
 - Codebase Patterns:
   - Model Mesh request validation that affects planning should live in `BuildDependencyGraph` so plan, run, runner, and direct planner callers share the same rejection semantics.
+
+Selected story:
+- SI-003 - Treat share-link expiry at the boundary as gone
+
+## 2026-05-22T17:52:23+08:00 - SI-003
+- Implemented boundary-inclusive expiry semantics for Vertex share-link access: non-zero `ExpiresAt` values now become `DecisionGone` when `req.Now` is equal to or after the expiry timestamp.
+- Preserved active future-expiry behavior for same-org viewers (`DecisionReadOnly`) and other/unauthenticated viewers (`DecisionMasked`) through the existing package tests.
+- Files changed:
+  - `pkg/vertex/sharelinks/sharelinks.go`
+  - `pkg/vertex/sharelinks/sharelinks_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- TDD evidence:
+  - RED: `go test ./pkg/vertex/sharelinks -run TestEvaluateAccess_Given_ExpiryEqualsRequestTime_Then_Gone -count=1 -v` failed because the decision was `1` (`DecisionReadOnly`) instead of `DecisionGone`.
+  - GREEN targeted: `go test ./pkg/vertex/sharelinks -run TestEvaluateAccess_Given_ExpiryEqualsRequestTime_Then_Gone -count=1 -v` passed.
+  - Package gate: `go test ./pkg/vertex/sharelinks -count=1` passed.
+  - Relevant project gate: `go test ./pkg/vertex/... -count=1` passed.
+- Codebase Patterns:
+  - Time-boxed authorization checks should use `!now.Before(expiry)` when the expiry instant itself must be closed, matching other boundary-inclusive expiry helpers in the codebase.
