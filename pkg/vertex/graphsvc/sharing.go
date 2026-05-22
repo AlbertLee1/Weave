@@ -37,6 +37,7 @@ type ShareLink struct {
 	GraphRID  string
 	CreatedBy string
 	CreatedAt time.Time
+	ExpiresAt time.Time
 	Revoked   bool
 	RevokedAt time.Time
 }
@@ -112,9 +113,10 @@ func newShareToken() (string, error) {
 }
 
 // maskLayerPropertyValues returns a copy of payload where every value under a
-// "properties" object reachable from layers[*] is replaced with the string
-// "***". Property keys, layer structure, edges, positions, savedSelections,
-// timeSettings, and any other top-level fields pass through unchanged.
+// "properties" object reachable from layers[*] or nodes[*] is replaced with
+// the string "***". Property keys, layer/node structure, edges, positions,
+// savedSelections, timeSettings, and any other top-level fields pass through
+// unchanged.
 //
 // The walk treats `properties` as a leaf object whose values are scalars (the
 // shape Vertex actually emits today). Nested objects below a `properties` key
@@ -133,18 +135,25 @@ func maskLayerPropertyValues(payload json.RawMessage) json.RawMessage {
 	if err := json.Unmarshal(payload, &obj); err != nil {
 		return payload
 	}
-	layers, ok := obj["layers"].([]any)
-	if !ok {
-		return payload
+	if layers, ok := obj["layers"].([]any); ok {
+		for _, layer := range layers {
+			maskPropertiesIn(layer)
+		}
 	}
-	for _, layer := range layers {
-		maskPropertiesIn(layer)
+	if nodes, ok := obj["nodes"].([]any); ok {
+		for _, node := range nodes {
+			maskPropertiesIn(node)
+		}
 	}
 	out, err := json.Marshal(obj)
 	if err != nil {
 		return payload
 	}
 	return out
+}
+
+func shareLinkExpired(link *ShareLink, now time.Time) bool {
+	return link != nil && !link.ExpiresAt.IsZero() && !now.Before(link.ExpiresAt)
 }
 
 // maskPropertiesIn walks the layer subtree in place. Whenever it encounters

@@ -89,7 +89,7 @@ func BuildDependencyGraph(models []ModelNode) (map[string][]string, error) {
 	graph := make(map[string][]string, len(models))
 	seen := make(map[string]struct{}, len(models))
 	for _, m := range models {
-		if m.ID == "" {
+		if strings.TrimSpace(m.ID) == "" {
 			return nil, ErrEmptyModelID
 		}
 		if _, dup := seen[m.ID]; dup {

@@ -7,6 +7,10 @@ import { loadObjectSet } from '../../api/objectsets';
 import { getObjectType } from '../../api/ontologies';
 import { useObjectType, useObjectTypes } from '../../hooks/useObjectTypes';
 import { diffObjectSets, type ObjectSetDiff } from '../../lib/objectSetDiff';
+import {
+  downloadObjectSetDiffCsv,
+  objectSetDiffCsvFilename,
+} from '../../lib/objectSetDiffCsv';
 import { EmptyState } from '../common/EmptyState';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 
@@ -260,32 +264,52 @@ function DiffResults({
     return Object.keys(objectType.properties);
   }, [objectType]);
 
+  const handleExportCsv = useCallback(() => {
+    downloadObjectSetDiffCsv(
+      diff,
+      propertyOrder,
+      objectSetDiffCsvFilename(ontologyApiName, savedA?.name, savedB?.name),
+    );
+  }, [diff, ontologyApiName, propertyOrder, savedA?.name, savedB?.name]);
+
   return (
-    <div
-      data-testid="objectset-diff-three-column"
-      className="grid grid-cols-1 lg:grid-cols-3 gap-3"
-    >
-      <DiffSection
-        title="Only in A"
-        nameLabel={savedA?.name}
-        rows={diff.onlyInA}
-        propertyOrder={propertyOrder}
-        accentClass="text-accent-cyan"
-        testId="diff-only-in-a"
-      />
-      <ChangedSection
-        rows={diff.changed}
-        savedAName={savedA?.name}
-        savedBName={savedB?.name}
-      />
-      <DiffSection
-        title="Only in B"
-        nameLabel={savedB?.name}
-        rows={diff.onlyInB}
-        propertyOrder={propertyOrder}
-        accentClass="text-accent-amber"
-        testId="diff-only-in-b"
-      />
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          onClick={handleExportCsv}
+          data-testid="objectset-diff-export-csv"
+          className="rounded border border-accent-cyan/40 bg-accent-cyan/10 px-3 py-1.5 text-xs font-medium text-accent-cyan hover:bg-accent-cyan/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/50"
+        >
+          Export CSV
+        </button>
+      </div>
+      <div
+        data-testid="objectset-diff-three-column"
+        className="grid grid-cols-1 lg:grid-cols-3 gap-3"
+      >
+        <DiffSection
+          title="Only in A"
+          nameLabel={savedA?.name}
+          rows={diff.onlyInA}
+          propertyOrder={propertyOrder}
+          accentClass="text-accent-cyan"
+          testId="diff-only-in-a"
+        />
+        <ChangedSection
+          rows={diff.changed}
+          savedAName={savedA?.name}
+          savedBName={savedB?.name}
+        />
+        <DiffSection
+          title="Only in B"
+          nameLabel={savedB?.name}
+          rows={diff.onlyInB}
+          propertyOrder={propertyOrder}
+          accentClass="text-accent-amber"
+          testId="diff-only-in-b"
+        />
+      </div>
     </div>
   );
 }
@@ -482,4 +506,3 @@ function renderValue(v: unknown): string {
   }
   return String(v);
 }
-

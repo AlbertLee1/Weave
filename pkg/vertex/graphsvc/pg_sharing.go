@@ -26,9 +26,9 @@ func NewPGShareLinkStore(pool *pgxpool.Pool) *PGShareLinkStore {
 // entropy) surface as a generic insert error.
 func (s *PGShareLinkStore) Create(ctx context.Context, link *ShareLink) error {
 	if _, err := s.pool.Exec(ctx,
-		`INSERT INTO graph_share_links (token, graph_rid, created_by, created_at)
-		 VALUES ($1, $2, $3, $4)`,
-		link.Token, link.GraphRID, link.CreatedBy, link.CreatedAt,
+		`INSERT INTO graph_share_links (token, graph_rid, created_by, created_at, expires_at)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		link.Token, link.GraphRID, link.CreatedBy, link.CreatedAt, nullableShareLinkTime(link.ExpiresAt),
 	); err != nil {
 		return fmt.Errorf("insert share link: %w", err)
 	}
@@ -38,22 +38,33 @@ func (s *PGShareLinkStore) Create(ctx context.Context, link *ShareLink) error {
 // Get returns ErrShareLinkNotFound when the token does not match a row.
 func (s *PGShareLinkStore) Get(ctx context.Context, token string) (*ShareLink, error) {
 	link := &ShareLink{}
+	var expiresAt *time.Time
 	var revokedAt *time.Time
 	err := s.pool.QueryRow(ctx,
-		`SELECT token, graph_rid, created_by, created_at, revoked, revoked_at
+		`SELECT token, graph_rid, created_by, created_at, expires_at, revoked, revoked_at
 		 FROM graph_share_links WHERE token = $1`, token,
 	).Scan(&link.Token, &link.GraphRID, &link.CreatedBy, &link.CreatedAt,
-		&link.Revoked, &revokedAt)
+		&expiresAt, &link.Revoked, &revokedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrShareLinkNotFound
 		}
 		return nil, fmt.Errorf("get share link: %w", err)
 	}
+	if expiresAt != nil {
+		link.ExpiresAt = *expiresAt
+	}
 	if revokedAt != nil {
 		link.RevokedAt = *revokedAt
 	}
 	return link, nil
+}
+
+func nullableShareLinkTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
 }
 
 // Revoke flips the row's revoked flag. ErrShareLinkNotFound when the token

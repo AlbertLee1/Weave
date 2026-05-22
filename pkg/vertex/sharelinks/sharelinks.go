@@ -62,10 +62,10 @@ func GenerateToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// EvaluateAccess: revoked / expired → Gone; same-org → ReadOnly;
+// EvaluateAccess: revoked / expired-at-or-after-boundary → Gone; same-org → ReadOnly;
 // everything else (including unauthenticated viewers) → Masked.
 func EvaluateAccess(link Link, req AccessRequest) AccessResult {
-	if link.Revoked || (!link.ExpiresAt.IsZero() && req.Now.After(link.ExpiresAt)) {
+	if link.Revoked || (!link.ExpiresAt.IsZero() && !req.Now.Before(link.ExpiresAt)) {
 		return AccessResult{Decision: DecisionGone}
 	}
 	if req.ViewerOrg != "" && req.ViewerOrg == link.OwnerOrg {
@@ -84,28 +84,41 @@ func MaskGraphPayload(graph map[string]any) map[string]any {
 	for k, v := range graph {
 		out[k] = v
 	}
-	rawNodes, ok := out["nodes"].([]map[string]any)
-	if !ok {
-		return out
-	}
-	maskedNodes := make([]map[string]any, 0, len(rawNodes))
-	for _, n := range rawNodes {
-		clone := make(map[string]any, len(n))
-		for k, v := range n {
-			if k == "properties" {
-				if props, ok := v.(map[string]any); ok {
-					mp := make(map[string]any, len(props))
-					for pk := range props {
-						mp[pk] = maskedValue
-					}
-					clone[k] = mp
-					continue
-				}
-			}
-			clone[k] = v
+	switch rawNodes := out["nodes"].(type) {
+	case []map[string]any:
+		maskedNodes := make([]map[string]any, 0, len(rawNodes))
+		for _, n := range rawNodes {
+			maskedNodes = append(maskedNodes, maskGraphNode(n))
 		}
-		maskedNodes = append(maskedNodes, clone)
+		out["nodes"] = maskedNodes
+	case []any:
+		maskedNodes := make([]any, 0, len(rawNodes))
+		for _, raw := range rawNodes {
+			if n, ok := raw.(map[string]any); ok {
+				maskedNodes = append(maskedNodes, maskGraphNode(n))
+				continue
+			}
+			maskedNodes = append(maskedNodes, raw)
+		}
+		out["nodes"] = maskedNodes
 	}
-	out["nodes"] = maskedNodes
 	return out
+}
+
+func maskGraphNode(n map[string]any) map[string]any {
+	clone := make(map[string]any, len(n))
+	for k, v := range n {
+		if k == "properties" {
+			if props, ok := v.(map[string]any); ok {
+				mp := make(map[string]any, len(props))
+				for pk := range props {
+					mp[pk] = maskedValue
+				}
+				clone[k] = mp
+				continue
+			}
+		}
+		clone[k] = v
+	}
+	return clone
 }

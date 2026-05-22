@@ -1,52 +1,50 @@
 {
-  "project": "Weave parallel2 self-iteration",
-  "branchName": "ralph/self-iteration-20260522-161015",
-  "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
+  "project": "Weave self-iteration",
+  "branchName": "ralph/self-iteration-20260522-165538",
+  "description": "Focused LLM review repair PRD for PR #46. Scope is restricted to the blocking CSV formula-injection findings appended to progress.txt for the new aggregation and object-set diff export surfaces.",
+  "createdAt": "2026-05-22T18:47:04+08:00",
   "userStories": [
     {
-      "id": "P2A-001",
-      "title": "MCP ObjectType Resource Misses Use Application Errors",
-      "priority": "high",
-      "passes": true,
-      "story": "As an MCP client reading a previously listed ObjectType resource, I want stale ontology or ObjectType URIs to return a resource-not-found application error instead of an invalid-params error, so that malformed URI handling stays distinct from catalog drift and retry/error UI can classify the failure correctly.",
+      "id": "LLM-003",
+      "title": "Harden CSV exports against formula injection",
+      "priority": 1,
+      "area": "web/src/lib",
+      "asA": "user downloading aggregation or object-set diff CSV exports",
+      "iWant": "user-controlled CSV string cells to be forced to text when they look like spreadsheet formulas",
+      "soThat": "opening exported CSV files in spreadsheet software does not execute formulas from group values, primary keys, field names, or object values",
       "acceptanceCriteria": [
-        "Given a well-formed `weave://objecttype/<ontologyApiName>/<objectTypeApiName>` URI whose ObjectType no longer exists, when `resources/read` is called, then the JSON-RPC error code is `CodeToolError` and the message mentions the missing object type.",
-        "Given a well-formed `weave://objecttype/<ontologyApiName>/<objectTypeApiName>` URI whose ontology no longer exists, when `resources/read` is called, then the JSON-RPC error code is `CodeToolError` and the message mentions the ontology lookup.",
-        "Given a malformed ObjectType resource URI missing the ObjectType segment, when `resources/read` is called, then the JSON-RPC error code remains `CodeInvalidParams`."
-      ],
-      "bdd": [
-        "Given a stale ObjectType resource URI, when the MCP client reads it, then Weave reports an application resource miss.",
-        "Given a malformed ObjectType resource URI, when the MCP client reads it, then Weave reports invalid params."
-      ],
-      "dependencies": [],
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-161015-A"
-    },
-    {
-      "id": "P2B-001",
-      "title": "CI Discovers Full Playwright BDD Suite",
-      "priority": "high",
-      "status": "completed",
-      "passes": true,
-      "story": "As a Weave maintainer, I want the web CI list-only Playwright gate to discover the full BDD suite under web/tests so syntax and import regressions in browser dogfood specs are caught before full E2E runs.",
-      "acceptanceCriteria": [
-        "Given checked-in Playwright BDD specs live under web/tests, when CI runs the Playwright spec discovery command, then the command includes the web/tests suite root rather than only a few sampled BDD files.",
-        "Given the workflow is edited, when the contract test reads .github/workflows/ci.yml, then it fails if the discovery step omits tests/ from its target list.",
-        "Given a local developer needs to verify discovery, when they read web/tests/README.md, then it documents the list-only CI discovery command for the BDD suite."
-      ],
-      "bddScenarios": [
         {
-          "given": "the repository contains multiple web/tests/feature.*.spec.ts browser BDD specs",
-          "when": "the CI Playwright spec discovery step is inspected",
-          "then": "it includes tests/ so every BDD spec is parsed in list-only mode"
+          "type": "BDD",
+          "given": "an aggregation bucket has string group keys or values beginning with =, +, -, @, tab, CR, or leading whitespace before those characters",
+          "when": "the aggregation CSV is built or downloaded",
+          "then": "those string cells are prefixed with an apostrophe before RFC4180 escaping, while numeric metric values remain unprefixed numbers"
+        },
+        {
+          "type": "BDD",
+          "given": "an object-set diff includes primary keys, field names, or object values beginning with =, +, -, @, tab, CR, or leading whitespace before those characters",
+          "when": "the object-set diff CSV is built or downloaded",
+          "then": "those string cells are prefixed with an apostrophe before RFC4180 escaping while section labels and existing row structure remain unchanged"
+        },
+        {
+          "type": "BDD",
+          "given": "hardened CSV cells also contain commas, quotes, CR, or LF",
+          "when": "the CSV serializers emit the file contents",
+          "then": "RFC4180 quoting remains correct and existing CSV export behavior is preserved"
         }
       ],
       "dependencies": [
-        "web/playwright.config.ts includes web/tests/**/*.spec.ts in normal Playwright discovery",
-        "CI web job runs from the web/ working directory"
+        "web/src/lib/aggregationCsv.ts",
+        "web/src/lib/objectSetDiffCsv.ts",
+        "web/src/lib/__tests__",
+        "web/src/components/aggregation/__tests__/AggregationPage.csvExport.bdd.test.tsx",
+        "web/src/components/objectsets/__tests__/ObjectSetDiffPage.csvExport.bdd.test.tsx"
       ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-161015-B"
+      "verification": [
+        "Targeted Vitest regression for aggregation CSV formula-like group keys and values.",
+        "Targeted Vitest regression for object-set diff CSV formula-like primary keys, field names, and values.",
+        "Relevant web CSV export tests and TypeScript gate."
+      ],
+      "passes": true
     }
   ]
 }

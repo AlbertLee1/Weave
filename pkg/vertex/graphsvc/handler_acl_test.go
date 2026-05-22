@@ -10,11 +10,13 @@ package graphsvc_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -58,29 +60,34 @@ func doAsUser(t *testing.T, r chi.Router, user, method, path string, body any) *
 
 func createOwnedGraph(t *testing.T, r chi.Router, owner string) string {
 	t.Helper()
+	return createOwnedGraphWithPayload(t, r, owner, map[string]any{
+		"layers": []any{
+			map[string]any{
+				"objectTypeRid": "ri.ontology.main.object-type.airport",
+				"objectType":    "Airport",
+				"objects": []any{
+					map[string]any{
+						"objectRid": "ri.ontology.main.object.airport.JFK",
+						"properties": map[string]any{
+							"name": "John F. Kennedy",
+							"code": "JFK",
+						},
+					},
+				},
+			},
+		},
+		"edges": []any{},
+	})
+}
+
+func createOwnedGraphWithPayload(t *testing.T, r chi.Router, owner string, payload map[string]any) string {
+	t.Helper()
 	w := doAsUser(t, r, owner, http.MethodPost, "/api/vertex/v1/graphs", map[string]any{
 		"ontologyRid": "ri.ontology.main.ontology.vtx",
 		"name":        "Owned Graph",
 		"versioned":   true,
 		"createdBy":   owner,
-		"payload": map[string]any{
-			"layers": []any{
-				map[string]any{
-					"objectTypeRid": "ri.ontology.main.object-type.airport",
-					"objectType":    "Airport",
-					"objects": []any{
-						map[string]any{
-							"objectRid": "ri.ontology.main.object.airport.JFK",
-							"properties": map[string]any{
-								"name": "John F. Kennedy",
-								"code": "JFK",
-							},
-						},
-					},
-				},
-			},
-			"edges": []any{},
-		},
+		"payload":     payload,
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create graph status = %d, want 201; body: %s", w.Code, w.Body.String())
@@ -206,6 +213,91 @@ func TestGraphsACL_Given_OwnerCreatesShareLink_When_StrangerUsesLink_Then_200Wit
 	}
 	if _, hasName := props["name"]; !hasName {
 		t.Errorf("property key \"name\" missing — structure should be visible, only values masked")
+	}
+}
+
+// TestGraphsACL_Given_ShareLinkExpiresAtRequestBoundary_When_GET_Then_410Gone
+func TestGraphsACL_Given_ShareLinkExpiresAtRequestBoundary_When_GET_Then_410Gone(t *testing.T) {
+	r, _, shareStore := newACLTestHandler(t)
+	rid := createOwnedGraph(t, r, "user1")
+	now := time.Now().UTC()
+	token := "expires-at-boundary"
+	if err := shareStore.Create(context.Background(), &graphsvc.ShareLink{
+		Token:     token,
+		GraphRID:  rid,
+		CreatedBy: "user1",
+		CreatedAt: now.Add(-time.Hour),
+		ExpiresAt: now,
+	}); err != nil {
+		t.Fatalf("seed share-link: %v", err)
+	}
+
+	gw := doAsUser(t, r, "user3", http.MethodGet,
+		"/api/vertex/v1/share-links/"+token+"/graph", nil)
+	if gw.Code != http.StatusGone {
+		t.Fatalf("share GET status = %d, want 410; body: %s", gw.Code, gw.Body.String())
+	}
+	if strings.Contains(gw.Body.String(), "John F. Kennedy") {
+		t.Fatalf("expired share-link leaked graph payload: %s", gw.Body.String())
+	}
+}
+
+// TestGraphsACL_Given_NodePayloadShareLink_When_GET_Then_NodePropertiesMasked
+func TestGraphsACL_Given_NodePayloadShareLink_When_GET_Then_NodePropertiesMasked(t *testing.T) {
+	r, _, _ := newACLTestHandler(t)
+	rid := createOwnedGraphWithPayload(t, r, "user1", map[string]any{
+		"name": "JFK Ops",
+		"nodes": []any{
+			map[string]any{
+				"id": "airport-a",
+				"properties": map[string]any{
+					"capacity": 100,
+					"label":    "JFK",
+				},
+			},
+		},
+		"edges": []any{},
+	})
+
+	cw := doAsUser(t, r, "user1", http.MethodPost,
+		"/api/vertex/v1/graphs/"+rid+"/share-links", nil)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("create share-link status = %d, want 201; body: %s", cw.Code, cw.Body.String())
+	}
+	var created map[string]any
+	_ = json.Unmarshal(cw.Body.Bytes(), &created)
+	token, _ := created["token"].(string)
+	if token == "" {
+		t.Fatalf("share-link response missing token: %s", cw.Body.String())
+	}
+
+	gw := doAsUser(t, r, "user3", http.MethodGet,
+		"/api/vertex/v1/share-links/"+token+"/graph", nil)
+	if gw.Code != http.StatusOK {
+		t.Fatalf("share GET status = %d, want 200; body: %s", gw.Code, gw.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(gw.Body.Bytes(), &resp)
+	payload, ok := resp["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload missing/not object: %v", resp["payload"])
+	}
+	if payload["name"] != "JFK Ops" {
+		t.Errorf("graph name = %v, want structural name preserved", payload["name"])
+	}
+	nodes, ok := payload["nodes"].([]any)
+	if !ok || len(nodes) != 1 {
+		t.Fatalf("nodes = %v, want 1 element", payload["nodes"])
+	}
+	node0 := nodes[0].(map[string]any)
+	if node0["id"] != "airport-a" {
+		t.Errorf("node id = %v, want structural id preserved", node0["id"])
+	}
+	props := node0["properties"].(map[string]any)
+	for k, v := range props {
+		if v != "***" {
+			t.Errorf("node property %q = %v, want \"***\" (values masked under share link)", k, v)
+		}
 	}
 }
 
