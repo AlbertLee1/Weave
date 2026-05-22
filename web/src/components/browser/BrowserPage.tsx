@@ -72,6 +72,24 @@ export function BrowserPage() {
     objectType: string;
   }>();
 
+  return (
+    <BrowserPageContent
+      key={`${ontology}/${objectTypeParam}`}
+      ontology={ontology}
+      objectTypeParam={objectTypeParam}
+    />
+  );
+}
+
+interface BrowserPageContentProps {
+  ontology: string;
+  objectTypeParam: string;
+}
+
+function BrowserPageContent({
+  ontology,
+  objectTypeParam,
+}: BrowserPageContentProps) {
   // Object type metadata
   const { data: objectType, isLoading: isLoadingType } = useObjectType(
     ontology,

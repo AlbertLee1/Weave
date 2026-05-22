@@ -1,81 +1,133 @@
-# Ralph Progress Log
-Started: 2026-05-22T18:47:04+08:00
-Branch: ralph/self-iteration-20260522-165538
+# Ralph Progress Log - Parallel2 Integration
+Integrated: 2026-05-22T19:32:08+08:00
+Integration branch: ralph/self-iteration-20260522-191028
 
-Archived completed prior Ralph state:
-- scripts/ralph/archive/self-iteration-20260522-184704/prd.json
-- scripts/ralph/archive/self-iteration-20260522-184704/progress.txt
+## Stream A: ralph/self-iteration-20260522-191028-A
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-191028-A
+HEAD: 97946b126d4c
+
+# Ralph Progress Log - Parallel2 Stream A
+Started: 2026-05-22T19:13:55+08:00
+Integration branch: ralph/self-iteration-20260522-191028
+Stream branch: ralph/self-iteration-20260522-191028-A
+Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
 
 Initial inspection:
-- Branch verified with `git branch --show-current`: ralph/self-iteration-20260522-165538.
-- Prior PRD matched this branch, but all stories had `passes: true`.
-- A newer `LLM review auto-fix context` was appended to the active progress file and is the strict highest-priority target for this PRD.
-- Latest GitHub CI entries checked with `gh run list --limit 8 --json ...`: recent runs for this branch and main completed with conclusion success.
-- Relevant code inspected: `web/src/lib/aggregationCsv.ts`, `web/src/lib/objectSetDiffCsv.ts`, and existing browser export CSV helper `web/src/lib/exportObjects.ts`.
-- Relevant tests inspected: `web/src/components/aggregation/__tests__/AggregationPage.csvExport.bdd.test.tsx`, `web/src/components/objectsets/__tests__/ObjectSetDiffPage.csvExport.bdd.test.tsx`, and `web/src/lib/__tests__/exportObjects.test.ts`.
-- Docs and dogfood output were scanned with `rg --files`; no existing CSV formula-injection hardening contract was found there.
+- Branch verified with `git branch --show-current`: ralph/self-iteration-20260522-191028-A.
+- Worktree initially clean.
+- Previous PRD had no stories and was archived under `scripts/ralph/archive/self-iteration-20260522-191355/`.
+- No `PR CI auto-fix context` or `LLM review auto-fix context` was present.
+- `gh run list --limit 10` initially showed the latest main CI run in progress and the prior self-iteration CI runs green; a follow-up `gh run list --limit 5` showed the latest main CI run completed successfully. The only completed failure in the snapshot was Codespaces Prebuilds, not the Go/Web CI gate.
+- Dogfood DOG-001 and DOG-003 are already represented in current source/tests, including Northwind seed FK cleanup and OMS/index bootstrap guards.
 
-Preserved LLM review auto-fix context - 2026-05-22T18:45:26+08:00:
-- PR: https://github.com/AlbertLee1/Weave/pull/46
-- Branch: ralph/self-iteration-20260522-165538
-- Reviewed HEAD: c3e035db9ee5
-- Review status: request_changes
-- Summary: Request changes: the previous share-link and one-bucket pie issues appear addressed, but the newly added CSV export surfaces need formula-injection hardening before auto-merge.
-- Blocking findings:
-```json
-[
-  {
-    "severity": "warning",
-    "file": "web/src/lib/aggregationCsv.ts",
-    "line": 68,
-    "issue": "The new aggregation CSV exporter only applies RFC4180 quoting. User-controlled group/header values that begin with spreadsheet formula prefixes such as =, +, -, @, tab, or CR will be emitted as executable formulas when opened in Excel/LibreOffice, creating a CSV injection risk on the new export surface.",
-    "suggestion": "Add a formula-injection guard to the CSV cell serializer, ideally shared with the object-set diff exporter. Preserve numeric metric values as numbers, but prefix dangerous string cells after leading-whitespace handling with an apostrophe or another accepted text-forcing escape, and add tests for formula-like group/header values."
-  },
-  {
-    "severity": "warning",
-    "file": "web/src/lib/objectSetDiffCsv.ts",
-    "line": 129,
-    "issue": "The new object-set diff CSV exporter has the same formula-injection gap for primary keys, field names, and object values. Diff data can come from object records controlled by other users, so a downloaded CSV can carry executable spreadsheet formulas.",
-    "suggestion": "Use the same hardened CSV serializer here and cover primaryKey/valueA/valueB cases that start with formula trigger characters, including values that contain leading whitespace before the trigger."
-  }
-]
-```
-- Recommended fix prompt:
-```text
-Harden the new aggregation and object-set diff CSV exporters against spreadsheet formula injection. Introduce a shared CSV cell serializer or equivalent local helpers that RFC4180-quote cells and force dangerous string cells beginning with =, +, -, @, tab, CR, or leading whitespace before those characters to be treated as text, while preserving numeric values. Add Vitest coverage for formula-like group values, primary keys, field names, and diff values, then run the relevant web tests.
-```
+Selected story for this execution:
+- P2A-001 - Return complete MCP ObjectType resource schema bundles.
 
-Codebase Patterns:
-- Web CSV exporters currently build strings in `web/src/lib` and are exercised through component-level BDD tests that inspect the downloaded `Blob` text.
-- Aggregation CSV rows derive string group keys and values from user-controlled bucket data, while metric values can be numeric and should remain number-shaped in the emitted CSV.
-- Object-set diff CSV rows include section, primaryKey, field, valueA, and valueB; primary keys, field names, and object values can originate from object data and need the same cell-level hardening.
-- RFC4180 escaping is local to exporter helpers today; a shared helper is appropriate for the two new CSV export surfaces so formula hardening and quote handling stay consistent.
+P2A-001 evidence:
+- RED: `go test ./pkg/mcp -run P2A001 -count=1` failed before implementation:
+  - `objectType.apiName = "", want Order` because `resources/read` returned a raw ObjectType row instead of an `{objectType, properties, outgoingLinkTypes}` bundle.
+  - `objectTypes[0].properties = []` because ontology resource reads used `ListObjectTypes` without hydrating properties.
+  - property lookup failure test unexpectedly succeeded because the handler did not call `ListProperties`.
+- GREEN: `go test ./pkg/mcp -run P2A001 -count=1` passed.
+- Targeted package verification: `go test ./pkg/mcp -count=1` passed.
+- Relevant MCP edge verification: `go test ./cmd/weave-mcp ./pkg/mcp -count=1` passed.
+- Source files changed:
+  - `pkg/mcp/resources.go`
+  - `pkg/mcp/resources_schema_p2a001_test.go`
+  - `pkg/mcp/tools_test.go`
+- Behavior: `weave://objecttype/<ontology>/<objectType>` now returns a JSON schema bundle with `objectType`, `properties`, and `outgoingLinkTypes`; `weave://ontology/<rid>` now hydrates properties for each ObjectType and fails loudly on metadata lookup errors instead of silently returning partial schema.
 
-Selected story:
-- LLM-003 - Harden CSV exports against formula injection
+Durable Codebase Patterns:
+- MCP resource handlers live in `pkg/mcp/resources.go`; transport tests can exercise them directly through `Server.Handle` without starting `cmd/server`.
+- The PG OMS repository loads properties for `GetObjectType*`, but `ListObjectTypes` intentionally returns rows without properties; callers that need full schema must explicitly call `ListProperties`.
 
-## 2026-05-22T18:51:57+08:00 - LLM-003
-- Hardened the reviewed aggregation and object-set diff CSV export surfaces with shared cell serialization in `web/src/lib/csvCell.ts`.
-- Dangerous string cells beginning with `=`, `+`, `-`, `@`, tab, CR, or benign leading whitespace before those triggers are prefixed with an apostrophe before RFC4180 escaping.
-- Numeric metric/object values remain emitted as number-shaped CSV cells, so negative numbers such as `-42` are not text-prefixed.
-- Aggregation CSV now applies the shared serializer to group headers, metric headers, group values, and metric values.
-- Object-set diff CSV now applies the shared serializer to section, primaryKey, field, valueA, and valueB cells.
-- Files changed:
-  - `web/src/lib/csvCell.ts`
-  - `web/src/lib/aggregationCsv.ts`
-  - `web/src/lib/objectSetDiffCsv.ts`
-  - `web/src/lib/__tests__/aggregationCsv.test.ts`
-  - `web/src/lib/__tests__/objectSetDiffCsv.test.ts`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- TDD evidence:
-  - RED targeted: `npm test -- aggregationCsv.test.ts objectSetDiffCsv.test.ts` failed with both new tests showing dangerous formula-like cells emitted unchanged.
-  - GREEN targeted: `npm test -- aggregationCsv.test.ts objectSetDiffCsv.test.ts` passed with 2 files and 2 tests.
-  - Relevant CSV export gate: `npm test -- src/lib AggregationPage.csvExport.bdd.test.tsx ObjectSetDiffPage.csvExport.bdd.test.tsx` passed with 27 files and 247 tests.
-  - TypeScript gate: `npm run typecheck` passed.
-- Codebase Patterns:
-  - Keep CSV hardening before RFC4180 escaping so the apostrophe itself is included in the quoted cell when commas, quotes, CR, or LF require quoting.
-  - Preserve value types until serialization; stringify objects and protect only raw string cells so numeric values remain numeric in exported CSV.
+Selected story for this execution:
+- P2A-002 - Reject invalid JSON-RPC id shapes in MCP transports.
 
-Remaining story:
-- All stories in the active PRD pass.
+P2A-002 evidence (2026-05-22T19:22:11+0800):
+- Root cause: `pkg/mcp.ParseRequest` kept `id` as `json.RawMessage` but validated only `jsonrpc` and `method`, so object/array ids were accepted as normal request ids. The HTTP and stdio parse-error paths also used `sniffRequestID` to echo unsupported id shapes.
+- RED: `go test ./pkg/mcp -run 'P2A002|TestProtocol|TestHTTPTransport|TestStdioTransport' -count=1` failed before implementation:
+  - `TestProtocol_GivenInvalidIDShape_WhenParseRequest_ThenInvalidRequest_P2A002` accepted object and array ids.
+  - `TestBDD_HTTPTransport_GivenInvalidIDShape_WhenPost_ThenInvalidRequestWithNullID_P2A002` returned a successful initialize response instead of `-32600`.
+  - `TestBDD_StdioTransport_GivenInvalidIDShape_WhenRun_ThenInvalidRequestWithNullID_P2A002` returned a successful initialize response instead of `-32600`.
+- GREEN: `go test ./pkg/mcp -run 'P2A002|TestProtocol|TestHTTPTransport|TestStdioTransport' -count=1` passed.
+- Declared verification: `go test ./pkg/mcp -run 'TestProtocol|TestHTTPTransport|TestStdioTransport' -count=1` passed.
+- Nearby package verification: `go test ./pkg/mcp -count=1` passed.
+- Source files changed:
+  - `pkg/mcp/protocol.go`
+  - `pkg/mcp/protocol_test.go`
+  - `pkg/mcp/http_transport_test.go`
+  - `pkg/mcp/stdio_transport_test.go`
+- Behavior: JSON-RPC ids are now accepted only when absent, string, number, or null. Object/array/boolean ids produce invalid-request errors, and parse-error response ids normalize to null instead of echoing unsupported id JSON.
+
+Durable Codebase Patterns:
+- MCP id validation belongs in `pkg/mcp/protocol.go` so HTTP and stdio transports share one JSON-RPC envelope contract.
+- `Response.MarshalJSON` serializes a nil `json.RawMessage` id as JSON `null`, which is the correct response id for invalid request envelopes whose id cannot be used.
+
+Selected story for this execution:
+- P2A-003 - Harden stream ingest metadata validation against schema drift.
+
+P2A-003 evidence (2026-05-22T19:28:56+0800):
+- Root cause: `validateIngestEditSchema` mapped undeclared object properties to the older `SchemaViolation` error name, while `validateValueTypes` silently skipped `GetValueTypeByAPIName` failures and allowed the handler to publish accepted batches without verifying ValueType metadata.
+- RED: `go test ./pkg/oss -run TestStreamIngest_BDD_FailsFastOnSchemaAndValueTypeViolations -count=1` failed before implementation because undeclared properties returned `SchemaViolation` instead of `InvalidIngestEdit`, and ValueType lookup failures returned HTTP 200 with a published batch instead of `IngestMetadataLookupFailed`.
+- RED after aligning the test name with the PRD verification regex: `go test ./pkg/oss -run 'TestStreamIngest.*Metadata|TestBDD_StreamIngest' -count=1` failed for the same two behavior gaps.
+- GREEN: `go test ./pkg/oss -run 'TestStreamIngest.*Metadata|TestBDD_StreamIngest' -count=1` passed.
+- Broader package verification: `go test ./pkg/oss -count=1` passed.
+- Source files changed:
+  - `pkg/oss/stream_ingest_validation.go`
+  - `pkg/oss/stream_ingest_self102_bdd_test.go`
+- Behavior: stream ingest metadata validation now returns `InvalidIngestEdit` for undeclared object properties, returns `IngestMetadataLookupFailed` for ValueType metadata lookup failures, and does not publish batches in either failure mode. Valid batches still preserve source tagging and URL objectType coercion.
+
+Durable Codebase Patterns:
+- P2A ingest metadata tests should use names matching `TestStreamIngest.*Metadata` so Ralph's declared stream-A verification command actually selects them.
+- `streamIngestMetadataValidator` is the correct shared layer for schema-drift rejection because the handler already normalizes `source=ingest` and URL objectType before calling it.
+
+
+---
+
+## Stream B: ralph/self-iteration-20260522-191028-B
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-191028-B
+HEAD: 1a554dc14b2d
+
+# Ralph Progress Log - Parallel2 Stream B
+Started: 2026-05-22T19:16:32+08:00
+Integration branch: ralph/self-iteration-20260522-191028
+Stream branch: ralph/self-iteration-20260522-191028-B
+Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
+Archived previous empty PRD/progress: scripts/ralph/archive/self-iteration-20260522-191632/
+
+## Intake Evidence
+- Branch verified: `ralph/self-iteration-20260522-191028-B`.
+- Previous PRD belonged to this branch but had no user stories, so a fresh small P2B PRD was created.
+- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the previous progress file.
+- GitHub CI health checked with `gh run list --limit 8`: latest main `CI` run for PR #46 completed successfully at 2026-05-22T11:06:42Z; latest Codespaces Prebuild run failed, but it is outside the project CI gate.
+- Known CI issue `cmd/server/embed.go` needing tracked web embed fallback checked with `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -v`: PASS.
+- Known US-453 web issue checked after `npm ci --prefix web`: `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`: PASS; `npm --prefix web test -- --run src/api/__tests__/compliance.test.ts`: PASS.
+- Frontend BDD and full Vitest health checked: `npm --prefix web test -- --run bdd`: PASS (31 files, 83 tests); `npm --prefix web test`: PASS (290 files, 2922 tests).
+- Dogfood DOG-001/DOG-002 findings are already covered by current source/tests. New story targets a fresh browser route-state leak found during BrowserPage inspection.
+
+## Selected Story
+- P2B-001 — Reset Browser route-scoped state when switching object types.
+
+## Story Evidence
+### P2B-001
+- Status: PASS.
+- Red test:
+  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.routeState.bdd.test.tsx`
+  - Result: FAIL as expected before implementation. The reused BrowserPage instance navigated to `Order` but did not render the unfiltered `Order list row`; the stale Customer search state drove the new object type through the search path.
+- Implementation:
+  - Added `web/src/components/browser/__tests__/BrowserPage.routeState.bdd.test.tsx`.
+  - Updated `web/src/components/browser/BrowserPage.tsx` so the route-owned stateful Browser content is keyed by `ontology/objectTypeParam`. Navigating between object types remounts the stateful content and resets committed search text, filters, selected facets, pagination, selected rows, detail panel state, view mode, objectSet RID, and live subscription state together.
+- Green / regression evidence:
+  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.routeState.bdd.test.tsx`: PASS (1 file, 1 test).
+  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx`: PASS (1 file, 17 tests).
+  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx src/components/browser/__tests__/TimeTravelToolbar.rollback.bdd.test.tsx src/components/browser/__tests__/TimeTravelToolbar.dogfood.test.tsx`: PASS (3 files, 7 tests).
+  - `npm --prefix web run typecheck`: PASS (tsc -b exit 0).
+  - `npm --prefix web test -- --run bdd`: PASS (32 files, 84 tests).
+  - `npm --prefix web test`: PASS (291 files, 2923 tests).
+
+## Codebase Patterns
+- Browser route-local state that depends on `:ontology` or `:objectType` should live behind a key derived from those route params, or it must be synchronously derived from the active route before query hooks run. Effect-only resets happen too late to prevent stale React Query requests on the first render after navigation.
+
+
+---
