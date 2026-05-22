@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test, type Page, type Route } from '@playwright/test';
 import {
   AggregationPage,
@@ -37,9 +38,9 @@ import {
  *     + an `<svg>` with bar elements is rendered; absence scenario locks
  *     "no line/pie/area toggle exists" via role+name triple absence and
  *     pre-emptively prevents accidental partial swaps.
- *   - "导出 CSV" → no export button/link today; absence assertion
- *     mirrors US-028 (button + link + regex covering Export CSV /
- *     Download CSV / "CSV" label).
+ *   - "导出 CSV" → CSV export is available once buckets exist. The
+ *     scenario captures the browser download and asserts group columns
+ *     precede metric columns with RFC4180 escaping.
  *   - "空集" → backend returns `{data: []}`; ResultTable renders the
  *     `aggregation-empty-results` placeholder. Locks the empty-array
  *     branch which `aggResult.data.length === 0` short-circuits the
@@ -394,18 +395,21 @@ describeFeature('Aggregation page', () => {
     });
   });
 
-  test('Scenario: CSV export affordance is absent today', async ({ page }) => {
-    // Honest mapping for AC "导出 CSV": no button/link surfaces a
-    // CSV export today. We mirror the US-028 button + link double
-    // absence pattern with a regex covering Export CSV / Download
-    // CSV / plain "CSV" labels.
+  test('Scenario: CSV export downloads grouped buckets', async ({ page }) => {
+    // Locks AC "导出 CSV": after an aggregate returns buckets, the
+    // operator can download the current bucket table as a CSV with
+    // group columns first, metric columns second, and quoted cells for
+    // commas / embedded quotes.
     const agg = new AggregationPage(page);
     const captured: CapturedAgg[] = [];
 
     await Given('the aggregate endpoint returns two buckets', async () => {
       await stubAggregationEndpoints(page, captured, () => ({
         data: [
-          { group: { shipCountry: 'USA' }, metrics: [{ name: 'count', value: 30 }] },
+          {
+            group: { shipCountry: 'USA, East', segment: 'Quoted "Direct"' },
+            metrics: [{ name: 'count', value: 30 }],
+          },
           { group: { shipCountry: 'France' }, metrics: [{ name: 'count', value: 12 }] },
         ],
         accuracy: 'ACCURATE',
@@ -420,10 +424,26 @@ describeFeature('Aggregation page', () => {
       await expect(agg.results).toBeVisible();
     });
 
-    await Then('no CSV export button or link is rendered', async () => {
-      const exportRegex = /export\s*(aggregation\s*)?csv|download\s*csv|\bcsv\b/i;
-      await expect(page.getByRole('button', { name: exportRegex })).toHaveCount(0);
-      await expect(page.getByRole('link', { name: exportRegex })).toHaveCount(0);
+    await Then('the CSV export button is available', async () => {
+      await expect(agg.exportCsvBtn).toBeVisible();
+    });
+
+    await When('the user exports the CSV', async () => {
+      const downloadPromise = page.waitForEvent('download');
+      await agg.exportCsvBtn.click();
+      const download = await downloadPromise;
+      expect(download.suggestedFilename()).toBe('northwind-order-aggregation.csv');
+      const path = await download.path();
+      if (!path) throw new Error('download path was not available');
+      const csv = await readFile(path, 'utf8');
+      expect(csv).toBe(
+        [
+          'shipCountry,segment,count',
+          '"USA, East","Quoted ""Direct""",30',
+          'France,,12',
+          '',
+        ].join('\n'),
+      );
     });
   });
 

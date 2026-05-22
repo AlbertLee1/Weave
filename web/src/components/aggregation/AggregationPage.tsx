@@ -11,6 +11,10 @@ import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import { FilterBuilder } from '../browser/FilterBuilder';
 import { buildWhereClause, type FilterCondition } from '../../lib/whereBuilder';
+import {
+  aggregationCsvFilename,
+  downloadAggregationCsv,
+} from '../../lib/aggregationCsv';
 
 export function AggregationPage() {
   const { ontology, objectType } = useParams<{ ontology: string; objectType: string }>();
@@ -58,6 +62,14 @@ export function AggregationPage() {
       groupBy: groupBy.length > 0 ? groupBy : undefined,
       where,
     });
+  }
+
+  function handleExportCsv() {
+    if (!aggResult?.data.length || !ontology || !objectType) return;
+    downloadAggregationCsv(
+      aggResult.data,
+      aggregationCsvFilename(ontology, objectType),
+    );
   }
 
   if (!ontology || !objectType) {
@@ -171,6 +183,18 @@ export function AggregationPage() {
             data-bucket-count={aggResult.data.length}
             className="flex flex-col gap-6"
           >
+            {aggResult.data.length > 0 && (
+              <div className="flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={handleExportCsv}
+                  data-testid="aggregation-export-csv"
+                  className="rounded border border-accent-cyan/40 bg-accent-cyan/10 px-3 py-1.5 text-xs font-medium text-accent-cyan hover:bg-accent-cyan/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/50"
+                >
+                  Export CSV
+                </button>
+              </div>
+            )}
             {aggResult.accuracy && (
               <div
                 data-testid="aggregation-accuracy-badge"

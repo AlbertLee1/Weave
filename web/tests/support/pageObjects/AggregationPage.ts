@@ -30,6 +30,7 @@ export class AggregationPage {
   readonly emptyResults: Locator;
   readonly accuracyBadge: Locator;
   readonly chart: Locator;
+  readonly exportCsvBtn: Locator;
   readonly metricAddBtn: Locator;
   readonly groupByAddBtn: Locator;
   readonly activeFilters: Locator;
@@ -52,6 +53,7 @@ export class AggregationPage {
     this.emptyResults = page.getByTestId('aggregation-empty-results');
     this.accuracyBadge = page.getByTestId('aggregation-accuracy-badge');
     this.chart = page.getByTestId('aggregation-chart');
+    this.exportCsvBtn = page.getByTestId('aggregation-export-csv');
     this.metricAddBtn = page.getByTestId('metric-add');
     this.groupByAddBtn = page.getByTestId('groupby-add');
     this.activeFilters = page.getByTestId('active-filters');
