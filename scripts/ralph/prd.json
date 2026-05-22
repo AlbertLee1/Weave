@@ -51,7 +51,7 @@
       "dependencies": [
         "RSI-001 and RSI-002 narrow strict JSON handling across higher-risk write surfaces first."
       ],
-      "passes": false
+      "passes": true
     }
   ]
 }

@@ -2,10 +2,12 @@ package reactions
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -232,6 +234,42 @@ func TestHandler_InvalidInputs(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("GET no target: want 400, got %d", w.Code)
+	}
+}
+
+func TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI003(t *testing.T) {
+	store := NewMemoryStore()
+	user := &auth.User{ID: "user:alice"}
+	r := newTestRouter(store, user)
+	target := "ri.weave.main.object.42"
+
+	first := string(mustEncode(t, map[string]any{"targetRid": target, "emoji": "👍"}))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v2/reactions",
+		strings.NewReader(first+`{"smuggled":true}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assertRSI003BadRequest(t, w)
+	buckets, err := store.AggregateForTarget(context.Background(), user.ID, target)
+	if err != nil {
+		t.Fatalf("store.AggregateForTarget: %v", err)
+	}
+	if len(buckets) != 0 {
+		t.Fatalf("ambiguous create persisted reactions: %+v", buckets)
+	}
+}
+
+func assertRSI003BadRequest(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "InvalidRequestBody") {
+		t.Fatalf("expected InvalidRequestBody in response body: %s", w.Body.String())
 	}
 }
 

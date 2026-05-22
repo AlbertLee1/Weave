@@ -70,3 +70,27 @@ Archived previous completed state: scripts/ralph/archive/self-iteration-20260523
 - **Learnings for future iterations:**
   - Saved-search definitions are intentionally opaque, but the write API boundary still needs deterministic single-value JSON parsing before storing the opaque envelope.
 ---
+
+## 2026-05-23T00:32:59+08:00 - RSI-003
+- Implemented strict single-value JSON decoding for comments, watches, and reactions write handlers.
+- Added BDD router coverage proving concatenated JSON returns the existing `InvalidRequestBody` 400 error and does not create or mutate in-memory collaboration state.
+- Files changed:
+  - `pkg/comments/handlers.go`
+  - `pkg/comments/handlers_test.go`
+  - `pkg/watches/handlers.go`
+  - `pkg/watches/handlers_test.go`
+  - `pkg/reactions/handlers.go`
+  - `pkg/reactions/handlers_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- TDD evidence:
+  - RED: `go test ./pkg/comments -run TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI003 -v` failed because create returned 201 and update returned 200 while applying the first JSON object.
+  - RED: `go test ./pkg/watches -run TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI003 -v` failed because create returned 201 while applying the first JSON object.
+  - RED: `go test ./pkg/reactions -run TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI003 -v` failed because create returned 201 while applying the first JSON object.
+  - GREEN: all three commands passed after switching write decoders to `httputil.ReadJSON`.
+- Verification:
+  - `go test ./pkg/comments ./pkg/watches ./pkg/reactions ./pkg/httputil` passed.
+  - `go test $(./scripts/ci/go-packages.sh)` passed.
+- **Learnings for future iterations:**
+  - Collaboration write handlers share the same deterministic request-body parsing requirement as admin policy and saved-view writes; use `httputil.ReadJSON` when accepting JSON bodies at API boundaries.
+---

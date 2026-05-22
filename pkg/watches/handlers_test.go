@@ -2,9 +2,11 @@ package watches
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -156,6 +158,42 @@ func TestHandler_CreateListStatusDelete(t *testing.T) {
 	}
 	if len(list.Watches) != 0 {
 		t.Fatalf("List should be empty after delete, got %+v", list)
+	}
+}
+
+func TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI003(t *testing.T) {
+	store := NewMemoryStore()
+	user := &auth.User{ID: "user:alice"}
+	r := newTestRouter(store, user)
+	target := "ri.weave.main.object.42"
+
+	first := string(mustEncode(t, map[string]any{"targetRid": target}))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v2/watches",
+		strings.NewReader(first+`{"smuggled":true}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assertRSI003BadRequest(t, w)
+	rows, err := store.List(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("store.List: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("ambiguous create persisted %d watches", len(rows))
+	}
+}
+
+func assertRSI003BadRequest(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "InvalidRequestBody") {
+		t.Fatalf("expected InvalidRequestBody in response body: %s", w.Body.String())
 	}
 }
 
