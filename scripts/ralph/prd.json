@@ -1,55 +1,142 @@
 {
-  "project": "Weave self-iteration CI repair",
-  "branchName": "ralph/self-iteration-20260522-123354",
-  "description": "Focused Ralph PRD for repairing the current branch's GitHub CI failure before adding any broader OSv2 capability work.",
+  "project": "Weave parallel2 self-iteration",
+  "branchName": "ralph/self-iteration-20260522-150048",
+  "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
   "userStories": [
     {
-      "id": "SELF-501",
-      "title": "Repair RLS Race Coverage Performance Gate",
-      "priority": "P0",
-      "status": "completed",
+      "id": "P2A-001",
+      "title": "Harden wildcard CORS credentials",
+      "priority": 1,
       "passes": true,
-      "story": "As a backend maintainer, I want the CEL row-level-security performance gate to stay strict in normal runs while tolerating race and coverage instrumentation variance, so GitHub CI blocks real hot-path regressions without failing from runner contention.",
+      "story": "As a Weave operator exposing OSv2 APIs through browser clients, I want wildcard CORS responses to avoid credential headers so public development origins do not create an invalid or misleading browser security contract.",
+      "acceptanceCriteria": [
+        "Given CORSMiddleware is configured with allowedOrigins [\"*\"], when a request includes any Origin header, then the response includes Access-Control-Allow-Origin: *.",
+        "Given CORSMiddleware is configured with allowedOrigins [\"*\"], when a simple or preflight request is handled, then the response does not include Access-Control-Allow-Credentials.",
+        "Given CORSMiddleware is configured with an explicit allowed origin, when that origin is used, then Access-Control-Allow-Credentials remains true and Vary: Origin remains present.",
+        "Given a disallowed origin, when a request is handled, then no Access-Control-Allow-Origin or credentials headers are emitted."
+      ],
+      "dependencies": [
+        "cmd/server/security_middleware.go",
+        "cmd/server/security_middleware_test.go"
+      ],
+      "verification": [
+        "go test ./cmd/server -run 'TestCORSMiddleware' -count=1",
+        "go test ./cmd/server -count=1"
+      ],
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260522-150048-A"
+    },
+    {
+      "id": "P2A-002",
+      "title": "Bound rate-limit bucket growth",
+      "priority": 2,
+      "passes": true,
+      "story": "As a Weave API operator, I want endpoint rate-limit buckets to expire when inactive so long-running OSv2 services are not vulnerable to unbounded limiter growth from high-cardinality IP, user, or ontology keys.",
+      "acceptanceCriteria": [
+        "Given a rate-limit rule receives requests from many distinct keys, then inactive limiter buckets can be pruned after a configurable idle window.",
+        "Given a key remains active, then pruning does not remove its limiter or reset its quota unexpectedly.",
+        "Given the default middleware constructor is used, then existing rate-limit behavior remains unchanged except for safe cleanup."
+      ],
+      "dependencies": [
+        "cmd/server/rate_limit.go",
+        "cmd/server/rate_limit_test.go"
+      ],
+      "verification": [
+        "go test ./cmd/server -run 'TestRateLimit' -count=1"
+      ],
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260522-150048-A"
+    },
+    {
+      "id": "P2A-003",
+      "title": "Preserve audit query bounds on bad pagination tokens",
+      "priority": 3,
+      "passes": true,
+      "story": "As a security administrator reviewing OSv2 audit events, I want invalid admin audit page tokens to fail clearly instead of silently falling back to an unbounded first page.",
+      "acceptanceCriteria": [
+        "Given /api/v2/admin/auditEvents receives a malformed pageToken, then the handler returns a 400-class JSON error.",
+        "Given a valid pageToken is supplied, then pagination behavior remains unchanged.",
+        "Given no pageToken is supplied, then the first page behavior remains unchanged."
+      ],
+      "dependencies": [
+        "cmd/server/admin_audit.go",
+        "cmd/server/admin_audit_test.go",
+        "pkg/audit"
+      ],
+      "verification": [
+        "go test ./cmd/server -run 'TestAdminAudit' -count=1"
+      ],
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260522-150048-A"
+    },
+    {
+      "id": "P2B-001",
+      "title": "Command Palette Ontology Workspace Routes",
+      "priority": 1,
+      "passes": true,
+      "story": "As an operator working inside an ontology, I want the global command palette to expose the same ontology-scoped workspace routes as the sidebar so I can jump between Query Builder, Quiver, Import, Approvals, action history, jobs, QueryTypes, automation, proposals, and admin surfaces without leaving keyboard flow.",
       "acceptanceCriteria": [
         {
-          "scenario": "Instrumented profile avoids CI wall-clock flake",
-          "given": "Go tests run with race detection or coverage instrumentation enabled",
-          "when": "the RLS performance profile is selected",
-          "then": "the profile uses a smaller instrumented iteration count and budgets that match race/coverage overhead while still exercising warm-cache hits"
+          "scenario": "Active ontology exposes workspace destinations",
+          "given": "the command palette is open with activeOntology set to northwind",
+          "when": "the operator searches for ontology-scoped page labels such as Query Builder, Quiver TS, Import Data, Object Types, or Security Policies",
+          "then": "the palette lists those page options and selecting one navigates to the matching /objectsets, /quiver, /import, /admin, or related ontology-scoped route for northwind"
         },
         {
-          "scenario": "Focused race and coverage RLS gate passes",
-          "given": "the pkg/security RLS performance tests run with `-race -covermode=atomic`",
-          "when": "`go test -race -coverprofile=/tmp/weave-security-coverage.out -covermode=atomic ./pkg/security -run '^TestBDD_RLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` is executed",
-          "then": "the selected profile is `instrumented`, cache hit stats are logged, and the test exits successfully"
-        },
-        {
-          "scenario": "Full pkg/security race coverage gate passes",
-          "given": "the same package shape used by GitHub CI is executed for pkg/security",
-          "when": "`go test -race -coverprofile=/tmp/weave-security-full.out -covermode=atomic ./pkg/security -count=1 -v` is executed",
-          "then": "all pkg/security tests pass, including `TestRLSEvaluator_PerformanceGate`"
-        },
-        {
-          "scenario": "Standard non-instrumented gate remains meaningful",
-          "given": "pkg/security tests run without race or coverage instrumentation",
-          "when": "`go test ./pkg/security -run '^TestBDD_RLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` is executed",
-          "then": "the selected profile remains `standard` with one-million-iteration warm-cache samples, keeps the 50ms strict budget, and uses the best of three warm samples to smooth scheduler jitter without hiding real regressions"
+          "scenario": "Global mode stays uncluttered",
+          "given": "the command palette is open with no active ontology",
+          "when": "the operator searches for ontology-scoped page labels",
+          "then": "those ontology-scoped routes are not listed because they cannot resolve safely without an ontology"
         }
       ],
       "dependencies": [
-        "pkg/security/rls_bench_test.go",
-        "internal/testprofile/instrumentation.go"
+        "web/src/components/common/CommandPalette.tsx",
+        "web/src/components/common/__tests__/CommandPalette.test.tsx"
       ],
-      "evidenceRequired": [
-        "GitHub CI failed run evidence for run 26269888489",
-        "Local RED output from the current full pkg/security race+coverage command",
-        "Targeted RED output for the adjusted instrumented profile expectation",
-        "Targeted GREEN output for the RLS performance profile and gate",
-        "Full pkg/security race+coverage verification",
-        "Standard non-instrumented RLS performance gate verification",
-        "Local verifier RED output showing standard-profile scheduler jitter at warm 53.747ms > 50ms",
-        "Standard profile multi-sample GREEN evidence and full make test pass"
-      ]
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260522-150048-B"
+    },
+    {
+      "id": "P2B-002",
+      "title": "Frontend Runbook Replaces Vite Boilerplate",
+      "priority": 2,
+      "passes": true,
+      "story": "As a contributor dogfooding the browser UX, I want web/README.md to document the real Weave Web UI routes, test commands, and E2E setup instead of the stock Vite template so local verification is repeatable.",
+      "acceptanceCriteria": [
+        {
+          "scenario": "Web README describes Weave UI workflows",
+          "given": "a contributor opens web/README.md",
+          "when": "they look for setup, test, and E2E instructions",
+          "then": "the README documents npm install/test/build, make e2e-up, Playwright BDD locations, and the primary Weave OSv2-facing UI surfaces"
+        }
+      ],
+      "dependencies": [
+        "web/README.md"
+      ],
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260522-150048-B"
+    },
+    {
+      "id": "P2B-003",
+      "title": "Dogfood Smoke Route Coverage Stays Discoverable",
+      "priority": 3,
+      "passes": true,
+      "story": "As a release verifier, I want the dogfood Playwright discovery contract to include newly critical browser UX smoke specs so route regressions cannot silently fall out of CI listing.",
+      "acceptanceCriteria": [
+        {
+          "scenario": "Dogfood route probes are listed by contract",
+          "given": "CI runs frontend contract tests",
+          "when": "Playwright discovery targets are checked",
+          "then": "the contract covers command-palette, sidebar, dashboard, dogfood verify, and empty-state smoke specs that protect browser dogfood paths"
+        }
+      ],
+      "dependencies": [
+        "web/src/lib/__tests__/playwrightSpecContracts.test.ts",
+        ".github/workflows/ci.yml",
+        "web/tests"
+      ],
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260522-150048-B"
     }
   ]
 }

@@ -193,6 +193,9 @@ jobs:
           dogfood-verify.spec.ts
           dogfood-diagnose.spec.ts
           dogfood-empty-states.spec.ts
+          tests/feature.command-palette.spec.ts
+          tests/feature.sidebar.dogfood.spec.ts
+          tests/feature.dashboard.spec.ts
           us-456-perf-dashboard.spec.ts
           us-457-timeseries-tab.spec.ts
           us-458-hotkey-help.spec.ts

@@ -38,6 +38,38 @@ const STATIC_PAGES: PageItem[] = [
   { id: 'page:markings', label: 'Markings', to: '/admin/markings' },
 ];
 
+function ontologyWorkspacePages(ontology: string | null): PageItem[] {
+  if (!ontology) return [];
+  const scoped = (id: string, label: string, to: string): PageItem => ({
+    id: `page:ontology:${ontology}:${id}`,
+    label,
+    to,
+    hint: ontology,
+  });
+
+  return [
+    scoped('query-builder', 'Query Builder', `/objectsets/${ontology}`),
+    scoped('quiver-ts', 'Quiver TS', `/quiver/${ontology}`),
+    scoped('import-data', 'Import Data', `/import/${ontology}`),
+    scoped('approvals', 'Approvals', `/approvals/${ontology}`),
+    scoped('action-history', 'Action History', `/actions/${ontology}/history`),
+    scoped('saga-jobs', 'Saga Jobs', `/actions/${ontology}/jobs`),
+    scoped('querytypes', 'QueryTypes', `/queries/${ontology}`),
+    scoped('automation-rules', 'Automation Rules', `/automation/${ontology}`),
+    scoped('proposals', 'Proposals', `/proposals/${ontology}`),
+    scoped('object-types', 'Object Types', `/admin/${ontology}/objectTypes`),
+    scoped('link-types', 'Link Types', `/admin/${ontology}/linkTypes`),
+    scoped('action-types', 'Action Types', `/admin/${ontology}/actionTypes`),
+    scoped('interfaces', 'Interfaces', `/admin/${ontology}/interfaces`),
+    scoped('value-types', 'Value Types', `/admin/${ontology}/valueTypes`),
+    scoped('schema-graph', 'Schema Graph', `/admin/${ontology}/graph`),
+    scoped('history', 'History', `/admin/${ontology}/history`),
+    scoped('saga-dlq', 'Saga DLQ', `/admin/${ontology}/saga-dlq`),
+    scoped('dataset-rollback', 'Dataset Rollback', `/admin/datasets/${ontology}/rollback`),
+    scoped('security-policies', 'Security Policies', `/admin/${ontology}/security`),
+  ];
+}
+
 const KIND_GLYPH: Record<RecentCommandKind, string> = {
   page: '↗',
   action: '⚡',
@@ -71,6 +103,10 @@ function CommandPaletteInner({ onClose, activeOntology }: Omit<CommandPalettePro
   const actionTypeList = useMemo(() => actionTypes ?? [], [actionTypes]);
   const branchList = useMemo(() => branches ?? [], [branches]);
   const appList = useMemo(() => appsResponse?.apps ?? [], [appsResponse]);
+  const pageList = useMemo(
+    () => [...STATIC_PAGES, ...ontologyWorkspacePages(activeOntology)],
+    [activeOntology],
+  );
 
   const recentEntries = useRecentCommandsStore((s) => s.entries);
   const recordRecent = useRecentCommandsStore((s) => s.record);
@@ -303,22 +339,28 @@ function CommandPaletteInner({ onClose, activeOntology }: Omit<CommandPalettePro
               heading="Pages"
               className="px-2 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-widest [&_[cmdk-group-heading]]:text-text-muted"
             >
-              {STATIC_PAGES.map((page) => (
+              {pageList.map((page) => (
                 <Command.Item
                   key={page.id}
-                  value={`page ${page.label}`}
+                  value={`page ${page.label} ${page.hint ?? ''}`}
                   onSelect={() =>
                     go({
                       id: page.id,
                       kind: 'page',
                       label: page.label,
                       to: page.to,
+                      hint: page.hint,
                     })
                   }
                   className="flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer text-sm text-text-secondary aria-selected:bg-bg-tertiary aria-selected:text-text-primary"
                 >
                   <span className="text-text-muted text-xs">{KIND_GLYPH.page}</span>
                   <span>{page.label}</span>
+                  {page.hint && (
+                    <span className="ml-auto text-[10px] text-text-muted font-mono">
+                      {page.hint}
+                    </span>
+                  )}
                 </Command.Item>
               ))}
             </Command.Group>

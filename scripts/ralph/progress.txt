@@ -1,76 +1,194 @@
-# Ralph Progress Log
-Started: 2026-05-22T13:32:51+08:00
-Branch: ralph/self-iteration-20260522-123354
-Archived previous state: scripts/ralph/archive/self-iteration-20260522-133251/
+# Ralph Progress Log - Parallel2 Integration
+Integrated: 2026-05-22T15:34:31+08:00
+Integration branch: ralph/self-iteration-20260522-150048
 
-## Codebase Patterns
-- `internal/testprofile.Instrumented(testing.CoverMode())` selects wider test profiles when race or coverage instrumentation distorts wall-clock performance gates.
-- `pkg/security` keeps CEL RLS performance coverage in normal Go tests and exposes focused benchmarks for raw hot-path timing.
-- Hot-path hash changes should preserve canonical FNV byte order with explicit tests when cache keys may already be materialized or compared indirectly.
-- Instrumented wall-clock performance gates should reduce iteration count enough to leave CI-runner contention margin, not only widen duration budgets; keep the strict high-iteration profile for non-instrumented runs and keep a benchmark for raw ns/op signal.
+## Stream A: ralph/self-iteration-20260522-150048-A
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-150048-A
+HEAD: b916fb61245b
 
-## Baseline Evidence
-- Branch verified: `ralph/self-iteration-20260522-123354`.
-- Root symlinks verified: `prd.json -> scripts/ralph/prd.json`, `progress.txt -> scripts/ralph/progress.txt`.
-- Previous PRD had all stories passing, so it was archived and replaced with a focused P0 CI repair PRD for this branch.
-- Current GitHub CI health: run `26269888489` for HEAD `4fd1a209e79d5b0960b7222bb13f174d331f5ef0` failed in `Go (build, vet, lint, test, vulncheck)` during `go test -race -coverprofile=coverage.out -covermode=atomic $(./scripts/ci/go-packages.sh)`.
-- GitHub failure evidence: `pkg/security` `TestRLSEvaluator_PerformanceGate` selected profile `instrumented`, iterations `200000`, cold `3.874807789s`, warm `4.126205606s`, cache stats `{Hits:399950 Misses:50 Size:50}`, compile stats `compileHits=10 compileMisses=10`, exceeding cold budget `1.5s` and warm budget `1s`.
-- Known fresh-CI embed issue checked locally: `go test ./cmd/server -run '^TestBDD_WebEmbedDoesNotRequireGeneratedDist$' -count=1` passed.
-- Known US-453 web test issue checked locally: `npm --prefix web test -- src/components/admin/__tests__/ComplianceReportsPage.test.tsx --run` passed (8 tests).
-- Dogfood follow-up checks passed locally:
-  - DOG-002/DOG-005/DOG-004 frontend BDD set passed (3 files, 10 tests).
-  - DOG-003 OMS/OSS targeted BDD checks passed.
-- Local RED reproduction for SELF-501: `go test -race -coverprofile=/tmp/weave-security-full.out -covermode=atomic ./pkg/security -count=1 -v` failed in `TestRLSEvaluator_PerformanceGate`; profile `instrumented`, iterations `200000`, cold `1.023372792s`, warm `1.020082666s`, cache stats `{Hits:399950 Misses:50 Size:50}`, warm exceeded `1s`.
-- Control checks:
-  - `go test -race -coverprofile=/tmp/weave-security-coverage.out -covermode=atomic ./pkg/security -run '^TestRLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` passed locally but with warm `989.832542ms`, leaving almost no margin.
-  - `go test ./pkg/security -run '^TestRLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` passed with standard profile, cold `33.429334ms`, warm `32.812083ms`.
-  - `go test ./pkg/security -run '^$' -bench '^BenchmarkRLSEvaluator_Warm$' -benchmem -count=3` reported `31.53ns/op` to `39.89ns/op`, `0 B/op`, `0 allocs/op`.
+# Ralph Progress Log - Parallel2 Stream A
+Started: 2026-05-22T15:06:32+08:00
+Integration branch: ralph/self-iteration-20260522-150048
+Stream branch: ralph/self-iteration-20260522-150048-A
+Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
 
-## Current Story
-- SELF-501 Repair RLS Race Coverage Performance Gate: completed.
+Archived previous empty PRD/progress under scripts/ralph/archive/self-iteration-20260522-150632/.
+
+Initial inspection:
+- Branch verified: ralph/self-iteration-20260522-150048-A.
+- Root symlinks verified: prd.json -> scripts/ralph/prd.json and progress.txt -> scripts/ralph/progress.txt.
+- No PR CI auto-fix context or LLM review auto-fix context was present.
+- Known fresh-CI embed concern appears already guarded by cmd/server/embed_ci_bdd_test.go and cmd/server/embed.go embedding all:web with a tracked placeholder.
+- Baseline command passed before story work: go test $(./scripts/ci/go-packages.sh).
+
+Codebase Patterns:
+- Keep stream-A work scoped to backend/API/MCP/ontology service files and Go tests.
+- For server middleware behavior, prefer focused cmd/server unit tests over broad router integration unless route wiring is the behavior under test.
+- Wildcard CORS cannot be combined with Access-Control-Allow-Credentials; explicit origin allowlists keep the credential header and Vary: Origin.
+
+Story P2A-001 - Harden wildcard CORS credentials:
+- RED: go test ./cmd/server -run TestCORSMiddleware_WildcardDoesNotAllowCredentials -count=1
+  Result: failed as expected because wildcard responses emitted Access-Control-Allow-Credentials: "true" for simple and preflight requests.
+- Implementation: cmd/server/security_middleware.go now only sets Access-Control-Allow-Credentials for explicit allowed origins, not wildcard origins.
+- Tests updated: cmd/server/security_middleware_test.go covers wildcard no-credentials for simple/preflight, explicit origin credentials + Vary, and disallowed origin no-credentials.
+- GREEN: go test ./cmd/server -run TestCORSMiddleware_WildcardDoesNotAllowCredentials -count=1
+  Result: pass.
+- Verification: go test ./cmd/server -run 'TestCORSMiddleware' -count=1
+  Result: pass.
+- Verification: go test ./cmd/server -count=1
+  Result: pass.
+- Verification: go test $(./scripts/ci/go-packages.sh)
+  Result: pass.
+- Files changed for commit: cmd/server/security_middleware.go, cmd/server/security_middleware_test.go.
+
+Story P2A-002 - Bound rate-limit bucket growth:
+- Started: 2026-05-22T15:15:58+08:00.
+- RED: go test ./cmd/server -run 'TestRateLimitMiddleware_Prune' -count=1
+  Result: failed as expected at compile time because RateLimitRule did not expose an IdleTTL configuration and the middleware had no clock-aware constructor for deterministic cleanup tests.
+- Implementation: cmd/server/rate_limit.go now stores per-key limiter buckets with lastSeen metadata, supports optional RateLimitRule.IdleTTL with a 5 minute default, and lazily prunes idle buckets during request handling while preserving recently active buckets.
+- Tests updated: cmd/server/rate_limit_test.go covers idle bucket recreation after the configured window and verifies recently active buckets are not pruned/reset.
+- GREEN: go test ./cmd/server -run 'TestRateLimitMiddleware_Prune' -count=1
+  Result: pass.
+- Verification: go test ./cmd/server -run 'TestRateLimit' -count=1
+  Result: pass.
+- Verification: go test ./cmd/server -count=1
+  Result: pass.
+- Verification: go test $(./scripts/ci/go-packages.sh)
+  Result: pass.
+- Files changed for commit: cmd/server/rate_limit.go, cmd/server/rate_limit_test.go.
+
+Codebase Patterns:
+- Rate-limit cleanup should be opportunistic and request-driven instead of a background goroutine in server middleware tests; fake clocks keep pruning behavior deterministic without sleeps.
+
+Story P2A-003 - Preserve audit query bounds on bad pagination tokens:
+- Started: 2026-05-22T15:22:31+08:00.
+- Root cause: decodeAuditCursor decoded pageToken JSON directly into an int field, so structurally invalid but base64-valid cursors such as `{}` used Go's zero value and silently requested the first page; negative offsets were also accepted and then ignored by stores that only apply positive offsets.
+- RED: go test ./cmd/server -run 'TestAuditEventsEndpoint_InvalidPageToken' -count=1
+  Result: failed as expected because missing-offset and negative-offset tokens returned HTTP 200 with the first page of audit events.
+- Implementation: cmd/server/admin_audit.go now decodes cursor JSON through a pointer-backed wire struct and rejects page tokens missing `o` or carrying a negative offset before building the audit.ListFilter.
+- Tests updated: cmd/server/admin_audit_test.go now table-tests invalid base64, missing-offset, and negative-offset page tokens, and asserts the Palantir-style INVALID_ARGUMENT JSON error identifies pageToken.
+- GREEN: go test ./cmd/server -run 'TestAuditEventsEndpoint_InvalidPageToken' -count=1
+  Result: pass.
+- Verification: go test ./cmd/server -run 'TestAuditEventsEndpoint|TestUS493_AuditEndpoint' -count=1
+  Result: pass.
+- Verification: go test ./cmd/server -run 'TestAdminAudit' -count=1
+  Result: pass, but Go reported "[no tests to run]" because current admin audit tests use TestAuditEventsEndpoint/TestUS493_AuditEndpoint names.
+- Verification: go test ./cmd/server -count=1
+  Result: pass.
+- Verification: go test $(./scripts/ci/go-packages.sh)
+  Result: pass.
+- Files changed for commit: cmd/server/admin_audit.go, cmd/server/admin_audit_test.go.
+
+Codebase Patterns:
+- For cursor tokens backed by JSON, decode into pointer/validated wire fields when zero values have semantic meaning; otherwise malformed tokens can collapse to first-page behavior.
+
+
 ---
 
-## 2026-05-22T13:47:00+08:00 - SELF-501
-- What was implemented:
-  - Reduced the `pkg/security` RLS instrumented profile from `200000` iterations to `25000`, with `1s` cold and `750ms` warm budgets, so race+coverage runs still exercise cache-heavy behavior without sitting on a CI wall-clock edge.
-  - Renamed the profile guard to `TestBDD_RLSPerfProfile_KeepsStrictStandardGateAndAllowsInstrumentedVariance` and updated its instrumented acceptance expectations first.
-  - Kept the standard non-instrumented profile unchanged at `1000000` iterations, `500ms` cold budget, and `50ms` warm budget.
-- Files changed:
-  - `pkg/security/rls_bench_test.go`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- RED evidence:
-  - GitHub CI run `26269888489` failed in `go test -race -coverprofile=coverage.out -covermode=atomic $(./scripts/ci/go-packages.sh)` with `pkg/security` `TestRLSEvaluator_PerformanceGate`: profile `instrumented`, iterations `200000`, cold `3.874807789s`, warm `4.126205606s`, budgets `1.5s` and `1s`.
-  - Local reproduction before the fix: `go test -race -coverprofile=/tmp/weave-security-full.out -covermode=atomic ./pkg/security -count=1 -v` failed with profile `instrumented`, iterations `200000`, cold `1.023372792s`, warm `1.020082666s`, warm budget `1s`.
-  - Test-first RED after changing only the expected profile contract: `go test -race -coverprofile=/tmp/weave-security-red.out -covermode=atomic ./pkg/security -run '^TestBDD_RLSPerfProfile' -count=1 -v` failed with `profile.iterations = 200000, want 25000`.
-- GREEN evidence:
-  - `go test -race -coverprofile=/tmp/weave-security-profile.out -covermode=atomic ./pkg/security -run '^TestBDD_RLSPerfProfile' -count=1 -v` passed.
-  - `go test -race -coverprofile=/tmp/weave-security-coverage.out -covermode=atomic ./pkg/security -run '^TestBDD_RLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` passed; profile `instrumented`, iterations `25000`, cold `126.964375ms`, warm `126.2625ms`, cache stats `{Hits:49950 Misses:50 Size:50}`.
-  - `go test -race -coverprofile=/tmp/weave-security-full.out -covermode=atomic ./pkg/security -count=1 -v` passed; package coverage `73.9%`, RLS gate profile `instrumented`, cold `126.151334ms`, warm `124.901875ms`.
-  - `go test ./pkg/security -run '^TestBDD_RLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` passed; profile `standard`, iterations `1000000`, cold `52.791083ms`, warm `37.623417ms`.
-  - `go test ./pkg/security -run '^$' -bench '^BenchmarkRLSEvaluator_Warm$' -benchmem -count=3` passed; `34.68ns/op` to `37.77ns/op`, `0 B/op`, `0 allocs/op`.
-  - `go test -race -coverprofile=/tmp/weave-ci-coverage.out -covermode=atomic $(./scripts/ci/go-packages.sh)` passed locally; `pkg/security` passed with `73.9%` coverage.
-- Learnings for future iterations:
-  - The RLS benchmark still provides the raw hot-path signal (`~35ns/op`, zero allocs) while the test gate proves profile selection and cache-hit behavior. Under race+coverage, use the smaller profile to avoid mistaking instrumentation overhead and runner contention for a hot-path regression.
-  - The synthetic workload's paired modulo pattern produces 50 unique decision keys, so `25000` iterations still gives many warm-cache hits (`49950` hits over cold+warm passes) without needing 200000 instrumented iterations.
----
+## Stream B: ralph/self-iteration-20260522-150048-B
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-150048-B
+HEAD: accac492427f
 
-## 2026-05-22T14:55:00+08:00 - SELF-501 follow-up
-- What was implemented:
-  - Repaired the local verifier flake that remained after the first CI-fix commit: standard non-instrumented `TestRLSEvaluator_PerformanceGate` failed once at warm `53.747ms` against a `50ms` budget during full `make test`, while targeted repeats stayed around `32ms-38ms`.
-  - Added `warmSamples` to the RLS performance profile: standard runs keep the `1000000` iteration and `50ms` warm budget but take the best of 3 warm-cache samples; instrumented race/coverage runs stay at one reduced sample.
-  - Updated the BDD profile contract to assert the standard profile uses 3 samples, preserving the strict budget while avoiding scheduler-jitter false negatives.
-- Files changed:
-  - `pkg/security/rls_bench_test.go`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- RED evidence:
-  - Local verifier log `verify-ralph-self-iteration-20260522-123354-998073eff562-1779428968.log` failed `make-test`: `TestRLSEvaluator_PerformanceGate` standard profile warm `53.747ms` exceeded `50ms`.
-- GREEN evidence:
-  - `go test ./pkg/security -run '^TestBDD_RLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=5 -v` passed; standard warm best samples stayed below budget.
-  - `go test -race -coverprofile=/tmp/weave-security-full.out -covermode=atomic ./pkg/security -count=1 -v` passed; instrumented profile stayed at `25000` iterations and one warm sample.
-  - `go test ./pkg/security -count=1` passed.
-  - `make test` passed, including `pkg/security`.
-- Learnings for future iterations:
-  - A single wall-clock performance sample inside the full Go package suite is vulnerable to scheduler jitter. For strict hot-path gates, keep the budget strict but sample multiple identical warm-cache passes and compare the best sample; use benchmarks for the raw ns/op signal.
+# Ralph Progress Log - Parallel2 Stream B
+Started: 2026-05-22T15:07:49+08:00
+Integration branch: ralph/self-iteration-20260522-150048
+Stream branch: ralph/self-iteration-20260522-150048-B
+Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
+
+Archived previous empty runtime state:
+- scripts/ralph/archive/self-iteration-20260522-150749/prd.json
+- scripts/ralph/archive/self-iteration-20260522-150749/progress.txt
+
+Initial inspection:
+- Verified branch: ralph/self-iteration-20260522-150048-B.
+- Verified clean worktree before edits.
+- No PR CI auto-fix context or LLM review auto-fix context was present.
+- Existing known-risk checks:
+  - `go test ./cmd/server` passed, covering fresh Go build without generated SPA assets.
+  - `npm test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx` passed: 8 tests.
+  - `npm test -- --run src/components/dashboard/__tests__/DashboardPage.totalObjectTypes.bdd.test.tsx` passed: 3 tests.
+  - `npm test -- --run src/components/layout/__tests__/Sidebar.test.tsx` passed: 10 tests.
+  - `npm test` passed: 284 files, 2907 tests.
+
+Selected story for this iteration:
+- P2B-001 - Command Palette Ontology Workspace Routes
+
+P2B-001 implementation:
+- Added active-ontology workspace page entries to `web/src/components/common/CommandPalette.tsx`.
+- Entries mirror the sidebar's ontology-scoped navigation for Query Builder, Quiver TS, Import Data, Approvals, Action History, Saga Jobs, QueryTypes, Automation Rules, Proposals, Object Types, Link Types, Action Types, Interfaces, Value Types, Schema Graph, History, Saga DLQ, Dataset Rollback, and Security Policies.
+- Each scoped page records a recent command with a stable ontology-qualified id, the active ontology as the hint, and the exact target route.
+- Added BDD-style unit coverage in `web/src/components/common/__tests__/CommandPalette.test.tsx`.
+
+TDD evidence:
+- RED: `npm test -- --run src/components/common/__tests__/CommandPalette.test.tsx` failed with 2 expected failures because `Query Builder` was not present as a command palette option.
+- GREEN: `npm test -- --run src/components/common/__tests__/CommandPalette.test.tsx` passed: 1 file, 18 tests.
+
+Verification evidence:
+- `npm test` passed: 284 files, 2910 tests.
+- `npm run typecheck` passed.
+- `npx eslint src/components/common/CommandPalette.tsx src/components/common/__tests__/CommandPalette.test.tsx` passed.
+- `npm run build` passed and bundle budgets passed.
+- `go test ./cmd/server` passed from cache.
+- `npm run lint` failed on pre-existing repo-wide issues outside this story, including unrelated errors in e2e specs, AuthContext, BindingsEditor, LogicFlowsPage, BrowserPage, ThreadsPage, and web/src/test/setup.ts. The two touched command palette files pass scoped ESLint.
+
+Files changed for P2B-001:
+- `web/src/components/common/CommandPalette.tsx`
+- `web/src/components/common/__tests__/CommandPalette.test.tsx`
+
+Codebase Patterns:
+- Command palette tests use a global `fetch` stub plus `MemoryRouter` and validate user-visible options with role `option`.
+- Command palette selections persist through `useRecentCommandsStore`; tests can assert selected destinations through the most recent entry without mocking React Router internals.
+- README and workflow documentation can be guarded with Vitest raw imports (`?raw`) from `web/src/lib/__tests__`, matching the existing Playwright spec contract pattern.
+
+Selected story for this iteration:
+- P2B-002 - Frontend Runbook Replaces Vite Boilerplate
+
+P2B-002 implementation:
+- Replaced the stock Vite `web/README.md` with a Weave Web UI runbook covering local development, verification commands, Playwright BDD/E2E layout, `make e2e-up` stack usage, primary browser surfaces, and related docs.
+- Added a README contract test in `web/src/lib/__tests__/webReadmeContracts.test.ts` so future template drift or missing dogfood instructions are caught by Vitest.
+
+TDD evidence:
+- RED: `npm test -- --run src/lib/__tests__/webReadmeContracts.test.ts` failed with the expected assertion because `web/README.md` still started with `# React + TypeScript + Vite` and did not contain `# Weave Web UI`.
+- GREEN: `npm test -- --run src/lib/__tests__/webReadmeContracts.test.ts` passed: 1 file, 1 test.
+
+Verification evidence:
+- `npm test` passed: 285 files, 2911 tests.
+- `npx eslint src/lib/__tests__/webReadmeContracts.test.ts` passed.
+- `npm run typecheck` passed.
+- `npm run build` passed and bundle budgets passed.
+
+Files changed for P2B-002:
+- `web/README.md`
+- `web/src/lib/__tests__/webReadmeContracts.test.ts`
+
+Selected story for this iteration:
+- P2B-003 - Dogfood Smoke Route Coverage Stays Discoverable
+
+P2B-003 implementation:
+- Added `web/tests/feature.command-palette.spec.ts`, a BDD Playwright smoke probe for opening the command palette inside `/explorer/northwind`, selecting Query Builder, and routing to `/objectsets/northwind`.
+- Added the command-palette, sidebar dogfood, and dashboard BDD smoke specs to the CI Playwright `--list` discovery step.
+- Extended `web/src/lib/__tests__/playwrightSpecContracts.test.ts` so CI discovery must keep listing the command-palette, sidebar, dashboard, dogfood verify, and dogfood empty-state route probes.
+
+TDD evidence:
+- RED: `npm test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed with the expected assertion because CI did not contain `tests/feature.command-palette.spec.ts`.
+- GREEN: `npm test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 23 tests.
+
+Verification evidence:
+- `npx playwright test --list tests/feature.command-palette.spec.ts tests/feature.sidebar.dogfood.spec.ts tests/feature.dashboard.spec.ts dogfood-verify.spec.ts dogfood-empty-states.spec.ts` passed and listed 21 tests in 5 files.
+- `npx eslint src/lib/__tests__/playwrightSpecContracts.test.ts tests/feature.command-palette.spec.ts` passed.
+- Exact CI discovery command passed: `npx playwright test --list us444/ phase6/ phase7/ vtx-099-system-graph-render.spec.ts dogfood-verify.spec.ts dogfood-diagnose.spec.ts dogfood-empty-states.spec.ts tests/feature.command-palette.spec.ts tests/feature.sidebar.dogfood.spec.ts tests/feature.dashboard.spec.ts us-456-perf-dashboard.spec.ts us-457-timeseries-tab.spec.ts us-458-hotkey-help.spec.ts zzz-login-rate-limit.spec.ts` listed 79 tests in 40 files.
+- `npm test` passed: 285 files, 2911 tests.
+- `npm run typecheck` passed.
+- `npm run build` passed and bundle budgets passed.
+
+Files changed for P2B-003:
+- `.github/workflows/ci.yml`
+- `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
+- `web/tests/feature.command-palette.spec.ts`
+
+Codebase Patterns:
+- CI Playwright discovery is a list-only syntax/import gate; adding BDD specs under `web/tests/` requires explicit `tests/<file>.spec.ts` targets when they are critical enough to protect in PR CI.
+- Command-palette browser smoke should use `Control+K`, scope option assertions to `data-testid="command-palette"`, and verify the final URL rather than internal router calls.
+
+
 ---
