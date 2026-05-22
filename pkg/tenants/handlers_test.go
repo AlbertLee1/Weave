@@ -2,9 +2,11 @@ package tenants
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -18,6 +20,13 @@ func authedReq(method, path string, body interface{}) *http.Request {
 		_ = json.NewEncoder(&buf).Encode(body)
 	}
 	r := httptest.NewRequest(method, path, &buf)
+	r = r.WithContext(auth.WithUser(r.Context(), &auth.User{ID: "user:admin"}))
+	return r
+}
+
+func authedRawReq(method, path, body string) *http.Request {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
 	r = r.WithContext(auth.WithUser(r.Context(), &auth.User{ID: "user:admin"}))
 	return r
 }
@@ -98,6 +107,69 @@ func TestHandler_CRUD(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Errorf("get after delete: want 404, got %d", w.Code)
 	}
+}
+
+func TestBDD_HandlerRejectsAmbiguousJSONBodies_P2A002(t *testing.T) {
+	t.Run("create rejects concatenated JSON without creating quota", func(t *testing.T) {
+		_, r, store, _ := newHandlerRouter()
+		body := `{"tenant":"acme","maxObjects":1000} {"tenant":"globex","maxObjects":2000}`
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, authedRawReq(http.MethodPost, "/api/admin/tenant-quotas", body))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("create concatenated JSON: want 400, got %d (%s)", w.Code, w.Body.String())
+		}
+		var apiErr struct {
+			ErrorName string `json:"errorName"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &apiErr); err != nil {
+			t.Fatalf("decode error response: %v", err)
+		}
+		if apiErr.ErrorName != "InvalidRequestBody" {
+			t.Fatalf("errorName: want InvalidRequestBody, got %q", apiErr.ErrorName)
+		}
+		rows, err := store.ListQuotas(context.Background())
+		if err != nil {
+			t.Fatalf("list quotas: %v", err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("ambiguous create must not persist quotas, got %+v", rows)
+		}
+	})
+
+	t.Run("update rejects concatenated JSON without mutating quota", func(t *testing.T) {
+		_, r, store, _ := newHandlerRouter()
+		if err := store.CreateQuota(context.Background(), &Quota{
+			Tenant:     "acme",
+			MaxObjects: 100,
+			MaxStorage: 200,
+			MaxQPS:     10,
+			Burst:      5,
+		}); err != nil {
+			t.Fatalf("seed quota: %v", err)
+		}
+		body := `{"maxObjects":1000,"description":"accepted first"} {"maxObjects":2000,"description":"ignored second"}`
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, authedRawReq(http.MethodPut, "/api/admin/tenant-quotas/acme", body))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("update concatenated JSON: want 400, got %d (%s)", w.Code, w.Body.String())
+		}
+		var apiErr struct {
+			ErrorName string `json:"errorName"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &apiErr); err != nil {
+			t.Fatalf("decode error response: %v", err)
+		}
+		if apiErr.ErrorName != "InvalidRequestBody" {
+			t.Fatalf("errorName: want InvalidRequestBody, got %q", apiErr.ErrorName)
+		}
+		got, err := store.GetQuota(context.Background(), "acme")
+		if err != nil {
+			t.Fatalf("get quota: %v", err)
+		}
+		if got.MaxObjects != 100 || got.MaxStorage != 200 || got.MaxQPS != 10 || got.Burst != 5 || got.Description != "" {
+			t.Fatalf("ambiguous update must not mutate quota, got %+v", got)
+		}
+	})
 }
 
 func TestHandler_UnauthorisedWhenNoUser(t *testing.T) {
