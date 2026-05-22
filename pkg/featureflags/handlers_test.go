@@ -2,6 +2,7 @@ package featureflags
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -158,6 +159,37 @@ func TestHandler_CreateValidation(t *testing.T) {
 				t.Fatalf("%s: want %d, got %d (%s)", tc.name, tc.wantStatus, w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestHandler_CreateRejectsConcatenatedJSONWithoutCreatingFlag(t *testing.T) {
+	store := NewMemoryStore()
+	r := newTestRouter(store)
+
+	body := []byte(`{"name":"ambiguous-flag","enabled":true} {"name":"ignored-flag"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/feature-flags", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("POST concatenated JSON: want 400, got %d (%s)", w.Code, w.Body.String())
+	}
+	var apiErr struct {
+		ErrorCode string `json:"errorCode"`
+		ErrorName string `json:"errorName"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &apiErr); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if apiErr.ErrorCode != "INVALID_ARGUMENT" || apiErr.ErrorName != "InvalidRequestBody" {
+		t.Fatalf("unexpected API error: %+v", apiErr)
+	}
+	flags, err := store.ListFlags(context.Background())
+	if err != nil {
+		t.Fatalf("ListFlags: %v", err)
+	}
+	if len(flags) != 0 {
+		t.Fatalf("concatenated JSON must not create flags, got %+v", flags)
 	}
 }
 
