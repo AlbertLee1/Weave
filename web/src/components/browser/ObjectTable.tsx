@@ -31,6 +31,57 @@ interface ObjectTableProps {
   selection?: ObjectTableSelection;
 }
 
+function getHighlightSnippet(row: WireObject, field: string): string | undefined {
+  const raw = row._highlights;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const snippets = (raw as Record<string, unknown>)[field];
+  if (!Array.isArray(snippets)) return undefined;
+  return snippets.find((s): s is string => typeof s === 'string' && s.length > 0);
+}
+
+function renderHighlightSnippet(snippet: string): React.ReactNode {
+  const parts = snippet.split(/(<\/?mark>)/gi);
+  let marked = false;
+  return (
+    <span className="whitespace-normal">
+      {parts.map((part, index) => {
+        const token = part.toLowerCase();
+        if (token === '<mark>') {
+          marked = true;
+          return null;
+        }
+        if (token === '</mark>') {
+          marked = false;
+          return null;
+        }
+        if (!part) return null;
+        return marked ? (
+          <mark
+            key={index}
+            className="rounded bg-accent-amber/25 px-0.5 text-text-primary"
+          >
+            {part}
+          </mark>
+        ) : (
+          <span key={index}>{part}</span>
+        );
+      })}
+    </span>
+  );
+}
+
+function renderCellValue(
+  row: WireObject,
+  field: string,
+  value: unknown,
+): React.ReactNode {
+  const snippet = getHighlightSnippet(row, field);
+  if (snippet) return renderHighlightSnippet(snippet);
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') return truncate(JSON.stringify(value), 80);
+  return truncate(String(value), 80);
+}
+
 export function ObjectTable({
   objectType,
   data,
@@ -92,12 +143,12 @@ export function ObjectTable({
       frozen: true,
       sortable: true,
       width: '180px',
-      render: (row) => String(row.__primaryKey ?? ''),
+      render: (row) => renderCellValue(row, objectType.primaryKey, row.__primaryKey),
     });
 
     // Generate columns from objectType.properties
     if (objectType.properties) {
-      for (const [apiName, _prop] of Object.entries(objectType.properties)) {
+      for (const apiName of Object.keys(objectType.properties)) {
         // Skip if this is the primary key (already rendered as __primaryKey)
         if (apiName === objectType.primaryKey) continue;
 
@@ -105,12 +156,7 @@ export function ObjectTable({
           key: apiName,
           header: apiName,
           sortable: sortablePropertyKeys?.has(apiName) ?? false,
-          render: (row) => {
-            const val = row[apiName];
-            if (val === null || val === undefined) return '';
-            if (typeof val === 'object') return truncate(JSON.stringify(val), 80);
-            return truncate(String(val), 80);
-          },
+          render: (row) => renderCellValue(row, apiName, row[apiName]),
         });
       }
     }

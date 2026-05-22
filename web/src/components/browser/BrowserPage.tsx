@@ -31,7 +31,10 @@ import { EmptyState } from '../common/EmptyState';
 import { TimeTravelToolbar } from './TimeTravelToolbar';
 import { useTimeTravelActive } from './useTimeTravel';
 import type { WhereClause, WireObject } from '../../api/types';
-import type { SavedSearchDefinition } from '../../api/savedSearches';
+import type {
+  BrowserViewMode,
+  SavedSearchDefinition,
+} from '../../api/savedSearches';
 import { ApiRequestError } from '../../api/client';
 
 // DOG-004: surface the backend `parameters.reason` alongside the
@@ -66,6 +69,13 @@ const FACETABLE_BASE_TYPES = new Set([
   'date',
   'datetime',
   'timestamp',
+]);
+const BROWSER_VIEW_MODES = new Set<BrowserViewMode>([
+  'table',
+  'map',
+  'gantt',
+  'sankey',
+  'pivot',
 ]);
 
 type BrowserLiveStatus = {
@@ -133,9 +143,7 @@ function BrowserPageContent({
   );
 
   // View mode: table | map | gantt | sankey | pivot
-  const [viewMode, setViewMode] = useState<
-    'table' | 'map' | 'gantt' | 'sankey' | 'pivot'
-  >('table');
+  const [viewMode, setViewMode] = useState<BrowserViewMode>('table');
 
   // Realtime mode state: 'off' | 'ws' (WebSocket) | 'sse' (SSE fallback)
   const [realtimeMode, setRealtimeMode] = useState<'off' | 'ws' | 'sse'>('off');
@@ -342,11 +350,25 @@ function BrowserPageContent({
     onStatusChange: handleObjectSetStatusChange,
   });
 
-  // Compute the set of facet-able fields from the object type's properties.
-  // Picks string/boolean/date-typed fields, excludes the primary key, and caps
-  // at MAX_FACET_FIELDS so the response stays bounded.
+  // Compute the set of facet-able fields from property metadata. Detailed
+  // metadata is authoritative for searchability; compact object type metadata
+  // remains the fallback while the detailed query is loading or unavailable.
   const facetFields = useMemo<string[]>(() => {
-    if (!objectType?.properties) return [];
+    if (!objectType) return [];
+    if (detailedProperties) {
+      const out: string[] = [];
+      for (const prop of detailedProperties) {
+        if (prop.apiName === objectType.primaryKey) continue;
+        if (!prop.isSearchable || prop.isArray) continue;
+        const t = prop.baseType.toLowerCase();
+        if (FACETABLE_BASE_TYPES.has(t)) {
+          out.push(prop.apiName);
+          if (out.length >= MAX_FACET_FIELDS) break;
+        }
+      }
+      return out;
+    }
+    if (!objectType.properties) return [];
     const out: string[] = [];
     for (const [name, prop] of Object.entries(objectType.properties)) {
       if (name === objectType.primaryKey) continue;
@@ -357,7 +379,7 @@ function BrowserPageContent({
       }
     }
     return out;
-  }, [objectType]);
+  }, [detailedProperties, objectType]);
 
   const hasFacetSelection = useMemo(
     () => Object.values(selectedFacets).some((vs) => vs.length > 0),
@@ -382,6 +404,8 @@ function BrowserPageContent({
     return sortablePropertyKeys.has(sortField) ? sortField : undefined;
   }, [objectType?.primaryKey, sortField, sortablePropertyKeys]);
 
+  const searchTextField = objectType?.titleProperty ?? objectType?.primaryKey;
+
   // Build where clause for search
   const whereClause = useMemo(() => {
     const allFilters: FilterCondition[] = [...filters];
@@ -391,8 +415,7 @@ function BrowserPageContent({
       // DOG-004: backend expects a single string (Bleve MatchQuery tokenises and
       // ORs on whitespace internally); sending an array yielded
       // `containsAnyTerm value must be a string` / SearchObjectsFailed.
-      const titleProp = objectType?.titleProperty ?? objectType?.primaryKey;
-      if (titleProp) {
+      if (searchTextField) {
         const normalized = searchText
           .trim()
           .split(/\s+/)
@@ -400,7 +423,7 @@ function BrowserPageContent({
           .join(' ');
         if (normalized.length > 0) {
           allFilters.push({
-            field: titleProp,
+            field: searchTextField,
             op: 'containsAnyTerm',
             value: normalized,
           });
@@ -433,7 +456,7 @@ function BrowserPageContent({
     return combined.length === 1
       ? combined[0]
       : { type: 'and', value: combined };
-  }, [filters, searchText, objectType, selectedFacets]);
+  }, [filters, searchText, searchTextField, selectedFacets]);
 
   // List objects (no filters/search)
   const listResult = useListObjects({
@@ -462,6 +485,10 @@ function BrowserPageContent({
     orderBy: effectiveSortField
       ? { field: effectiveSortField, direction: sortDirection }
       : undefined,
+    highlight:
+      searchText.trim().length > 0 && searchTextField
+        ? { fields: [searchTextField] }
+        : undefined,
     select: selectFields,
     facets: facetFields,
     enabled: hasActiveSearch,
@@ -529,14 +556,27 @@ function BrowserPageContent({
       filters: filters.length > 0 ? filters : undefined,
       facets: hasFacetSelection ? selectedFacets : undefined,
       sort: sortField ? { field: sortField, direction: sortDirection } : null,
+      viewMode,
     };
-  }, [searchText, filters, hasFacetSelection, selectedFacets, sortField, sortDirection]);
+  }, [
+    searchText,
+    filters,
+    hasFacetSelection,
+    selectedFacets,
+    sortField,
+    sortDirection,
+    viewMode,
+  ]);
 
   const handleApplySavedSearch = useCallback(
     (def: SavedSearchDefinition) => {
+      const savedViewMode = BROWSER_VIEW_MODES.has(def.viewMode ?? 'table')
+        ? def.viewMode ?? 'table'
+        : 'table';
       setSearchText(def.searchText ?? '');
       setFilters(def.filters ?? []);
       setSelectedFacets(def.facets ?? {});
+      setViewMode(savedViewMode);
       setSelectedRowMap(new Map());
       if (def.sort) {
         setSortField(def.sort.field);
@@ -870,7 +910,7 @@ function BrowserPageContent({
               ontology={ontology}
               objectType={objectTypeParam}
               currentDefinition={currentDefinition}
-              hasCurrentState={hasActiveSearch}
+              hasCurrentState={hasActiveSearch || viewMode !== 'table'}
               onLoad={handleApplySavedSearch}
             />
             {hasActiveSearch && facetFields.length > 0 && (
