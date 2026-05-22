@@ -1,109 +1,98 @@
 {
   "project": "Weave parallel2 self-iteration",
-  "branchName": "ralph/self-iteration-20260522-191028",
+  "branchName": "ralph/self-iteration-20260522-214033",
   "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
   "userStories": [
     {
       "id": "P2A-001",
-      "title": "Return complete MCP ObjectType resource schema bundles",
-      "description": "As an MCP client, I want resources/read to return ObjectType properties and outgoing link metadata so agents can reason over ontology schemas without falling back to REST endpoints.",
-      "priority": 1,
-      "area": "backend/mcp",
-      "bddAcceptanceCriteria": [
-        "Given an ontology with an ObjectType that has properties and outgoing links, when resources/read is called for weave://objecttype/<ontology>/<objectType>, then the JSON content includes objectType, properties, and outgoingLinkTypes.",
-        "Given resources/read is called for a weave://ontology/<rid> resource, when the ontology contains ObjectTypes with properties, then each ObjectType in the ontology bundle includes its properties.",
-        "Given the OMS repository cannot list properties or outgoing links, when resources/read is called, then MCP returns a JSON-RPC tool error instead of silently returning partial schema data."
+      "title": "Reject trailing tokens in shared JSON request decoding",
+      "priority": "high",
+      "story": "As an API client and operator, I want Weave handlers that use the shared JSON decoder to reject request bodies containing extra JSON values or trailing junk so malformed or smuggled payloads cannot be partially accepted.",
+      "scope": "Backend shared HTTP utility plus a representative OSS HTTP handler regression test.",
+      "bddAcceptance": [
+        "Given an OSS SearchObjects request body that starts with a valid JSON object and then contains a second JSON object, when the request is posted, then the handler returns HTTP 400 with errorName InvalidRequestBody.",
+        "Given the same request path with a single valid JSON object, when the request is posted, then the handler continues to accept and execute it.",
+        "Given the shared httputil.ReadJSON helper, when the body contains trailing non-whitespace after the first JSON value, then ReadJSON returns an error instead of silently decoding the first value."
       ],
       "dependencies": [
-        "pkg/mcp resource handlers",
-        "oms.Repository metadata methods"
-      ],
-      "verification": [
-        "go test ./pkg/mcp -run P2A001 -count=1",
-        "go test ./pkg/mcp -count=1",
-        "go test ./cmd/weave-mcp ./pkg/mcp -count=1"
+        "pkg/httputil.ReadJSON",
+        "pkg/oss.SearchObjects HTTP handler"
       ],
       "passes": true,
       "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-191028-A"
-    },
-    {
-      "id": "P2A-002",
-      "title": "Reject invalid JSON-RPC id shapes in MCP transports",
-      "description": "As an MCP transport client, I want invalid JSON-RPC id values to be rejected with standard invalid-request errors so malformed envelopes do not leak unsupported response IDs.",
-      "priority": 2,
-      "area": "backend/mcp",
-      "bddAcceptanceCriteria": [
-        "Given a JSON-RPC request whose id is an object or array, when the HTTP MCP endpoint receives it, then the response is HTTP 200 with JSON-RPC error code -32600 and id null.",
-        "Given a stdio MCP request whose id is an object or array, when the bridge parses it, then stdout receives a JSON-RPC error line with code -32600 and id null.",
-        "Given string, number, or null ids, when MCP parses the envelope, then existing request handling and id round-tripping still work."
-      ],
-      "dependencies": [
-        "pkg/mcp protocol parsing",
-        "HTTP and stdio MCP transports"
-      ],
-      "verification": [
-        "go test ./pkg/mcp -run 'TestProtocol|TestHTTPTransport|TestStdioTransport' -count=1"
-      ],
-      "passes": true,
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-191028-A"
-    },
-    {
-      "id": "P2A-003",
-      "title": "Harden stream ingest metadata validation against schema drift",
-      "description": "As an ingest writer, I want stream ingest to reject object properties that no longer exist in OMS metadata before publishing to Funnel so accepted batches cannot become invisible or partially indexed.",
-      "priority": 3,
-      "area": "backend/ontology/ingest",
-      "bddAcceptanceCriteria": [
-        "Given an ingest edit contains an object property not declared on the target ObjectType, when the stream ingest endpoint validates the batch, then it returns InvalidIngestEdit and does not publish.",
-        "Given a valid batch containing only declared properties, when the stream ingest endpoint validates the batch, then it publishes the batch unchanged except for source=ingest and URL objectType enforcement.",
-        "Given metadata lookup fails, when ingest validation runs, then the endpoint returns a stable server-side metadata lookup error and does not publish."
-      ],
-      "dependencies": [
-        "pkg/oss stream ingest metadata validator",
-        "oms.Repository object metadata"
-      ],
-      "verification": [
-        "go test ./pkg/oss -run 'TestStreamIngest.*Metadata|TestBDD_StreamIngest' -count=1"
-      ],
-      "passes": true,
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-191028-A"
+      "source_branch": "ralph/self-iteration-20260522-214033-A"
     },
     {
       "id": "P2B-001",
-      "title": "Reset Browser route-scoped state when switching object types",
+      "title": "Saved Browser Searches Hydrate the Visible Search Box",
       "priority": "high",
+      "status": "completed",
       "passes": true,
-      "context": "BrowserPage currently keeps committed search text, filters, selected facets, selected rows, pagination, detail state, and live subscription state in component-local state. React Router can reuse the same BrowserPage instance when navigating between /browser/:ontology/:objectType routes, so stale fields or selected primary keys from one object type can leak into the next object grid.",
+      "summary": "Loading a Browser saved search with searchText must update both the query state and the visible search input so operators can trust and edit the active object search.",
       "dependencies": [
         "web/src/components/browser/BrowserPage.tsx",
         "web/src/components/browser/SearchBar.tsx",
-        "web/src/components/browser/__tests__/BrowserPage.test.tsx",
-        "TanStack Query object list/search hooks"
+        "web/src/components/browser/SavedSearchesPanel.tsx"
       ],
-      "acceptanceCriteria": [
-        {
-          "scenario": "Given an operator has searched and selected rows on one object type, when they navigate to another /browser/:ontology/:objectType route, then the search input, active search/filter state, selected rows, detail panel, pagination, and bulk toolbar reset for the new object type."
-        },
-        {
-          "scenario": "Given the route changes to a new object type, when the new object grid loads, then BrowserPage does not send the previous object type's search/filter where clause to the new object type."
-        },
-        {
-          "scenario": "Given live updates were enabled for the previous object type, when the route changes, then BrowserPage resets the live/objectSet subscription state instead of reusing a subscription RID created for the previous object type."
-        }
+      "bddAcceptanceCriteria": [
+        "Given an operator is on /browser/:ontology/:objectType and a saved search contains searchText 'OpenAI', when they click that saved search, then the Search objects input visibly contains 'OpenAI'.",
+        "Given that same saved search is loaded, when BrowserPage posts to /search, then the where clause is containsAnyTerm on the title property with value 'OpenAI' as a string.",
+        "Given the operator clears the hydrated input, when the input becomes empty, then BrowserPage returns to the unfiltered list request."
       ],
-      "bddTests": [
-        "web/src/components/browser/__tests__/BrowserPage.test.tsx adds a BDD scenario that navigates between two object types in the same BrowserPage instance and asserts stale search/selection state is cleared."
-      ],
-      "verificationCommands": [
-        "npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx",
-        "npm --prefix web test -- --run bdd",
-        "npm --prefix web test"
+      "verification": [
+        "npm test -- BrowserPage.savedSearches.bdd.test.tsx",
+        "npm test -- SearchBar.test.tsx BrowserPage.savedSearches.bdd.test.tsx",
+        "npm run build"
       ],
       "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-191028-B"
+      "source_branch": "ralph/self-iteration-20260522-214033-B"
+    },
+    {
+      "id": "P2B-002",
+      "title": "Browser Bulk Selection Clears on Query Context Changes",
+      "priority": "medium",
+      "status": "completed",
+      "passes": true,
+      "summary": "Bulk action state should not retain hidden rows after search, filter, saved-search, or facet changes replace the active result set.",
+      "dependencies": [
+        "web/src/components/browser/BrowserPage.tsx",
+        "web/src/components/browser/ObjectTable.tsx",
+        "web/src/components/browser/BulkActionToolbar.tsx"
+      ],
+      "bddAcceptanceCriteria": [
+        "Given a row is selected in the unfiltered Browser table, when the operator applies a text search, then the bulk toolbar clears before actions can target stale rows.",
+        "Given rows are selected on one filtered result set, when the operator loads a saved search, then only rows explicitly selected after the saved search load are eligible for bulk actions."
+      ],
+      "verification": [
+        "npm test -- BrowserPage.bulkSelection.bdd.test.tsx",
+        "npm run build"
+      ],
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260522-214033-B"
+    },
+    {
+      "id": "P2B-003",
+      "title": "Browser Live Mode Surfaces SSE Fallback Provisioning Failures",
+      "priority": "medium",
+      "status": "completed",
+      "passes": true,
+      "summary": "The Browser live toggle should expose a clear inline failure if WebSocket reconnects and the temporary ObjectSet needed for the documented SSE fallback cannot be created.",
+      "dependencies": [
+        "docs/subscriptions/sse.md",
+        "web/src/components/browser/BrowserPage.tsx",
+        "web/src/hooks/useObjectSetSubscription.ts",
+        "web/src/hooks/useWebSocketSubscription.ts"
+      ],
+      "bddAcceptanceCriteria": [
+        "Given Live mode is enabled and the WebSocket transport enters reconnecting, when createTemporaryObjectSet fails, then the Browser header shows a failed fallback status instead of staying in an indefinite connecting state.",
+        "Given the operator turns Live off after that failure, when they turn it on again, then the fallback error is cleared and the Browser retries provisioning."
+      ],
+      "verification": [
+        "npm test -- BrowserPage.liveFallback.bdd.test.tsx",
+        "npm run build"
+      ],
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260522-214033-B"
     }
   ]
 }

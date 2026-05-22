@@ -1,133 +1,129 @@
 # Ralph Progress Log - Parallel2 Integration
-Integrated: 2026-05-22T19:32:08+08:00
-Integration branch: ralph/self-iteration-20260522-191028
+Integrated: 2026-05-22T22:13:28+08:00
+Integration branch: ralph/self-iteration-20260522-214033
 
-## Stream A: ralph/self-iteration-20260522-191028-A
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-191028-A
-HEAD: 97946b126d4c
+## Stream A: ralph/self-iteration-20260522-214033-A
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-214033-A
+HEAD: 7ad3024f8324
 
 # Ralph Progress Log - Parallel2 Stream A
-Started: 2026-05-22T19:13:55+08:00
-Integration branch: ralph/self-iteration-20260522-191028
-Stream branch: ralph/self-iteration-20260522-191028-A
+Started: 2026-05-22T21:46:18+08:00
+Integration branch: ralph/self-iteration-20260522-214033
+Stream branch: ralph/self-iteration-20260522-214033-A
 Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
 
-Initial inspection:
-- Branch verified with `git branch --show-current`: ralph/self-iteration-20260522-191028-A.
-- Worktree initially clean.
-- Previous PRD had no stories and was archived under `scripts/ralph/archive/self-iteration-20260522-191355/`.
-- No `PR CI auto-fix context` or `LLM review auto-fix context` was present.
-- `gh run list --limit 10` initially showed the latest main CI run in progress and the prior self-iteration CI runs green; a follow-up `gh run list --limit 5` showed the latest main CI run completed successfully. The only completed failure in the snapshot was Codespaces Prebuilds, not the Go/Web CI gate.
-- Dogfood DOG-001 and DOG-003 are already represented in current source/tests, including Northwind seed FK cleanup and OMS/index bootstrap guards.
+## Codebase Patterns
+- Shared JSON request-body validation belongs in `pkg/httputil.ReadJSON`; endpoints wired through this helper inherit the 1 MiB limit and single-JSON-value requirement without per-handler duplicate decoder logic.
 
-Selected story for this execution:
-- P2A-001 - Return complete MCP ObjectType resource schema bundles.
+## Baseline Inspection
+- Branch verified: `ralph/self-iteration-20260522-214033-A`.
+- Initial PRD had no stories, archived to `scripts/ralph/archive/self-iteration-20260522-214618/`.
+- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the incoming progress file.
+- Dogfood DOG-003 and DOG-004 are already represented by current source/tests (`pkg/oms/index_bootstrap_bdd_test.go`, `pkg/oss/stream_ingest_dog003_bdd_test.go`, `pkg/oss/where/converter_dog004_bdd_test.go`).
+- Local Go health before story selection:
+  - `go build $(./scripts/ci/go-packages.sh --build)` passed.
+  - `go test $(./scripts/ci/go-packages.sh)` passed.
 
-P2A-001 evidence:
-- RED: `go test ./pkg/mcp -run P2A001 -count=1` failed before implementation:
-  - `objectType.apiName = "", want Order` because `resources/read` returned a raw ObjectType row instead of an `{objectType, properties, outgoingLinkTypes}` bundle.
-  - `objectTypes[0].properties = []` because ontology resource reads used `ListObjectTypes` without hydrating properties.
-  - property lookup failure test unexpectedly succeeded because the handler did not call `ListProperties`.
-- GREEN: `go test ./pkg/mcp -run P2A001 -count=1` passed.
-- Targeted package verification: `go test ./pkg/mcp -count=1` passed.
-- Relevant MCP edge verification: `go test ./cmd/weave-mcp ./pkg/mcp -count=1` passed.
-- Source files changed:
-  - `pkg/mcp/resources.go`
-  - `pkg/mcp/resources_schema_p2a001_test.go`
-  - `pkg/mcp/tools_test.go`
-- Behavior: `weave://objecttype/<ontology>/<objectType>` now returns a JSON schema bundle with `objectType`, `properties`, and `outgoingLinkTypes`; `weave://ontology/<rid>` now hydrates properties for each ObjectType and fails loudly on metadata lookup errors instead of silently returning partial schema.
+## Story P2A-001 - Reject trailing tokens in shared JSON request decoding
+Status: passed
 
-Durable Codebase Patterns:
-- MCP resource handlers live in `pkg/mcp/resources.go`; transport tests can exercise them directly through `Server.Handle` without starting `cmd/server`.
-- The PG OMS repository loads properties for `GetObjectType*`, but `ListObjectTypes` intentionally returns rows without properties; callers that need full schema must explicitly call `ListProperties`.
+Files changed:
+- `pkg/httputil/json.go`
+- `pkg/httputil/json_test.go`
+- `pkg/oss/handlers_strict_json_bdd_test.go`
 
-Selected story for this execution:
-- P2A-002 - Reject invalid JSON-RPC id shapes in MCP transports.
+RED evidence:
+- `go test ./pkg/httputil -run 'TestReadJSON_RejectsTrailing' -count=1 -v` failed as expected because trailing JSON and trailing junk returned nil.
+- `go test ./pkg/oss -run TestBDD_SearchObjectsRejectsTrailingJSONBody_P2A001 -count=1 -v` failed as expected because SearchObjects returned HTTP 200 after decoding only the first JSON object.
 
-P2A-002 evidence (2026-05-22T19:22:11+0800):
-- Root cause: `pkg/mcp.ParseRequest` kept `id` as `json.RawMessage` but validated only `jsonrpc` and `method`, so object/array ids were accepted as normal request ids. The HTTP and stdio parse-error paths also used `sniffRequestID` to echo unsupported id shapes.
-- RED: `go test ./pkg/mcp -run 'P2A002|TestProtocol|TestHTTPTransport|TestStdioTransport' -count=1` failed before implementation:
-  - `TestProtocol_GivenInvalidIDShape_WhenParseRequest_ThenInvalidRequest_P2A002` accepted object and array ids.
-  - `TestBDD_HTTPTransport_GivenInvalidIDShape_WhenPost_ThenInvalidRequestWithNullID_P2A002` returned a successful initialize response instead of `-32600`.
-  - `TestBDD_StdioTransport_GivenInvalidIDShape_WhenRun_ThenInvalidRequestWithNullID_P2A002` returned a successful initialize response instead of `-32600`.
-- GREEN: `go test ./pkg/mcp -run 'P2A002|TestProtocol|TestHTTPTransport|TestStdioTransport' -count=1` passed.
-- Declared verification: `go test ./pkg/mcp -run 'TestProtocol|TestHTTPTransport|TestStdioTransport' -count=1` passed.
-- Nearby package verification: `go test ./pkg/mcp -count=1` passed.
-- Source files changed:
-  - `pkg/mcp/protocol.go`
-  - `pkg/mcp/protocol_test.go`
-  - `pkg/mcp/http_transport_test.go`
-  - `pkg/mcp/stdio_transport_test.go`
-- Behavior: JSON-RPC ids are now accepted only when absent, string, number, or null. Object/array/boolean ids produce invalid-request errors, and parse-error response ids normalize to null instead of echoing unsupported id JSON.
+Implementation:
+- `httputil.ReadJSON` now decodes the target value, then performs a second decode and requires `io.EOF`; an additional JSON value or non-whitespace trailing content returns an error.
+- Added utility coverage for trailing JSON values and trailing non-whitespace.
+- Added a BDD-style OSS SearchObjects HTTP regression proving malformed multi-value bodies return `InvalidRequestBody`.
 
-Durable Codebase Patterns:
-- MCP id validation belongs in `pkg/mcp/protocol.go` so HTTP and stdio transports share one JSON-RPC envelope contract.
-- `Response.MarshalJSON` serializes a nil `json.RawMessage` id as JSON `null`, which is the correct response id for invalid request envelopes whose id cannot be used.
-
-Selected story for this execution:
-- P2A-003 - Harden stream ingest metadata validation against schema drift.
-
-P2A-003 evidence (2026-05-22T19:28:56+0800):
-- Root cause: `validateIngestEditSchema` mapped undeclared object properties to the older `SchemaViolation` error name, while `validateValueTypes` silently skipped `GetValueTypeByAPIName` failures and allowed the handler to publish accepted batches without verifying ValueType metadata.
-- RED: `go test ./pkg/oss -run TestStreamIngest_BDD_FailsFastOnSchemaAndValueTypeViolations -count=1` failed before implementation because undeclared properties returned `SchemaViolation` instead of `InvalidIngestEdit`, and ValueType lookup failures returned HTTP 200 with a published batch instead of `IngestMetadataLookupFailed`.
-- RED after aligning the test name with the PRD verification regex: `go test ./pkg/oss -run 'TestStreamIngest.*Metadata|TestBDD_StreamIngest' -count=1` failed for the same two behavior gaps.
-- GREEN: `go test ./pkg/oss -run 'TestStreamIngest.*Metadata|TestBDD_StreamIngest' -count=1` passed.
-- Broader package verification: `go test ./pkg/oss -count=1` passed.
-- Source files changed:
-  - `pkg/oss/stream_ingest_validation.go`
-  - `pkg/oss/stream_ingest_self102_bdd_test.go`
-- Behavior: stream ingest metadata validation now returns `InvalidIngestEdit` for undeclared object properties, returns `IngestMetadataLookupFailed` for ValueType metadata lookup failures, and does not publish batches in either failure mode. Valid batches still preserve source tagging and URL objectType coercion.
-
-Durable Codebase Patterns:
-- P2A ingest metadata tests should use names matching `TestStreamIngest.*Metadata` so Ralph's declared stream-A verification command actually selects them.
-- `streamIngestMetadataValidator` is the correct shared layer for schema-drift rejection because the handler already normalizes `source=ingest` and URL objectType before calling it.
+Verification:
+- `go test ./pkg/httputil -run 'TestReadJSON|TestWriteJSON' -count=1 -v` passed.
+- `go test ./pkg/oss -run 'TestBDD_SearchObjectsRejectsTrailingJSONBody_P2A001|TestSearchObjects_FacetsOmitted_NoKey|TestSearchObjects_SelectRequired' -count=1` passed.
+- `go test ./pkg/httputil -count=1` passed.
+- `go test ./pkg/oss -count=1` passed.
+- `go build $(./scripts/ci/go-packages.sh --build)` passed.
+- `go test $(./scripts/ci/go-packages.sh)` passed.
 
 
 ---
 
-## Stream B: ralph/self-iteration-20260522-191028-B
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-191028-B
-HEAD: 1a554dc14b2d
+## Stream B: ralph/self-iteration-20260522-214033-B
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-214033-B
+HEAD: eedb1b5d21a2
 
 # Ralph Progress Log - Parallel2 Stream B
-Started: 2026-05-22T19:16:32+08:00
-Integration branch: ralph/self-iteration-20260522-191028
-Stream branch: ralph/self-iteration-20260522-191028-B
+Started: 2026-05-22T21:46:00+08:00
+Integration branch: ralph/self-iteration-20260522-214033
+Stream branch: ralph/self-iteration-20260522-214033-B
 Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
-Archived previous empty PRD/progress: scripts/ralph/archive/self-iteration-20260522-191632/
 
-## Intake Evidence
-- Branch verified: `ralph/self-iteration-20260522-191028-B`.
-- Previous PRD belonged to this branch but had no user stories, so a fresh small P2B PRD was created.
+## State Reset
+- Archived previous empty stream PRD/progress to `scripts/ralph/archive/self-iteration-20260522-214600/`.
 - No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the previous progress file.
-- GitHub CI health checked with `gh run list --limit 8`: latest main `CI` run for PR #46 completed successfully at 2026-05-22T11:06:42Z; latest Codespaces Prebuild run failed, but it is outside the project CI gate.
-- Known CI issue `cmd/server/embed.go` needing tracked web embed fallback checked with `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -v`: PASS.
-- Known US-453 web issue checked after `npm ci --prefix web`: `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`: PASS; `npm --prefix web test -- --run src/api/__tests__/compliance.test.ts`: PASS.
-- Frontend BDD and full Vitest health checked: `npm --prefix web test -- --run bdd`: PASS (31 files, 83 tests); `npm --prefix web test`: PASS (290 files, 2922 tests).
-- Dogfood DOG-001/DOG-002 findings are already covered by current source/tests. New story targets a fresh browser route-state leak found during BrowserPage inspection.
+- Branch verified: `ralph/self-iteration-20260522-214033-B`.
+
+## Local Health Evidence Before New Story Selection
+- `npm install` in `web/`: installed dependencies from the existing lockfile for this isolated worktree.
+- `npm test -- ComplianceReportsPage.test.tsx`: passed 1 test file / 8 tests, so the known US-453 `object.stream is not a function` issue is not currently reproducing.
+- `npm test`: passed 291 test files / 2923 tests.
+- `npm run build`: passed `tsc -b`, Vite production build, and bundle budget check.
 
 ## Selected Story
-- P2B-001 — Reset Browser route-scoped state when switching object types.
+- P2B-001 — Saved Browser Searches Hydrate the Visible Search Box.
+- Rationale: Browser saved-search load updates BrowserPage query state, but `SearchBar` owns its own local input state. A saved search with `searchText` can therefore run while the visible input still appears empty, which makes the active object search difficult to audit or edit during dogfood.
 
-## Story Evidence
-### P2B-001
-- Status: PASS.
-- Red test:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.routeState.bdd.test.tsx`
-  - Result: FAIL as expected before implementation. The reused BrowserPage instance navigated to `Order` but did not render the unfiltered `Order list row`; the stale Customer search state drove the new object type through the search path.
-- Implementation:
-  - Added `web/src/components/browser/__tests__/BrowserPage.routeState.bdd.test.tsx`.
-  - Updated `web/src/components/browser/BrowserPage.tsx` so the route-owned stateful Browser content is keyed by `ontology/objectTypeParam`. Navigating between object types remounts the stateful content and resets committed search text, filters, selected facets, pagination, selected rows, detail panel state, view mode, objectSet RID, and live subscription state together.
-- Green / regression evidence:
-  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.routeState.bdd.test.tsx`: PASS (1 file, 1 test).
-  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx`: PASS (1 file, 17 tests).
-  - `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx src/components/browser/__tests__/TimeTravelToolbar.rollback.bdd.test.tsx src/components/browser/__tests__/TimeTravelToolbar.dogfood.test.tsx`: PASS (3 files, 7 tests).
-  - `npm --prefix web run typecheck`: PASS (tsc -b exit 0).
-  - `npm --prefix web test -- --run bdd`: PASS (32 files, 84 tests).
-  - `npm --prefix web test`: PASS (291 files, 2923 tests).
+## P2B-001 Evidence
+- RED: `npm test -- BrowserPage.savedSearches.bdd.test.tsx` failed as expected because the visible `search-input` remained empty after loading a saved search with `searchText: "OpenAI"`.
+- Implementation: added a `value` prop to `SearchBar`, kept a draft value for normal type-then-Enter behavior, synced the draft from BrowserPage committed `searchText`, and passed `searchText` from `BrowserPage`.
+- GREEN targeted: `npm test -- BrowserPage.savedSearches.bdd.test.tsx` passed 1 test.
+- Adjacent regression: `npm test -- BrowserPage.test.tsx BrowserPage.search.bdd.test.tsx BrowserPage.savedSearches.bdd.test.tsx` passed 3 test files / 21 tests.
+- Full web verification: `npm test` passed 292 test files / 2924 tests.
+- Build verification: `npm run build` passed `tsc -b`, Vite production build, and bundle budget check.
+- Files changed for commit:
+  - `web/src/components/browser/SearchBar.tsx`
+  - `web/src/components/browser/BrowserPage.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.savedSearches.bdd.test.tsx`
+- Result: P2B-001 marked `passes: true` in `scripts/ralph/prd.json`.
+
+## P2B-002 Evidence
+- Started: 2026-05-22T21:56:19+08:00.
+- Story: Browser Bulk Selection Clears on Query Context Changes.
+- Root cause: `BrowserPage` stored bulk selections in `selectedRowMap`, but search/filter/facet/saved-search handlers only reset pagination. Replacing the visible result set could leave previously selected hidden rows eligible for export/delete.
+- RED: `npm test -- BrowserPage.bulkSelection.bdd.test.tsx` failed as expected because `bulk-action-toolbar` remained visible with `1 selected` after a text search replaced `task-1` with `task-2`.
+- Implementation: added `web/src/components/browser/__tests__/BrowserPage.bulkSelection.bdd.test.tsx`; cleared `selectedRowMap` in `BrowserPage` when text search, filters, facet toggle/clear, or saved-search load replaces the active query context.
+- GREEN targeted: `npm test -- BrowserPage.bulkSelection.bdd.test.tsx` passed 1 test.
+- Adjacent regression: `npm test -- BrowserPage.bulkSelection.bdd.test.tsx BrowserPage.savedSearches.bdd.test.tsx BrowserPage.routeState.bdd.test.tsx BrowserPage.test.tsx` passed 4 test files / 20 tests.
+- Build verification: `npm run build` passed `tsc -b`, Vite production build, and bundle budget check.
+- Files changed for commit:
+  - `web/src/components/browser/BrowserPage.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.bulkSelection.bdd.test.tsx`
+- Result: P2B-002 marked `passes: true` in `scripts/ralph/prd.json`.
+
+## P2B-003 Evidence
+- Started: 2026-05-22T22:03:18+08:00.
+- Story: Browser Live Mode Surfaces SSE Fallback Provisioning Failures.
+- Root cause: `BrowserPage` pre-provisioned the temporary ObjectSet required by the documented SSE fallback but only handled `onSuccess`; `createTemporaryObjectSet` failures were never recorded, so a WebSocket reconnect could only render the generic transport status.
+- RED: `npm test -- BrowserPage.liveFallback.bdd.test.tsx` failed as expected because `live-status` remained `Reconnecting` instead of `Fallback failed` after `createTemporaryObjectSet` returned `SSESubscribeNotConfigured`.
+- Implementation: added `web/src/components/browser/__tests__/BrowserPage.liveFallback.bdd.test.tsx`; `BrowserPage` now stores fallback provisioning errors, renders an inline `Fallback failed` live status with the API reason when WebSocket reconnects and no ObjectSet RID exists, and clears the error when Live is turned off or retried.
+- GREEN targeted: `npm test -- BrowserPage.liveFallback.bdd.test.tsx` passed 1 test file / 2 tests.
+- Adjacent regression: `npm test -- BrowserPage.liveFallback.bdd.test.tsx BrowserPage.test.tsx` passed 2 test files / 19 tests.
+- Build verification: `npm run build` passed `tsc -b`, Vite production build, and bundle budget check.
+- Files changed for commit:
+  - `web/src/components/browser/BrowserPage.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.liveFallback.bdd.test.tsx`
+- Result: P2B-003 marked `passes: true` in `scripts/ralph/prd.json`.
 
 ## Codebase Patterns
-- Browser route-local state that depends on `:ontology` or `:objectType` should live behind a key derived from those route params, or it must be synchronously derived from the active route before query hooks run. Effect-only resets happen too late to prevent stale React Query requests on the first render after navigation.
+- Browser page BDD tests commonly use React Testing Library plus MSW and mocked metadata hooks; see `web/src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx` for request-contract assertions.
+- Browser route state is reset by keying `BrowserPageContent` on `ontology/objectType`; keep changes scoped inside Browser controls unless route identity changes are part of the story.
+- SearchBar now treats BrowserPage `searchText` as the committed source of truth while maintaining a local draft so ad hoc typing still waits for Enter except when clearing the input.
+- Browser bulk selection intentionally persists across pagination within a query, but should be cleared when a handler replaces the query context (text search, filters, facets, or saved search).
+- Browser live mode uses WebSocket first and only flips to the documented SSE fallback after WebSocket reports `reconnecting` and a temporary ObjectSet RID is available; ObjectSet provisioning errors should be held separately from transport status so the header can explain fallback readiness failures.
 
 
 ---

@@ -47,6 +47,15 @@ function formatBrowserError(err: unknown): string {
   return 'Failed to load objects';
 }
 
+function formatLiveFallbackError(err: unknown): string {
+  if (err instanceof ApiRequestError) {
+    const reason = err.parameters?.reason;
+    return reason ? `${err.message} - ${reason}` : err.message;
+  }
+  if (err instanceof Error) return err.message;
+  return 'Unknown error';
+}
+
 const PAGE_SIZE = 25;
 const MAX_FACET_FIELDS = 5;
 const TIME_TRAVEL_EXPORT_DISABLED_REASON =
@@ -62,7 +71,7 @@ const FACETABLE_BASE_TYPES = new Set([
 type BrowserLiveStatus = {
   label: string;
   ariaLabel: string;
-  tone: 'connected' | 'connecting' | 'reconnecting' | 'disabled';
+  tone: 'connected' | 'connecting' | 'reconnecting' | 'disabled' | 'error';
   connected: boolean;
 };
 
@@ -131,6 +140,9 @@ function BrowserPageContent({
   // Realtime mode state: 'off' | 'ws' (WebSocket) | 'sse' (SSE fallback)
   const [realtimeMode, setRealtimeMode] = useState<'off' | 'ws' | 'sse'>('off');
   const [objectSetRid, setObjectSetRid] = useState<string | null>(null);
+  const [liveFallbackError, setLiveFallbackError] = useState<string | null>(
+    null,
+  );
   const [webSocketFallbackRequested, setWebSocketFallbackRequested] =
     useState(false);
   const [webSocketStatus, setWebSocketStatus] =
@@ -160,12 +172,19 @@ function BrowserPageContent({
       setWebSocketFallbackRequested(false);
       setWebSocketStatus('connecting');
       setObjectSetStatus('idle');
+      setLiveFallbackError(null);
       // Also create ObjectSet for SSE fallback readiness
       createObjectSet.mutate(
         { type: 'base', objectType: objectTypeParam },
         {
           onSuccess: (resp) => {
             setObjectSetRid(resp.objectSetRid);
+            setLiveFallbackError(null);
+          },
+          onError: (err) => {
+            setObjectSetRid(null);
+            setObjectSetStatus('idle');
+            setLiveFallbackError(formatLiveFallbackError(err));
           },
         },
       );
@@ -176,6 +195,7 @@ function BrowserPageContent({
       setWebSocketFallbackRequested(false);
       setWebSocketStatus('idle');
       setObjectSetStatus('idle');
+      setLiveFallbackError(null);
     }
   }, [realtimeEnabled, createObjectSet, objectTypeParam]);
 
@@ -223,6 +243,20 @@ function BrowserPageContent({
 
     if (realtimeMode === 'off') return null;
 
+    if (
+      webSocketStatus === 'reconnecting' &&
+      webSocketFallbackRequested &&
+      liveFallbackError &&
+      !objectSetRid
+    ) {
+      return {
+        label: 'Fallback failed',
+        ariaLabel: `Live updates failed to provision SSE fallback: ${liveFallbackError}`,
+        tone: 'error',
+        connected: false,
+      };
+    }
+
     const showingSseConnectingFallback =
       realtimeMode === 'sse' &&
       objectSetStatus === 'connecting' &&
@@ -261,7 +295,15 @@ function BrowserPageContent({
       tone: 'connecting',
       connected: false,
     };
-  }, [objectSetStatus, realtimeMode, timeTravelActive, webSocketStatus]);
+  }, [
+    liveFallbackError,
+    objectSetRid,
+    objectSetStatus,
+    realtimeMode,
+    timeTravelActive,
+    webSocketFallbackRequested,
+    webSocketStatus,
+  ]);
 
   const liveStatusClassName = useMemo(() => {
     const base = 'text-[10px] font-mono uppercase tracking-wider';
@@ -274,6 +316,8 @@ function BrowserPageContent({
         return `${base} text-text-secondary`;
       case 'disabled':
         return `${base} text-accent-amber`;
+      case 'error':
+        return `${base} text-accent-error`;
       default:
         return base;
     }
@@ -429,17 +473,20 @@ function BrowserPageContent({
   // Handlers
   const handleSearch = useCallback((text: string) => {
     setSearchText(text);
+    setSelectedRowMap(new Map());
     setPageTokens([]);
     setCurrentPage(1);
   }, []);
 
   const handleFiltersChange = useCallback((newFilters: FilterCondition[]) => {
     setFilters(newFilters);
+    setSelectedRowMap(new Map());
     setPageTokens([]);
     setCurrentPage(1);
   }, []);
 
   const handleToggleFacet = useCallback((field: string, value: string) => {
+    setSelectedRowMap(new Map());
     setSelectedFacets((prev) => {
       const cur = prev[field] ?? [];
       const next = cur.includes(value)
@@ -455,6 +502,7 @@ function BrowserPageContent({
 
   const handleClearFacets = useCallback(() => {
     setSelectedFacets({});
+    setSelectedRowMap(new Map());
     setPageTokens([]);
     setCurrentPage(1);
   }, []);
@@ -489,6 +537,7 @@ function BrowserPageContent({
       setSearchText(def.searchText ?? '');
       setFilters(def.filters ?? []);
       setSelectedFacets(def.facets ?? {});
+      setSelectedRowMap(new Map());
       if (def.sort) {
         setSortField(def.sort.field);
         setSortDirection(def.sort.direction);
@@ -784,6 +833,7 @@ function BrowserPageContent({
 
       {/* Search bar */}
       <SearchBar
+        value={searchText}
         onSearch={handleSearch}
         onToggleFilters={() => setShowFilters((v) => !v)}
       />

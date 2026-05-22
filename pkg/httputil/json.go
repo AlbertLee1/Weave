@@ -2,6 +2,8 @@ package httputil
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -20,5 +22,17 @@ const MaxBodySize = 1 << 20
 func ReadJSON(r *http.Request, v interface{}) error {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(nil, r.Body, MaxBodySize)
-	return json.NewDecoder(r.Body).Decode(v)
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+
+	var extra interface{}
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("request body must contain a single JSON value")
+		}
+		return fmt.Errorf("request body must contain a single JSON value: %w", err)
+	}
+	return nil
 }
