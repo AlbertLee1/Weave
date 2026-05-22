@@ -939,10 +939,13 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 		"`pkg/mcp/resources.go`",
 		"`cmd/weave-mcp/http_bridge.go`",
 		"`WEAVE_MCP_URL`",
+		"`WEAVE_MCP_HTTP_TIMEOUT`",
 		"`prompts/list`",
 		"`prompts/get`",
 		"`resources/list`",
 		"`resources/read`",
+		"`resources/subscribe`",
+		"`resources/unsubscribe`",
 		"`weave://objecttype/<ontology>/<objectType>`",
 		"stdio HTTP bridge",
 		"remaining local-standalone gap",
@@ -955,10 +958,13 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 	for _, required := range []string{
 		"`cmd/weave-mcp` binary (stdio HTTP bridge)",
 		"`WEAVE_MCP_URL`",
+		"`WEAVE_MCP_HTTP_TIMEOUT`",
 		"`prompts/list` | List prompts synthesized from OMS ActionType metadata",
 		"`prompts/get` | Render one ActionType prompt with supplied arguments",
 		"`resources/list` | List ontologies, ObjectTypes, and temporary ObjectSets as MCP resources",
 		"`resources/read` | Return the schema for an ontology, ObjectType, or stored ObjectSet definition",
+		"`resources/subscribe` | Subscribe to a known ontology, ObjectType, or ObjectSet resource URI",
+		"`resources/unsubscribe` | Idempotently remove a resource subscription",
 		"`weave://objecttype/<ontology>/<objectType>`",
 	} {
 		if !strings.Contains(mcpDocs, required) {
@@ -971,7 +977,9 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 		`case "prompts/get":`,
 		`case "resources/list":`,
 		`case "resources/read":`,
-		`"resources": map[string]any{"listChanged": false, "subscribe": false}`,
+		`case "resources/subscribe":`,
+		`case "resources/unsubscribe":`,
+		`"resources": map[string]any{"listChanged": false, "subscribe": true}`,
 		`"prompts":   map[string]any{"listChanged": false}`,
 	} {
 		if !strings.Contains(mcpServer, required) {
@@ -983,17 +991,17 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 			t.Errorf("pkg/mcp/prompts.go must expose prompts fragment %q", required)
 		}
 	}
-	for _, required := range []string{"handleResourcesList", "handleResourcesRead", "ListOntologies", "ListObjectTypes", "weave://objecttype"} {
+	for _, required := range []string{"handleResourcesList", "handleResourcesRead", "handleResourcesSubscribe", "handleResourcesUnsubscribe", "ListOntologies", "ListObjectTypes", "weave://objecttype"} {
 		if !strings.Contains(resources, required) {
 			t.Errorf("pkg/mcp/resources.go must expose resources fragment %q", required)
 		}
 	}
-	for _, required := range []string{"WEAVE_MCP_URL", "RunHTTPBridge", "bridgeAuthOptionsFromEnv"} {
+	for _, required := range []string{"WEAVE_MCP_URL", "WEAVE_MCP_HTTP_TIMEOUT", "RunHTTPBridge", "bridgeOptionsFromEnv"} {
 		if !strings.Contains(bridgeMain, required) {
 			t.Errorf("cmd/weave-mcp/main.go must wire bridge fragment %q", required)
 		}
 	}
-	for _, required := range []string{"RunHTTPBridge", `http.MethodPost`, "Authorization", "X-Weave-API-Key"} {
+	for _, required := range []string{"RunHTTPBridge", "WithHTTPTimeout", `http.MethodPost`, "Authorization", "X-Weave-API-Key"} {
 		if !strings.Contains(httpBridge, required) {
 			t.Errorf("cmd/weave-mcp/http_bridge.go must expose bridge fragment %q", required)
 		}

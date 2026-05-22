@@ -55,6 +55,10 @@ function iconInitial(ot: ObjectType): string {
   return src.charAt(0).toUpperCase();
 }
 
+function countLabel(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 export function SchemaGraphPage() {
   const { ontology } = useParams<{ ontology: string }>();
   const ontologyApiName = ontology ?? '';
@@ -258,6 +262,8 @@ export function SchemaGraphPage() {
   const error = errOT ?? errLT;
   const nodeCount = nodes.length;
   const edgeCount = edges.length;
+  const nodeCountLabel = countLabel(nodeCount, 'type', 'types');
+  const edgeCountLabel = countLabel(edgeCount, 'link', 'links');
 
   return (
     <div className="flex flex-col h-[calc(100vh-3rem)] bg-bg-primary overflow-hidden">
@@ -273,7 +279,7 @@ export function SchemaGraphPage() {
         </span>
         <div className="flex-1" />
         <span className="text-xs text-text-secondary">
-          {nodeCount} types · {edgeCount} links
+          {nodeCountLabel} · {edgeCountLabel}
         </span>
       </header>
 

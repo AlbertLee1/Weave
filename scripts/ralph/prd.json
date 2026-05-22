@@ -1,37 +1,27 @@
 {
-  "project": "Weave self-iteration 20260521",
-  "branchName": "ralph/self-iteration-20260521-110910",
-  "description": "Focused LLM review repair for aggregation where regex safety and scenario-overlay operator parity.",
+  "project": "Weave self-iteration LLM review repair",
+  "branchName": "ralph/self-iteration-20260521-171221",
+  "description": "Focused repair PRD for the blocking LLM review finding on the Ralph self-iteration integration branch.",
   "userStories": [
     {
-      "id": "SELF-605",
-      "title": "Harden Aggregation Where Safety and Scenario Parity",
-      "description": "As an operations analyst using Aggregation with saved filters and scenario overlays, I want aggregate where clauses to honor the platform's regex safety boundary and text-operator semantics, so aggregate requests cannot bypass regex protections or silently drop valid scenario-overlay results.",
-      "priority": "high",
-      "passes": true,
+      "id": "RLLM-001",
+      "title": "Harden MCP Resource List Pagination",
+      "priority": 1,
+      "area": "MCP backend",
+      "story": "As a Weave MCP client operator, I want resources/list pagination to reject unsafe page-size inputs before slicing so crafted cursors cannot panic the public MCP endpoint.",
       "acceptanceCriteria": [
-        {
-          "given": "an aggregate request includes a where clause with the regex operator",
-          "when": "the caller posts to /api/v2/ontologies/{ontology}/objects/{objectType}/aggregate",
-          "then": "the request is rejected with a 400 INVALID_ARGUMENT response instead of executing an unbounded Bleve aggregation search"
-        },
-        {
-          "given": "a scenario-overlay aggregate request includes a where clause with containsAnyTerm",
-          "when": "scenario edits are folded over base rows",
-          "then": "the in-memory overlay aggregation filters the post-overlay rows with the same UI-supported operator before metrics and groupBy buckets are computed"
-        },
-        {
-          "given": "a scenario-overlay aggregate request includes a where operator that the in-memory matcher does not support",
-          "when": "the handler validates the scenario aggregate request",
-          "then": "the request is rejected with a 400 INVALID_ARGUMENT response instead of silently returning an empty aggregate"
-        }
+        "Given a resources/list request with a valid-looking cursor and an unsafe huge pageSize, when it is posted to the MCP HTTP transport, then the server returns a JSON-RPC invalid params response instead of panicking.",
+        "Given a resources/list request that resumes from a cursor near the end of the resource catalog, when the requested pageSize is larger than the remaining catalog length but within policy, then pagination returns the safe final page without overflow-prone arithmetic.",
+        "Given a resources/list cursor carrying an unsafe decoded pageSize, when the request omits an explicit pageSize, then cursor decoding rejects it with invalid params.",
+        "Given the Ralph loop state, when the repair is verified, then this story is marked passes=true and progress records the review evidence and verification commands."
       ],
       "dependencies": [
-        "pkg/oss/handlers_aggregate.go aggregate where validation",
-        "pkg/oss/aggregation.Engine aggregate where safety guard",
-        "pkg/oss/where.MatchClause in-memory operator coverage",
-        "pkg/oss scenario aggregation overlay"
-      ]
+        "pkg/mcp/resources.go",
+        "pkg/mcp/http_transport.go",
+        "pkg/mcp/resources_list_cursor_p2a002_test.go",
+        "LLM review request_changes on PR #42"
+      ],
+      "passes": true
     }
   ]
 }

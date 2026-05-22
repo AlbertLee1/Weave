@@ -33,7 +33,8 @@ Typical local-client configuration:
       "env": {
         "WEAVE_MCP_URL": "http://127.0.0.1:9117/mcp",
         "WEAVE_MCP_TOKEN": "<jwt-or-bearer-access-token>",
-        "WEAVE_MCP_API_KEY": "wvk_..."
+        "WEAVE_MCP_API_KEY": "wvk_...",
+        "WEAVE_MCP_HTTP_TIMEOUT": "30s"
       }
     }
   }
@@ -43,6 +44,9 @@ Typical local-client configuration:
 `WEAVE_MCP_TOKEN` and its alias `WEAVE_MCP_BEARER` are forwarded as
 `Authorization: Bearer ...`. `WEAVE_MCP_API_KEY` is forwarded as
 `X-Weave-API-Key`. If both are present, the bearer token wins.
+`WEAVE_MCP_HTTP_TIMEOUT` accepts a Go duration such as `5s`, `30s`, or
+`2m`; invalid or non-positive values make `weave-mcp` exit before it
+starts forwarding requests.
 
 ## Protocol
 
@@ -75,6 +79,8 @@ codes (`405`, `204`) are reserved for transport-level conditions.
 | `prompts/get` | Render one ActionType prompt with supplied arguments |
 | `resources/list` | List ontologies, ObjectTypes, and temporary ObjectSets as MCP resources |
 | `resources/read` | Return the schema for an ontology, ObjectType, or stored ObjectSet definition |
+| `resources/subscribe` | Subscribe to a known ontology, ObjectType, or ObjectSet resource URI |
+| `resources/unsubscribe` | Idempotently remove a resource subscription |
 | `ping` | Liveness check; returns `{}` |
 
 Notifications (requests with no `id`) such as `notifications/initialized`
@@ -190,7 +196,7 @@ curl -s -X POST http://localhost:9117/mcp \
 #    "capabilities":{
 #      "tools":{"listChanged":false},
 #      "prompts":{"listChanged":false},
-#      "resources":{"listChanged":false,"subscribe":false}},
+#      "resources":{"listChanged":false,"subscribe":true}},
 #    "serverInfo":{"name":"weave-mcp","version":"0.1.0"}}}
 
 # 2. tools/list
@@ -263,6 +269,18 @@ curl -s -X POST http://localhost:9117/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{}}'
 
+# resources/list with a bounded page
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{
+        "pageSize":100}}'
+
+# resources/list next page
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{
+        "cursor":"<nextCursor-from-prior-response>"}}'
+
 # resources/read for an ontology
 curl -s -X POST http://localhost:9117/mcp \
   -H 'Content-Type: application/json' \
@@ -274,11 +292,35 @@ curl -s -X POST http://localhost:9117/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{
         "uri":"weave://objecttype/demo/User"}}'
+
+# resources/subscribe for an ontology
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":4,"method":"resources/subscribe","params":{
+        "uri":"weave://ontology/ri.weave.main.ontology.demo"}}'
+
+# resources/unsubscribe for the same URI
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":5,"method":"resources/unsubscribe","params":{
+        "uri":"weave://ontology/ri.weave.main.ontology.demo"}}'
 ```
 
 Reading a resource for an ObjectSet returns the Definition only —
 materialise the rows by POSTing the Definition to
 `/api/v2/ontologies/{ontology}/objectSets/loadObjects`.
+
+By default, `resources/list` returns the full catalogue for existing
+clients. Supplying `pageSize` returns a URI-sorted page and a `nextCursor`
+when more resources remain. Pass that cursor back on the next
+`resources/list` call to continue after the previous page boundary.
+Malformed cursors return JSON-RPC `Invalid params`.
+
+`resources/subscribe` validates the URI against the live catalogue before
+recording the subscription, so malformed or unknown resources return a
+JSON-RPC error instead of a silent success. `resources/unsubscribe` is
+idempotent and succeeds even if the caller has already removed the
+subscription.
 
 ## Limitations (MVP)
 

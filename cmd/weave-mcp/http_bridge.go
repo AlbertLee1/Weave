@@ -26,6 +26,13 @@ type BridgeOption func(*bridgeOptions)
 type bridgeOptions struct {
 	authHeader string // e.g. "Authorization" or "X-Weave-API-Key"
 	authValue  string // e.g. "Bearer xyz..." or "wvk_..."
+	timeout    time.Duration
+}
+
+const defaultBridgeHTTPTimeout = 30 * time.Second
+
+func defaultBridgeOptions() bridgeOptions {
+	return bridgeOptions{timeout: defaultBridgeHTTPTimeout}
 }
 
 // WithBearerToken makes the bridge send Authorization: Bearer <token> on
@@ -53,6 +60,17 @@ func WithAPIKey(key string) BridgeOption {
 	}
 }
 
+// WithHTTPTimeout bounds every upstream HTTP request. Non-positive durations
+// are ignored so programmatic callers keep the default timeout.
+func WithHTTPTimeout(timeout time.Duration) BridgeOption {
+	return func(o *bridgeOptions) {
+		if timeout <= 0 {
+			return
+		}
+		o.timeout = timeout
+	}
+}
+
 // RunHTTPBridge pumps newline-delimited JSON-RPC 2.0 requests from `in` to
 // the cmd/server `POST /mcp` endpoint at `url` and writes each verbatim
 // response back on `out` as a single line. This is what makes weave-mcp
@@ -72,18 +90,20 @@ func WithAPIKey(key string) BridgeOption {
 //   - When the operator supplies a BridgeOption that sets an auth header
 //     (WithBearerToken / WithAPIKey), every upstream POST carries the
 //     resolved header.
+//   - Upstream HTTP stalls are bounded by the bridge timeout and converted
+//     into JSON-RPC server errors instead of hanging the stdio peer.
 //
 // The bridge stays in `package main` of cmd/weave-mcp so it is not part of
 // the public pkg/mcp API surface — it's a transport-edge concern.
 func RunHTTPBridge(ctx context.Context, in io.Reader, out io.Writer, url string, opts ...BridgeOption) error {
-	cfg := bridgeOptions{}
+	cfg := defaultBridgeOptions()
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: cfg.timeout}
 
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {

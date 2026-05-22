@@ -26,7 +26,9 @@
 //	        // OSV2-305 — set one of these when cmd/server runs with
 //	        // AUTH_MODE=token. Token wins when both are set.
 //	        "WEAVE_MCP_TOKEN":   "<jwt-or-bearer-access-token>",
-//	        "WEAVE_MCP_API_KEY": "wvk_..."
+//	        "WEAVE_MCP_API_KEY": "wvk_...",
+//	        // Optional: bound stalled upstream HTTP requests. Default is 30s.
+//	        "WEAVE_MCP_HTTP_TIMEOUT": "30s"
 //	    }
 //	}
 //
@@ -38,6 +40,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/liyang/weave/pkg/mcp"
 )
@@ -45,7 +48,11 @@ import (
 func main() {
 	ctx := context.Background()
 	if url := os.Getenv("WEAVE_MCP_URL"); url != "" {
-		opts := bridgeAuthOptionsFromEnv()
+		opts, err := bridgeOptionsFromEnv()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "weave-mcp bridge: %v\n", err)
+			os.Exit(1)
+		}
 		if err := RunHTTPBridge(ctx, os.Stdin, os.Stdout, url, opts...); err != nil {
 			fmt.Fprintf(os.Stderr, "weave-mcp bridge: %v\n", err)
 			os.Exit(1)
@@ -60,10 +67,11 @@ func main() {
 	}
 }
 
-// bridgeAuthOptionsFromEnv reads WEAVE_MCP_TOKEN / WEAVE_MCP_BEARER /
-// WEAVE_MCP_API_KEY and returns the matching BridgeOption list. Token wins
-// over API key when both are set (see WithAPIKey's no-op guard).
-func bridgeAuthOptionsFromEnv() []BridgeOption {
+// bridgeOptionsFromEnv reads WEAVE_MCP_TOKEN / WEAVE_MCP_BEARER /
+// WEAVE_MCP_API_KEY / WEAVE_MCP_HTTP_TIMEOUT and returns the matching
+// BridgeOption list. Token wins over API key when both are set (see
+// WithAPIKey's no-op guard).
+func bridgeOptionsFromEnv() ([]BridgeOption, error) {
 	var opts []BridgeOption
 	token := os.Getenv("WEAVE_MCP_TOKEN")
 	if token == "" {
@@ -71,5 +79,15 @@ func bridgeAuthOptionsFromEnv() []BridgeOption {
 	}
 	opts = append(opts, WithBearerToken(token))
 	opts = append(opts, WithAPIKey(os.Getenv("WEAVE_MCP_API_KEY")))
-	return opts
+	if raw := os.Getenv("WEAVE_MCP_HTTP_TIMEOUT"); raw != "" {
+		timeout, err := time.ParseDuration(raw)
+		if err != nil {
+			return nil, fmt.Errorf("WEAVE_MCP_HTTP_TIMEOUT %q is not a valid duration: %w", raw, err)
+		}
+		if timeout <= 0 {
+			return nil, fmt.Errorf("WEAVE_MCP_HTTP_TIMEOUT must be greater than zero, got %q", raw)
+		}
+		opts = append(opts, WithHTTPTimeout(timeout))
+	}
+	return opts, nil
 }

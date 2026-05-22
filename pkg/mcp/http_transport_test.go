@@ -164,6 +164,43 @@ func TestBDD_HTTPTransportRejectsOversizedBodyAtTransportLayer(t *testing.T) {
 	}
 }
 
+func TestBDD_HTTPTransportResourcesListRejectsUnsafePageSizeCursor_RLLM001(t *testing.T) {
+	srv, _, _, _ := newTestServer(t)
+	handler := NewHTTPHandler(srv)
+	cursor, err := encodeResourceListCursor("weave://ontology/ri.weave.main.ontology.demo", 1)
+	if err != nil {
+		t.Fatalf("encode cursor: %v", err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      91,
+		"method":  "resources/list",
+		"params": map[string]any{
+			"cursor":   cursor,
+			"pageSize": maxIntRLLM001(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%q", rr.Code, rr.Body.String())
+	}
+	var resp Response
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v; body=%q", err, rr.Body.String())
+	}
+	if resp.Error == nil || resp.Error.Code != CodeInvalidParams {
+		t.Fatalf("error = %+v, want invalid params", resp.Error)
+	}
+}
+
 func TestHTTPTransport_NonPostReturns405(t *testing.T) {
 	srv, _, _, _ := newTestServer(t)
 	handler := NewHTTPHandler(srv)
