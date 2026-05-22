@@ -11,6 +11,10 @@ import { BrowserPage } from '../BrowserPage';
 // query state. Loading a saved search that contains `searchText` must hydrate
 // the SearchBar input so the active object search can be audited, edited, and
 // cleared from the same control that originally creates ad hoc searches.
+//
+// P2B-003 BDD: saved Browser views also carry presentation state. Operators
+// should be able to save a map/gantt/sankey/pivot mode and later restore that
+// mode alongside filters and sort.
 
 vi.mock('../../../hooks/useObjectTypes', () => ({
   useObjectType: (_ontology: string, apiName: string) => ({
@@ -40,6 +44,7 @@ vi.mock('../../../hooks/useWebSocketSubscription', () => ({
 }));
 
 const searchBodies: Array<Record<string, unknown>> = [];
+const savedSearchCreates: Array<Record<string, unknown>> = [];
 
 const server = setupServer(
   http.get(
@@ -114,6 +119,20 @@ const server = setupServer(
       ],
     }),
   ),
+  http.post('/api/v2/saved-searches', async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    savedSearchCreates.push(body);
+    return HttpResponse.json({
+      id: 'saved-created',
+      name: String(body.name ?? ''),
+      ontology: String(body.ontology ?? ''),
+      objectType: String(body.objectType ?? ''),
+      createdBy: 'operator',
+      createdAt: '2026-05-22T00:00:00Z',
+      updatedAt: '2026-05-22T00:00:00Z',
+      definition: body.definition ?? {},
+    });
+  }),
   http.get('/api/v2/datasets/:ontology/history', () =>
     HttpResponse.json({ data: [] }),
   ),
@@ -125,6 +144,7 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => {
   searchBodies.length = 0;
+  savedSearchCreates.length = 0;
   server.resetHandlers();
 });
 afterAll(() => server.close());
@@ -175,5 +195,119 @@ describe('BDD: BrowserPage saved-search searchText hydration (P2B-001)', () => {
       expect(screen.getByText('Unfiltered list row')).toBeInTheDocument();
     });
     expect(screen.queryByText('OpenAI saved-search row')).not.toBeInTheDocument();
+  });
+});
+
+describe('BDD: BrowserPage saved-view presentation mode hydration (P2B-003)', () => {
+  it('Given the operator saves a non-table view, When the definition is created, Then it includes the selected view mode', async () => {
+    const user = userEvent.setup();
+    renderBrowserPage();
+
+    expect(await screen.findByText('Unfiltered list row')).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('view-mode-map'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('map-view-empty')).toBeInTheDocument();
+      expect(screen.getByTestId('view-mode-map')).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+
+    await user.click(screen.getByTestId('saved-searches-save'));
+    await user.type(screen.getByTestId('saved-searches-name-input'), 'Map view');
+    await user.click(screen.getByTestId('saved-searches-confirm'));
+
+    await waitFor(() => {
+      expect(savedSearchCreates).toHaveLength(1);
+    });
+    expect(savedSearchCreates[0]).toMatchObject({
+      definition: { viewMode: 'map' },
+    });
+  });
+
+  it('Given a saved view has a non-table viewMode, When loaded, Then BrowserPage restores that presentation mode', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/v2/saved-searches', () =>
+        HttpResponse.json({
+          savedSearches: [
+            {
+              id: 'saved-map-view',
+              name: 'Map view',
+              ontology: 'demo',
+              objectType: 'Article',
+              createdBy: 'operator',
+              createdAt: '2026-05-22T00:00:00Z',
+              updatedAt: '2026-05-22T00:00:00Z',
+              definition: { viewMode: 'map' },
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderBrowserPage();
+
+    expect(await screen.findByText('Unfiltered list row')).toBeInTheDocument();
+    expect(screen.getByTestId('view-mode-table')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await user.click(await screen.findByTestId('saved-search-load-saved-map-view'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('view-mode-map')).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByTestId('map-view-empty')).toBeInTheDocument();
+    });
+  });
+
+  it('Given an older saved view has no viewMode, When loaded from another mode, Then BrowserPage falls back to table mode', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/v2/saved-searches', () =>
+        HttpResponse.json({
+          savedSearches: [
+            {
+              id: 'saved-legacy',
+              name: 'Legacy view',
+              ontology: 'demo',
+              objectType: 'Article',
+              createdBy: 'operator',
+              createdAt: '2026-05-22T00:00:00Z',
+              updatedAt: '2026-05-22T00:00:00Z',
+              definition: { searchText: 'OpenAI' },
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderBrowserPage();
+
+    expect(await screen.findByText('Unfiltered list row')).toBeInTheDocument();
+    await user.click(screen.getByTestId('view-mode-map'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('view-mode-map')).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+
+    await user.click(await screen.findByTestId('saved-search-load-saved-legacy'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('view-mode-table')).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByTestId('search-input')).toHaveValue('OpenAI');
+    });
   });
 });

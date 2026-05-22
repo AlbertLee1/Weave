@@ -15,6 +15,7 @@ import (
 )
 
 const minGolangCILintForGo125 = "v2.4.0"
+const minXNetForGO20265026 = "v0.55.0"
 
 type workflowConfig struct {
 	Jobs map[string]workflowJob `yaml:"jobs"`
@@ -77,6 +78,19 @@ func TestBDD_GovulncheckGateUsesFixedToolchainAndActionableScope(t *testing.T) {
 		if !strings.Contains(script, required) {
 			t.Errorf("scripts/ci/govulncheck.sh must contain %q", required)
 		}
+	}
+}
+
+func TestBDD_GovulncheckDependencyGraphUsesFixedXNetForGO20265026(t *testing.T) {
+	root := repoRoot(t)
+
+	got := readGoModRequireVersion(t, filepath.Join(root, "go.mod"), "golang.org/x/net")
+	if compareVersions(got, minXNetForGO20265026) < 0 {
+		t.Fatalf(
+			"golang.org/x/net must be at or above %s so govulncheck clears GO-2026-5026, got %s",
+			minXNetForGO20265026,
+			got,
+		)
 	}
 }
 
@@ -1105,6 +1119,22 @@ func readGovulncheckWorkflowCommand(t *testing.T, path string) string {
 		}
 	}
 	t.Fatal("CI workflow does not contain a govulncheck step")
+	return ""
+}
+
+func readGoModRequireVersion(t *testing.T, path, module string) string {
+	t.Helper()
+	for _, line := range strings.Split(readFile(t, path), "\n") {
+		beforeComment, _, _ := strings.Cut(line, "//")
+		fields := strings.Fields(beforeComment)
+		if len(fields) >= 3 && fields[0] == "require" && fields[1] == module {
+			return fields[2]
+		}
+		if len(fields) >= 2 && fields[0] == module {
+			return fields[1]
+		}
+	}
+	t.Fatalf("go.mod must require %s", module)
 	return ""
 }
 

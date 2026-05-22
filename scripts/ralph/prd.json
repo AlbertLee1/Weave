@@ -1,73 +1,25 @@
 {
-  "project": "Weave parallel2 self-iteration",
-  "branchName": "ralph/self-iteration-20260522-224557",
-  "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
+  "project": "Weave self-iteration",
+  "branchName": "ralph/self-iteration-20260522-233015",
+  "description": "Focused LLM review auto-fix PRD for the remaining ambiguous JSON body gaps on the tenant usage write and permission request decision endpoints. Scope is limited to the two blocking findings from the PR review.",
   "userStories": [
     {
-      "id": "P2A-002",
-      "title": "Classify valid non-object JSON-RPC envelopes as Invalid Request",
-      "description": "As an MCP client integrator, I want valid JSON values that are not JSON-RPC request objects to return JSON-RPC Invalid Request errors so client retry and diagnostics can distinguish malformed JSON from malformed request shape.",
+      "id": "RRF-001",
+      "title": "Review-blocked JSON body writes reject trailing values",
+      "priority": 1,
+      "description": "As an operator using Weave's tenant usage and permission request workflows, I want admin writes and decision writes to reject ambiguous or concatenated JSON bodies so clients cannot commit state by hiding extra JSON values behind the accepted payload.",
       "acceptanceCriteria": [
-        "Given pkg/mcp parses a valid top-level JSON literal such as null, string, number, or object-array member that is not a request object, when ParseRequest or ParseRequestEnvelope classifies it, then the error code is -32600 Invalid Request rather than -32700 Parse Error.",
-        "Given an HTTP MCP POST body contains valid non-object JSON, when /mcp handles it, then HTTP status remains 200 and the JSON-RPC envelope has error.code -32600 with id null.",
-        "Given a batch contains one valid request and one valid non-object member, when /mcp handles it, then the valid sibling still receives a success response and the malformed member receives an Invalid Request response in the same batch.",
-        "Targeted MCP tests pass with go test ./pkg/mcp ./cmd/weave-mcp."
-      ],
-      "dependencies": [],
-      "passes": true,
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-224557-A"
-    },
-    {
-      "id": "P2A-003",
-      "title": "Convert empty upstream MCP bridge responses into JSON-RPC errors",
-      "description": "As a stdio MCP client, I want weave-mcp bridge mode to emit a parseable JSON-RPC error when a response-required upstream request returns an empty body so the client never receives a blank response line.",
-      "acceptanceCriteria": [
-        "Given RunHTTPBridge forwards a request with an id and upstream returns HTTP 200 or 204 with an empty body, then stdout contains one JSON-RPC error line with the original id.",
-        "Given RunHTTPBridge forwards a notification-only request and upstream returns an empty body, then stdout remains empty.",
-        "Existing bridge auth, timeout, batch, and notification tests continue to pass."
-      ],
-      "dependencies": [],
-      "passes": true,
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-224557-A"
-    },
-    {
-      "id": "P2A-004",
-      "title": "Adopt single-value JSON request decoding on one backend write surface",
-      "description": "As an API consumer, I want backend write handlers to reject concatenated JSON bodies so ambiguous or partially parsed requests are not accepted silently.",
-      "acceptanceCriteria": [
-        "Select one Stream A-owned backend write handler still using json.NewDecoder(r.Body).Decode directly.",
-        "Given the handler receives a body with two concatenated JSON values, then it returns a 400-class API error and does not invoke its store/service side effect.",
-        "Given the handler receives its existing valid request bodies, then current behavior is unchanged.",
-        "Targeted package tests pass."
-      ],
-      "dependencies": [],
-      "passes": true,
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-224557-A"
-    },
-    {
-      "id": "P2B-001",
-      "title": "ObjectSet Live Deduplicates Replayed SSE Sequences",
-      "priority": "high",
-      "passes": true,
-      "story": "As an operator watching an ObjectSet Live stream, I want reconnect replay frames with an already-seen sequence number to be ignored so that the event log and count remain trustworthy during network recovery.",
-      "acceptanceCriteria": [
-        "Given ObjectSet Live is subscribed and event seq 42 has already rendered, when another SSE frame with seq 42 arrives, then the page still shows one row for seq 42 and the event count remains 1.",
-        "Given an older duplicate seq arrives after newer events, when the duplicate is processed, then the event list order and count do not change.",
-        "Given a hand-rolled event omits seq, when it arrives, then it is still captured with the local fallback key rather than being dropped."
-      ],
-      "bdd": [
-        "Given Live is on and the server has pushed a canonical event with seq 42, When reconnect replay delivers the same seq again, Then the UI renders a single seq-42 row and event count is 1."
+        "Given POST /api/admin/tenant-usage/{tenant}/{metric} receives a concatenated JSON body, when the handler processes the request, then it returns 400 InvalidRequestBody and does not mutate tenant usage.",
+        "Given POST /api/v2/permission-requests/{id}/approve or /reject receives a chunked request body with ContentLength = -1 and concatenated JSON, when the handler processes the decision, then it returns 400 InvalidRequestBody and leaves the request pending.",
+        "Given POST /api/v2/permission-requests/{id}/approve or /reject receives a truly empty body, when the caller is authorized, then the handler still commits the decision with an empty note.",
+        "The fix changes only the focused handler/test/Ralph state needed for the LLM review blocking findings."
       ],
       "dependencies": [
-        "web/src/components/objectsets/ObjectSetLivePage.tsx",
-        "web/src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx",
-        "docs/subscriptions/sse.md"
+        "LLM review auto-fix context in scripts/ralph/progress.txt reported PR #50 review request_changes at HEAD b0e1356a54dd.",
+        "Existing strict JSON helpers live in pkg/httputil.ReadJSON and reject multiple JSON values.",
+        "Existing BDD tests cover tenant quota and permission request ambiguous-body behavior but missed tenant usage AddUsage and chunked permission decision bodies."
       ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-224557-B"
+      "passes": true
     }
   ]
 }

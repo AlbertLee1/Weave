@@ -12,6 +12,7 @@ import (
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/auth"
+	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/rid"
 )
 
@@ -61,7 +62,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req CreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidColumnMaskRequest", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -175,7 +176,7 @@ func (h *Handler) updateFor(w http.ResponseWriter, r *http.Request, ridStr strin
 		return
 	}
 	var upd ColumnMaskUpdate
-	if err := json.NewDecoder(r.Body).Decode(&upd); err != nil {
+	if err := httputil.ReadJSON(r, &upd); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidColumnMaskUpdate", map[string]string{
 			"reason": err.Error(),
 		}))

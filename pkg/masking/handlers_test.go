@@ -278,3 +278,80 @@ func TestHandler_WriteRefreshesEngine(t *testing.T) {
 			engine.Size("ri.ontology.main.object-type.Customer"))
 	}
 }
+
+func TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI001(t *testing.T) {
+	t.Run("create rejects a valid column mask followed by another JSON value", func(t *testing.T) {
+		store := NewMemoryStore()
+		router, _ := mountHandler(t, store)
+
+		first := string(mustMarshal(t, CreateRequest{
+			ObjectTypeRID:   "ri.ontology.main.object-type.Customer",
+			PropertyAPIName: "ssn",
+			MaskRule:        MaskRuleHash,
+			AppliesTo:       AppliesTo{Roles: []string{"finance"}},
+			Description:     "hash ssn",
+		}))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/api/admin/column-masks",
+			strings.NewReader(first+`{"smuggled":true}`),
+		)
+		req = withAdminUser(req)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assertRSI001BadRequest(t, w, "InvalidColumnMaskRequest")
+		rows, err := store.List(context.Background())
+		if err != nil {
+			t.Fatalf("store.List: %v", err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("ambiguous create persisted %d column masks", len(rows))
+		}
+	})
+
+	t.Run("update rejects a valid patch followed by another JSON value", func(t *testing.T) {
+		store := NewMemoryStore()
+		const rid = "ri.masking.main.column-mask.ssn"
+		if err := store.Create(context.Background(), &ColumnMask{
+			RID:             rid,
+			ObjectTypeRID:   "ri.ontology.main.object-type.Customer",
+			PropertyAPIName: "ssn",
+			MaskRule:        MaskRuleHash,
+			Description:     "original",
+		}); err != nil {
+			t.Fatalf("seed mask: %v", err)
+		}
+		router, _ := mountHandler(t, store)
+
+		nextDescription := "mutated"
+		first := string(mustMarshal(t, ColumnMaskUpdate{Description: &nextDescription}))
+		req := httptest.NewRequest(
+			http.MethodPatch,
+			"/api/admin/column-masks/"+rid,
+			strings.NewReader(first+`{"smuggled":true}`),
+		)
+		req = withAdminUser(req)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assertRSI001BadRequest(t, w, "InvalidColumnMaskUpdate")
+		got, err := store.Get(context.Background(), rid)
+		if err != nil {
+			t.Fatalf("store.Get: %v", err)
+		}
+		if got.Description != "original" {
+			t.Fatalf("ambiguous update mutated description to %q", got.Description)
+		}
+	})
+}
+
+func assertRSI001BadRequest(t *testing.T, w *httptest.ResponseRecorder, errorName string) {
+	t.Helper()
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), errorName) {
+		t.Fatalf("expected error %q in response body: %s", errorName, w.Body.String())
+	}
+}

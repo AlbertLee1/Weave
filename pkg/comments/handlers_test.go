@@ -2,9 +2,11 @@ package comments
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -256,6 +258,80 @@ func TestHandler_FullCRUDFlow(t *testing.T) {
 	withAlice.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("re-delete: want 404, got %d", w.Code)
+	}
+}
+
+func TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI003(t *testing.T) {
+	t.Run("create rejects a valid comment followed by another JSON value", func(t *testing.T) {
+		store := NewMemoryStore()
+		user := &auth.User{ID: "user:alice"}
+		r := newTestRouter(store, user)
+
+		first := string(mustEncode(t, map[string]any{
+			"targetRid": targetRID,
+			"body":      "first",
+		}))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/api/v2/comments",
+			strings.NewReader(first+`{"smuggled":true}`),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		assertRSI003BadRequest(t, w)
+		rows, total, err := store.List(context.Background(), ListQuery{TargetRID: targetRID, Limit: 10})
+		if err != nil {
+			t.Fatalf("store.List: %v", err)
+		}
+		if total != 0 || len(rows) != 0 {
+			t.Fatalf("ambiguous create persisted comments: total=%d rows=%d", total, len(rows))
+		}
+	})
+
+	t.Run("update rejects a valid edit followed by another JSON value", func(t *testing.T) {
+		store := NewMemoryStore()
+		user := &auth.User{ID: "user:alice"}
+		row := &Comment{
+			ID:        "comment-1",
+			TargetRID: targetRID,
+			Body:      "original",
+			Author:    user.ID,
+		}
+		if err := store.Create(context.Background(), row); err != nil {
+			t.Fatalf("seed comment: %v", err)
+		}
+		r := newTestRouter(store, user)
+
+		first := string(mustEncode(t, map[string]any{"body": "mutated"}))
+		req := httptest.NewRequest(
+			http.MethodPut,
+			"/api/v2/comments/"+row.ID,
+			strings.NewReader(first+`{"smuggled":true}`),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		assertRSI003BadRequest(t, w)
+		got, err := store.Get(context.Background(), row.ID)
+		if err != nil {
+			t.Fatalf("store.Get: %v", err)
+		}
+		if got.Body != "original" {
+			t.Fatalf("ambiguous update mutated body to %q", got.Body)
+		}
+	})
+}
+
+func assertRSI003BadRequest(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "InvalidRequestBody") {
+		t.Fatalf("expected InvalidRequestBody in response body: %s", w.Body.String())
 	}
 }
 

@@ -13,6 +13,7 @@ import { BrowserPage } from '../BrowserPage';
 //   - the request body sent to /search uses containsAnyTerm.value : string;
 //   - the error overlay surfaces the backend `parameters.reason` when an
 //     error does come back, not just the generic `errorCode: errorName`.
+//   - the request asks for US-235 highlights and renders `_highlights` snippets.
 
 vi.mock('../../../hooks/useObjectTypes', () => ({
   useObjectType: (_ontology: string, apiName: string) => ({
@@ -51,7 +52,13 @@ const server = setupServer(
     capturedSearchBody = await request.json();
     return HttpResponse.json({
       data: [
-        { __primaryKey: 'n-1', __apiName: 'AI_News', newsId: 'n-1', title: 'OpenAI ships X' },
+        {
+          __primaryKey: 'n-1',
+          __apiName: 'AI_News',
+          newsId: 'n-1',
+          title: 'OpenAI ships X',
+          _highlights: { title: ['<mark>OpenAI</mark> ships X'] },
+        },
       ],
       totalCount: '1',
     });
@@ -111,6 +118,21 @@ describe('BDD: BrowserPage full-text search contract (DOG-004)', () => {
     });
     const body = capturedSearchBody as { where?: { value?: unknown } };
     expect(body.where!.value).toBe('OpenAI Codex');
+  });
+
+  it('Given the backend returns title highlights, When search results render, Then BrowserPage requested and displays marked snippets', async () => {
+    renderPage();
+    const input = await screen.findByTestId('search-input');
+    fireEvent.change(input, { target: { value: 'OpenAI' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(capturedSearchBody).not.toBeNull();
+    });
+
+    const body = capturedSearchBody as { highlight?: { fields?: string[] } };
+    expect(body.highlight?.fields).toEqual(['title']);
+    expect(await screen.findByText('OpenAI', { selector: 'mark' })).toBeInTheDocument();
   });
 
   it('Given the search API returns a structured error, When BrowserPage renders the overlay, Then it includes the backend parameters.reason alongside the errorCode/errorName summary', async () => {

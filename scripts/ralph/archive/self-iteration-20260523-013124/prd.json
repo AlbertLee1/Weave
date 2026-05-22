@@ -1,0 +1,25 @@
+{
+  "project": "Weave self-iteration",
+  "branchName": "ralph/self-iteration-20260522-233015",
+  "description": "Focused LLM review auto-fix PRD for the blocking Go CI failure on PR #50. Scope is limited to repairing the failed govulncheck gate by updating the vulnerable dependency and proving the same CI-equivalent gates locally.",
+  "userStories": [
+    {
+      "id": "RCI-001",
+      "title": "Govulncheck uses fixed x/net release",
+      "priority": 1,
+      "description": "As a maintainer of Weave's CLI and SDK HTTP paths, I want the Go dependency graph to use a golang.org/x/net release that fixes GO-2026-5026 so the CI govulncheck gate passes without weakening the security scan.",
+      "acceptanceCriteria": [
+        "Given the GitHub Go CI job failed in govulncheck for GO-2026-5026, when the dependency graph is inspected, then golang.org/x/net is pinned at or above v0.55.0, the fixed release reported by the CI log.",
+        "Given the CI workflow continues to run make vulncheck, when the local BDD guard for CI security gates runs, then it fails on vulnerable x/net versions and passes with the fixed version.",
+        "Given the local repository runs the PR Go CI-equivalent checks, when build, vet, golangci-lint, race+coverage, covercheck, contract tests, and govulncheck are executed, then each gate passes without suppressing govulncheck findings.",
+        "The fix changes only the focused dependency/test/Ralph state needed for the review blocking finding."
+      ],
+      "dependencies": [
+        "LLM review auto-fix context in scripts/ralph/progress.txt reported PR #50 Go CI blocked on a failing govulncheck step.",
+        "GitHub run 26298559112 and latest PR check run 26300065159 both report GO-2026-5026 in golang.org/x/net@v0.54.0, fixed in v0.55.0.",
+        "Existing CI BDD tests in scripts/ci/ci_workflow_bdd_test.go verify the govulncheck workflow contract."
+      ],
+      "passes": true
+    }
+  ]
+}

@@ -170,6 +170,7 @@ export interface WireObject {
   __rid: string;
   __primaryKey: string | number;
   __apiName: string;
+  _highlights?: Record<string, string[]>;
   [property: string]: unknown;
 }
 

@@ -226,7 +226,7 @@ func TestBDD_HTTPTransport_GivenBatchWithNonObjectMember_WhenPost_ThenInvalidReq
 	}
 }
 
-func TestBDD_HTTPTransportRejectsOversizedBodyAtTransportLayer(t *testing.T) {
+func TestBDD_HTTPTransport_GivenOversizedBody_WhenPost_ThenJSONRPCError_P2A003(t *testing.T) {
 	srv, _, _, _ := newTestServer(t)
 	handler := NewHTTPHandler(srv)
 
@@ -234,11 +234,21 @@ func TestBDD_HTTPTransportRejectsOversizedBodyAtTransportLayer(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, want 413; body=%q", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (oversized body errors travel in JSON-RPC envelope); body=%q", rr.Code, rr.Body.String())
 	}
-	if strings.Contains(rr.Body.String(), `"jsonrpc"`) {
-		t.Fatalf("oversized body response should be transport-level, got JSON-RPC body %q", rr.Body.String())
+	var resp Response
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v; body=%q", err, rr.Body.String())
+	}
+	if resp.Error == nil || resp.Error.Code != CodeInvalidRequest {
+		t.Fatalf("error = %+v, want code %d", resp.Error, CodeInvalidRequest)
+	}
+	if string(resp.ID) != "null" {
+		t.Fatalf("id = %s, want null", resp.ID)
+	}
+	if !strings.Contains(resp.Error.Message, "request body exceeds") {
+		t.Fatalf("error message = %q, want oversized body reason", resp.Error.Message)
 	}
 }
 

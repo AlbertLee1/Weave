@@ -1,0 +1,57 @@
+{
+  "project": "Weave self-iteration",
+  "branchName": "ralph/self-iteration-20260522-233015",
+  "description": "Small post-parallel2 Ralph loop focused on current CI health and narrow OSv2 service hardening gaps. Current branch has no PR CI or LLM review auto-fix context; known embed and US-453 web risks were checked locally before story selection.",
+  "userStories": [
+    {
+      "id": "RSI-001",
+      "title": "Security policy writes reject ambiguous JSON bodies",
+      "priority": 1,
+      "description": "As a security administrator managing row policies, column masks, and cell masks, I want write APIs to reject request bodies containing multiple JSON values so malformed or smuggled policy payloads cannot create or mutate access controls from only the first object.",
+      "acceptanceCriteria": [
+        "Given an authenticated admin posts a valid row policy create body followed by another JSON value, when the request reaches POST /api/admin/row-policies, then the API returns 400 InvalidRowPolicyRequest and no row policy is created.",
+        "Given an authenticated admin patches an existing row policy with a valid update followed by another JSON value, when the request reaches PATCH /api/admin/row-policies/{rid}, then the API returns 400 InvalidRowPolicyUpdate and the original policy remains unchanged.",
+        "Given an authenticated admin posts or patches column mask and cell mask JSON bodies followed by another JSON value, when the requests reach their admin APIs, then each API returns the existing 400 invalid-request error and does not create or mutate policy state.",
+        "The BDD coverage uses chi HTTP routers and in-memory stores so the behavior is observable at the API boundary.",
+        "Targeted Go tests for pkg/rls, pkg/masking, pkg/cellsec, and pkg/httputil pass."
+      ],
+      "dependencies": [
+        "pkg/httputil.ReadJSON already enforces a single JSON value and request body size cap.",
+        "Existing security policy handler tests mount chi routers with in-memory stores and authenticated admin contexts."
+      ],
+      "passes": true
+    },
+    {
+      "id": "RSI-002",
+      "title": "Saved search writes reject ambiguous JSON bodies",
+      "priority": 2,
+      "description": "As an operator saving browser workspaces, I want saved-search create/update APIs to reject concatenated JSON bodies so saved view definitions cannot be silently truncated or smuggled.",
+      "acceptanceCriteria": [
+        "Given an authenticated requester posts a valid saved search create body followed by another JSON value, when the request reaches the saved searches API, then the API returns 400 and no saved search is created.",
+        "Given an authenticated requester patches an existing saved search with a valid update followed by another JSON value, when the request reaches the saved searches API, then the API returns 400 and the saved definition remains unchanged.",
+        "The coverage exercises the HTTP handler boundary with an in-memory store.",
+        "Targeted Go tests for pkg/savedsearches and pkg/httputil pass."
+      ],
+      "dependencies": [
+        "RSI-001 establishes the strict JSON adoption pattern for OSv2 admin write surfaces."
+      ],
+      "passes": true
+    },
+    {
+      "id": "RSI-003",
+      "title": "Collaboration writes reject ambiguous JSON bodies",
+      "priority": 3,
+      "description": "As an operator using comments, reactions, and watches around ontology objects, I want collaboration write APIs to reject concatenated JSON bodies so upper-layer collaboration state is parsed deterministically.",
+      "acceptanceCriteria": [
+        "Given a valid comments/reactions/watches write request followed by another JSON value, when posted to the relevant API, then the API returns 400 and does not create or mutate collaboration state.",
+        "Existing valid collaboration write requests continue to pass.",
+        "The coverage uses package-local handler tests with in-memory stores where available.",
+        "Targeted Go tests for the touched collaboration packages and pkg/httputil pass."
+      ],
+      "dependencies": [
+        "RSI-001 and RSI-002 narrow strict JSON handling across higher-risk write surfaces first."
+      ],
+      "passes": true
+    }
+  ]
+}
