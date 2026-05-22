@@ -3,6 +3,7 @@ package oss
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,9 +15,11 @@ import (
 )
 
 type fakeIngestMetadataRepo struct {
-	objectTypes map[string]*oms.ObjectType
-	properties  map[string][]oms.Property
-	valueTypes  map[string]*oms.ValueType
+	objectTypes       map[string]*oms.ObjectType
+	properties        map[string][]oms.Property
+	valueTypes        map[string]*oms.ValueType
+	listPropertiesErr error
+	valueTypeErr      error
 }
 
 func (f *fakeIngestMetadataRepo) GetObjectTypeByAPIName(_ context.Context, ontologyAPIName, apiName string) (*oms.ObjectType, error) {
@@ -27,10 +30,16 @@ func (f *fakeIngestMetadataRepo) GetObjectTypeByAPIName(_ context.Context, ontol
 }
 
 func (f *fakeIngestMetadataRepo) ListProperties(_ context.Context, objectTypeRID string) ([]oms.Property, error) {
+	if f.listPropertiesErr != nil {
+		return nil, f.listPropertiesErr
+	}
 	return f.properties[objectTypeRID], nil
 }
 
 func (f *fakeIngestMetadataRepo) GetValueTypeByAPIName(_ context.Context, apiName string) (*oms.ValueType, error) {
+	if f.valueTypeErr != nil {
+		return nil, f.valueTypeErr
+	}
 	if vt, ok := f.valueTypes[apiName]; ok {
 		return vt, nil
 	}
@@ -103,8 +112,8 @@ func postSelf102Ingest(t *testing.T, r chi.Router, body string) (int, map[string
 	return rr.Code, decoded
 }
 
-func TestStreamIngest_BDD_FailsFastOnSchemaAndValueTypeViolations(t *testing.T) {
-	t.Run("Given an undeclared property, When ingest runs, Then it returns SchemaViolation and does not publish", func(t *testing.T) {
+func TestStreamIngest_MetadataFailsFastOnSchemaAndValueTypeViolations(t *testing.T) {
+	t.Run("Given an undeclared property, When ingest runs, Then it returns InvalidIngestEdit and does not publish", func(t *testing.T) {
 		pub := &mockIngestPublisher{}
 		r := newIngestRouterWithMetadataValidator(pub, newSelf102MetadataRepo())
 
@@ -115,8 +124,8 @@ func TestStreamIngest_BDD_FailsFastOnSchemaAndValueTypeViolations(t *testing.T) 
 		if code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400; body = %#v", code, body)
 		}
-		if body["errorName"] != "SchemaViolation" {
-			t.Fatalf("errorName = %v, want SchemaViolation", body["errorName"])
+		if body["errorName"] != "InvalidIngestEdit" {
+			t.Fatalf("errorName = %v, want InvalidIngestEdit", body["errorName"])
 		}
 		params, _ := body["parameters"].(map[string]interface{})
 		if params["objectType"] != "AI_News" {
@@ -124,6 +133,31 @@ func TestStreamIngest_BDD_FailsFastOnSchemaAndValueTypeViolations(t *testing.T) 
 		}
 		if params["property"] != "unknownField" {
 			t.Fatalf("parameters.property = %v, want unknownField", params["property"])
+		}
+		if len(pub.batches) != 0 {
+			t.Fatalf("publisher received %d batches, want 0", len(pub.batches))
+		}
+	})
+
+	t.Run("Given ValueType metadata lookup fails, When ingest runs, Then it returns IngestMetadataLookupFailed and does not publish", func(t *testing.T) {
+		pub := &mockIngestPublisher{}
+		repo := newSelf102MetadataRepo()
+		repo.valueTypeErr = errors.New("value type store unavailable")
+		r := newIngestRouterWithMetadataValidator(pub, repo)
+
+		code, body := postSelf102Ingest(t, r, `{"edits":[
+			{"type":"CREATE","objectType":"AI_News","primaryKey":"news-4","properties":{"id":"news-4","title":"AI","ticker":"NVDA"}}
+		]}`)
+
+		if code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500; body = %#v", code, body)
+		}
+		if body["errorName"] != "IngestMetadataLookupFailed" {
+			t.Fatalf("errorName = %v, want IngestMetadataLookupFailed", body["errorName"])
+		}
+		params, _ := body["parameters"].(map[string]interface{})
+		if params["property"] != "ticker" {
+			t.Fatalf("parameters.property = %v, want ticker", params["property"])
 		}
 		if len(pub.batches) != 0 {
 			t.Fatalf("publisher received %d batches, want 0", len(pub.batches))

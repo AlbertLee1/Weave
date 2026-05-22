@@ -23,6 +23,54 @@ func TestProtocol_ParseValidRequest(t *testing.T) {
 	}
 }
 
+func TestProtocol_GivenInvalidIDShape_WhenParseRequest_ThenInvalidRequest_P2A002(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "object", raw: `{"jsonrpc":"2.0","id":{"nested":1},"method":"tools/list","params":{}}`},
+		{name: "array", raw: `{"jsonrpc":"2.0","id":[1],"method":"tools/list","params":{}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseRequest([]byte(tc.raw))
+			if err == nil {
+				t.Fatal("ParseRequest returned nil error for invalid id shape")
+			}
+			rpcErr, ok := err.(*RPCError)
+			if !ok {
+				t.Fatalf("error = %T, want *RPCError", err)
+			}
+			if rpcErr.Code != CodeInvalidRequest {
+				t.Fatalf("code = %d, want %d", rpcErr.Code, CodeInvalidRequest)
+			}
+		})
+	}
+}
+
+func TestProtocol_GivenValidIDShapes_WhenParseRequest_ThenAccepted_P2A002(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   string
+	}{
+		{name: "string", id: `"abc"`},
+		{name: "number", id: `123`},
+		{name: "null", id: `null`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := ParseRequest([]byte(`{"jsonrpc":"2.0","id":` + tc.id + `,"method":"tools/list","params":{}}`))
+			if err != nil {
+				t.Fatalf("ParseRequest returned error: %v", err)
+			}
+			if string(req.ID) != tc.id {
+				t.Fatalf("id = %s, want %s", req.ID, tc.id)
+			}
+			if req.IsNotification() {
+				t.Fatal("request with explicit id should not be treated as notification")
+			}
+		})
+	}
+}
+
 func TestProtocol_ParseInvalidJSON_Returns32700(t *testing.T) {
 	raw := []byte(`{not valid json`)
 	_, err := ParseRequest(raw)
