@@ -172,6 +172,60 @@ func TestHTTPTransport_InvalidJSON_Returns32700_HTTPStatus200(t *testing.T) {
 	}
 }
 
+func TestBDD_HTTPTransport_GivenValidNonObjectJSON_WhenPost_ThenInvalidRequest_P2A002(t *testing.T) {
+	srv, _, _, _ := newTestServer(t)
+	handler := NewHTTPHandler(srv)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`"not-a-request"`))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%q", rr.Code, rr.Body.String())
+	}
+	var resp Response
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v; body=%q", err, rr.Body.String())
+	}
+	if resp.Error == nil || resp.Error.Code != CodeInvalidRequest {
+		t.Fatalf("error = %+v, want code %d", resp.Error, CodeInvalidRequest)
+	}
+	if string(resp.ID) != "null" {
+		t.Fatalf("id = %s, want null", resp.ID)
+	}
+}
+
+func TestBDD_HTTPTransport_GivenBatchWithNonObjectMember_WhenPost_ThenInvalidRequestForMember_P2A002(t *testing.T) {
+	srv, _, _, _ := newTestServer(t)
+	handler := NewHTTPHandler(srv)
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`[
+		{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}},
+		42
+	]`))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%q", rr.Code, rr.Body.String())
+	}
+	var responses []Response
+	if err := json.NewDecoder(rr.Body).Decode(&responses); err != nil {
+		t.Fatalf("decode batch response: %v; body=%q", err, rr.Body.String())
+	}
+	if len(responses) != 2 {
+		t.Fatalf("response count = %d, want 2: %+v", len(responses), responses)
+	}
+	if responses[0].Error != nil {
+		t.Fatalf("valid sibling error = %+v", responses[0].Error)
+	}
+	if responses[1].Error == nil || responses[1].Error.Code != CodeInvalidRequest {
+		t.Fatalf("invalid member error = %+v, want code %d", responses[1].Error, CodeInvalidRequest)
+	}
+	if string(responses[1].ID) != "null" {
+		t.Fatalf("invalid member id = %s, want null", responses[1].ID)
+	}
+}
+
 func TestBDD_HTTPTransportRejectsOversizedBodyAtTransportLayer(t *testing.T) {
 	srv, _, _, _ := newTestServer(t)
 	handler := NewHTTPHandler(srv)

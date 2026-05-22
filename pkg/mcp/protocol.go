@@ -123,8 +123,13 @@ func (e *RPCError) Error() string {
 // invalid JSON it returns an *RPCError with CodeParseError so callers can
 // embed it directly into a response envelope.
 func ParseRequest(data []byte) (*Request, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] != '{' && json.Valid(trimmed) {
+		return nil, &RPCError{Code: CodeInvalidRequest, Message: "request must be a JSON object"}
+	}
+
 	var req Request
-	if err := json.Unmarshal(data, &req); err != nil {
+	if err := json.Unmarshal(trimmed, &req); err != nil {
 		return nil, &RPCError{Code: CodeParseError, Message: "parse error: " + err.Error()}
 	}
 	if req.JSONRPC == "" {
