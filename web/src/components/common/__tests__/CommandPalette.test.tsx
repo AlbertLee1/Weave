@@ -191,6 +191,48 @@ describe('CommandPalette', () => {
     expect(screen.getByRole('option', { name: /aip threads/i })).toBeInTheDocument();
   });
 
+  it('lists ontology-scoped workspace pages when an ontology is active', async () => {
+    setupFetchStub();
+    renderPalette({ open: true, activeOntology: 'northwind' });
+
+    expect(
+      await screen.findByRole('option', { name: /query builder/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /quiver ts/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /import data/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /object types/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /security policies/i })).toBeInTheDocument();
+  });
+
+  it('records the active ontology route when a workspace page is selected', async () => {
+    setupFetchStub();
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    renderPalette({ open: true, onClose, activeOntology: 'northwind' });
+
+    await user.click(
+      await screen.findByRole('option', { name: /query builder/i }),
+    );
+
+    expect(onClose).toHaveBeenCalled();
+    expect(useRecentCommandsStore.getState().entries[0]).toMatchObject({
+      id: 'page:ontology:northwind:query-builder',
+      kind: 'page',
+      label: 'Query Builder',
+      to: '/objectsets/northwind',
+      hint: 'northwind',
+    });
+  });
+
+  it('hides ontology-scoped workspace pages when no ontology is active', () => {
+    setupFetchStub();
+    renderPalette({ open: true, activeOntology: null });
+
+    expect(screen.queryByRole('option', { name: /query builder/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /quiver ts/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /object types/i })).not.toBeInTheDocument();
+  });
+
   it('lists object types from the active ontology', async () => {
     setupFetchStub();
     renderPalette({ open: true, activeOntology: 'northwind' });
