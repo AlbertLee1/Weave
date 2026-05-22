@@ -135,6 +135,13 @@ func RunHTTPBridge(ctx context.Context, in io.Reader, out io.Writer, url string,
 			// notifications; in that case we drop the line entirely.
 			continue
 		}
+		if len(bytes.TrimSpace(respBytes)) == 0 {
+			errLine := makeErrorLine(classification.errorID, errors.New("upstream returned empty response body"))
+			if _, err := out.Write(errLine); err != nil {
+				return err
+			}
+			continue
+		}
 		// Normalise the upstream payload to a single line by trimming any
 		// trailing whitespace and appending exactly one newline.
 		trimmed := bytes.TrimRight(respBytes, " \r\n\t")

@@ -1,98 +1,73 @@
 {
   "project": "Weave parallel2 self-iteration",
-  "branchName": "ralph/self-iteration-20260522-214033",
+  "branchName": "ralph/self-iteration-20260522-224557",
   "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
   "userStories": [
     {
-      "id": "P2A-001",
-      "title": "Reject trailing tokens in shared JSON request decoding",
-      "priority": "high",
-      "story": "As an API client and operator, I want Weave handlers that use the shared JSON decoder to reject request bodies containing extra JSON values or trailing junk so malformed or smuggled payloads cannot be partially accepted.",
-      "scope": "Backend shared HTTP utility plus a representative OSS HTTP handler regression test.",
-      "bddAcceptance": [
-        "Given an OSS SearchObjects request body that starts with a valid JSON object and then contains a second JSON object, when the request is posted, then the handler returns HTTP 400 with errorName InvalidRequestBody.",
-        "Given the same request path with a single valid JSON object, when the request is posted, then the handler continues to accept and execute it.",
-        "Given the shared httputil.ReadJSON helper, when the body contains trailing non-whitespace after the first JSON value, then ReadJSON returns an error instead of silently decoding the first value."
+      "id": "P2A-002",
+      "title": "Classify valid non-object JSON-RPC envelopes as Invalid Request",
+      "description": "As an MCP client integrator, I want valid JSON values that are not JSON-RPC request objects to return JSON-RPC Invalid Request errors so client retry and diagnostics can distinguish malformed JSON from malformed request shape.",
+      "acceptanceCriteria": [
+        "Given pkg/mcp parses a valid top-level JSON literal such as null, string, number, or object-array member that is not a request object, when ParseRequest or ParseRequestEnvelope classifies it, then the error code is -32600 Invalid Request rather than -32700 Parse Error.",
+        "Given an HTTP MCP POST body contains valid non-object JSON, when /mcp handles it, then HTTP status remains 200 and the JSON-RPC envelope has error.code -32600 with id null.",
+        "Given a batch contains one valid request and one valid non-object member, when /mcp handles it, then the valid sibling still receives a success response and the malformed member receives an Invalid Request response in the same batch.",
+        "Targeted MCP tests pass with go test ./pkg/mcp ./cmd/weave-mcp."
       ],
-      "dependencies": [
-        "pkg/httputil.ReadJSON",
-        "pkg/oss.SearchObjects HTTP handler"
-      ],
+      "dependencies": [],
       "passes": true,
       "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-214033-A"
+      "source_branch": "ralph/self-iteration-20260522-224557-A"
+    },
+    {
+      "id": "P2A-003",
+      "title": "Convert empty upstream MCP bridge responses into JSON-RPC errors",
+      "description": "As a stdio MCP client, I want weave-mcp bridge mode to emit a parseable JSON-RPC error when a response-required upstream request returns an empty body so the client never receives a blank response line.",
+      "acceptanceCriteria": [
+        "Given RunHTTPBridge forwards a request with an id and upstream returns HTTP 200 or 204 with an empty body, then stdout contains one JSON-RPC error line with the original id.",
+        "Given RunHTTPBridge forwards a notification-only request and upstream returns an empty body, then stdout remains empty.",
+        "Existing bridge auth, timeout, batch, and notification tests continue to pass."
+      ],
+      "dependencies": [],
+      "passes": true,
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260522-224557-A"
+    },
+    {
+      "id": "P2A-004",
+      "title": "Adopt single-value JSON request decoding on one backend write surface",
+      "description": "As an API consumer, I want backend write handlers to reject concatenated JSON bodies so ambiguous or partially parsed requests are not accepted silently.",
+      "acceptanceCriteria": [
+        "Select one Stream A-owned backend write handler still using json.NewDecoder(r.Body).Decode directly.",
+        "Given the handler receives a body with two concatenated JSON values, then it returns a 400-class API error and does not invoke its store/service side effect.",
+        "Given the handler receives its existing valid request bodies, then current behavior is unchanged.",
+        "Targeted package tests pass."
+      ],
+      "dependencies": [],
+      "passes": true,
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260522-224557-A"
     },
     {
       "id": "P2B-001",
-      "title": "Saved Browser Searches Hydrate the Visible Search Box",
+      "title": "ObjectSet Live Deduplicates Replayed SSE Sequences",
       "priority": "high",
-      "status": "completed",
       "passes": true,
-      "summary": "Loading a Browser saved search with searchText must update both the query state and the visible search input so operators can trust and edit the active object search.",
+      "story": "As an operator watching an ObjectSet Live stream, I want reconnect replay frames with an already-seen sequence number to be ignored so that the event log and count remain trustworthy during network recovery.",
+      "acceptanceCriteria": [
+        "Given ObjectSet Live is subscribed and event seq 42 has already rendered, when another SSE frame with seq 42 arrives, then the page still shows one row for seq 42 and the event count remains 1.",
+        "Given an older duplicate seq arrives after newer events, when the duplicate is processed, then the event list order and count do not change.",
+        "Given a hand-rolled event omits seq, when it arrives, then it is still captured with the local fallback key rather than being dropped."
+      ],
+      "bdd": [
+        "Given Live is on and the server has pushed a canonical event with seq 42, When reconnect replay delivers the same seq again, Then the UI renders a single seq-42 row and event count is 1."
+      ],
       "dependencies": [
-        "web/src/components/browser/BrowserPage.tsx",
-        "web/src/components/browser/SearchBar.tsx",
-        "web/src/components/browser/SavedSearchesPanel.tsx"
-      ],
-      "bddAcceptanceCriteria": [
-        "Given an operator is on /browser/:ontology/:objectType and a saved search contains searchText 'OpenAI', when they click that saved search, then the Search objects input visibly contains 'OpenAI'.",
-        "Given that same saved search is loaded, when BrowserPage posts to /search, then the where clause is containsAnyTerm on the title property with value 'OpenAI' as a string.",
-        "Given the operator clears the hydrated input, when the input becomes empty, then BrowserPage returns to the unfiltered list request."
-      ],
-      "verification": [
-        "npm test -- BrowserPage.savedSearches.bdd.test.tsx",
-        "npm test -- SearchBar.test.tsx BrowserPage.savedSearches.bdd.test.tsx",
-        "npm run build"
+        "web/src/components/objectsets/ObjectSetLivePage.tsx",
+        "web/src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx",
+        "docs/subscriptions/sse.md"
       ],
       "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-214033-B"
-    },
-    {
-      "id": "P2B-002",
-      "title": "Browser Bulk Selection Clears on Query Context Changes",
-      "priority": "medium",
-      "status": "completed",
-      "passes": true,
-      "summary": "Bulk action state should not retain hidden rows after search, filter, saved-search, or facet changes replace the active result set.",
-      "dependencies": [
-        "web/src/components/browser/BrowserPage.tsx",
-        "web/src/components/browser/ObjectTable.tsx",
-        "web/src/components/browser/BulkActionToolbar.tsx"
-      ],
-      "bddAcceptanceCriteria": [
-        "Given a row is selected in the unfiltered Browser table, when the operator applies a text search, then the bulk toolbar clears before actions can target stale rows.",
-        "Given rows are selected on one filtered result set, when the operator loads a saved search, then only rows explicitly selected after the saved search load are eligible for bulk actions."
-      ],
-      "verification": [
-        "npm test -- BrowserPage.bulkSelection.bdd.test.tsx",
-        "npm run build"
-      ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-214033-B"
-    },
-    {
-      "id": "P2B-003",
-      "title": "Browser Live Mode Surfaces SSE Fallback Provisioning Failures",
-      "priority": "medium",
-      "status": "completed",
-      "passes": true,
-      "summary": "The Browser live toggle should expose a clear inline failure if WebSocket reconnects and the temporary ObjectSet needed for the documented SSE fallback cannot be created.",
-      "dependencies": [
-        "docs/subscriptions/sse.md",
-        "web/src/components/browser/BrowserPage.tsx",
-        "web/src/hooks/useObjectSetSubscription.ts",
-        "web/src/hooks/useWebSocketSubscription.ts"
-      ],
-      "bddAcceptanceCriteria": [
-        "Given Live mode is enabled and the WebSocket transport enters reconnecting, when createTemporaryObjectSet fails, then the Browser header shows a failed fallback status instead of staying in an indefinite connecting state.",
-        "Given the operator turns Live off after that failure, when they turn it on again, then the fallback error is cleared and the Browser retries provisioning."
-      ],
-      "verification": [
-        "npm test -- BrowserPage.liveFallback.bdd.test.tsx",
-        "npm run build"
-      ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-214033-B"
+      "source_branch": "ralph/self-iteration-20260522-224557-B"
     }
   ]
 }

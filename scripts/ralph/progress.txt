@@ -1,129 +1,156 @@
 # Ralph Progress Log - Parallel2 Integration
-Integrated: 2026-05-22T22:13:28+08:00
-Integration branch: ralph/self-iteration-20260522-214033
+Integrated: 2026-05-22T23:07:44+08:00
+Integration branch: ralph/self-iteration-20260522-224557
 
-## Stream A: ralph/self-iteration-20260522-214033-A
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-214033-A
-HEAD: 7ad3024f8324
+## Stream A: ralph/self-iteration-20260522-224557-A
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-224557-A
+HEAD: 88780369d973
 
 # Ralph Progress Log - Parallel2 Stream A
-Started: 2026-05-22T21:46:18+08:00
-Integration branch: ralph/self-iteration-20260522-214033
-Stream branch: ralph/self-iteration-20260522-214033-A
+Started: 2026-05-22T22:45:57+08:00
+Integration branch: ralph/self-iteration-20260522-224557
+Stream branch: ralph/self-iteration-20260522-224557-A
 Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
 
-## Codebase Patterns
-- Shared JSON request-body validation belongs in `pkg/httputil.ReadJSON`; endpoints wired through this helper inherit the 1 MiB limit and single-JSON-value requirement without per-handler duplicate decoder logic.
+## Iteration 2026-05-22T22:52:50+08:00
 
-## Baseline Inspection
-- Branch verified: `ralph/self-iteration-20260522-214033-A`.
-- Initial PRD had no stories, archived to `scripts/ralph/archive/self-iteration-20260522-214618/`.
-- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the incoming progress file.
-- Dogfood DOG-003 and DOG-004 are already represented by current source/tests (`pkg/oms/index_bootstrap_bdd_test.go`, `pkg/oss/stream_ingest_dog003_bdd_test.go`, `pkg/oss/where/converter_dog004_bdd_test.go`).
-- Local Go health before story selection:
-  - `go build $(./scripts/ci/go-packages.sh --build)` passed.
-  - `go test $(./scripts/ci/go-packages.sh)` passed.
+Archived previous empty stream state:
+- scripts/ralph/archive/self-iteration-20260522-225250/prd.json
+- scripts/ralph/archive/self-iteration-20260522-225250/progress.txt
 
-## Story P2A-001 - Reject trailing tokens in shared JSON request decoding
-Status: passed
+Inspection evidence:
+- Branch verified: ralph/self-iteration-20260522-224557-A.
+- Initial git status was clean.
+- Existing PRD had no userStories, so a new small P2A PRD was created.
+- No PR CI auto-fix context or LLM review auto-fix context was present in progress.txt.
+- Dogfood backend findings DOG-003 and DOG-004 are already covered by existing regression tests.
+- Focused backend/MCP sweep passed: `go test ./cmd/server ./cmd/weave-mcp ./pkg/mcp ./pkg/oss/... ./pkg/oms/...`.
 
-Files changed:
-- `pkg/httputil/json.go`
-- `pkg/httputil/json_test.go`
-- `pkg/oss/handlers_strict_json_bdd_test.go`
+Selected story for this Codex execution:
+- P2A-002 - Classify valid non-object JSON-RPC envelopes as Invalid Request.
 
-RED evidence:
-- `go test ./pkg/httputil -run 'TestReadJSON_RejectsTrailing' -count=1 -v` failed as expected because trailing JSON and trailing junk returned nil.
-- `go test ./pkg/oss -run TestBDD_SearchObjectsRejectsTrailingJSONBody_P2A001 -count=1 -v` failed as expected because SearchObjects returned HTTP 200 after decoding only the first JSON object.
+Planned TDD:
+- Add failing MCP protocol/HTTP tests for valid JSON that is not a request object.
+- Implement the smallest parser classification change.
+- Run targeted MCP tests before marking P2A-002 passing.
 
-Implementation:
-- `httputil.ReadJSON` now decodes the target value, then performs a second decode and requires `io.EOF`; an additional JSON value or non-whitespace trailing content returns an error.
-- Added utility coverage for trailing JSON values and trailing non-whitespace.
-- Added a BDD-style OSS SearchObjects HTTP regression proving malformed multi-value bodies return `InvalidRequestBody`.
+P2A-002 evidence:
+- RED: `go test ./pkg/mcp -run 'TestProtocol_GivenValidJSONNonObject|TestBDD_HTTPTransport_GivenValidNonObjectJSON|TestBDD_HTTPTransport_GivenBatchWithNonObjectMember' -count=1` failed because valid JSON scalar/array request envelopes returned `-32700` Parse Error instead of `-32600` Invalid Request.
+- Implementation: `pkg/mcp.ParseRequest` now checks trimmed input before struct decode; valid JSON whose top-level value is not an object returns `CodeInvalidRequest` with message `request must be a JSON object`, while malformed JSON continues through the existing parse-error path.
+- GREEN targeted: `go test ./pkg/mcp -run 'TestProtocol_GivenValidJSONNonObject|TestBDD_HTTPTransport_GivenValidNonObjectJSON|TestBDD_HTTPTransport_GivenBatchWithNonObjectMember' -count=1` passed.
+- GREEN acceptance: `go test ./pkg/mcp ./cmd/weave-mcp` passed.
+- Integration check: `go test ./cmd/server ./pkg/mcp ./cmd/weave-mcp` passed.
 
-Verification:
-- `go test ./pkg/httputil -run 'TestReadJSON|TestWriteJSON' -count=1 -v` passed.
-- `go test ./pkg/oss -run 'TestBDD_SearchObjectsRejectsTrailingJSONBody_P2A001|TestSearchObjects_FacetsOmitted_NoKey|TestSearchObjects_SelectRequired' -count=1` passed.
-- `go test ./pkg/httputil -count=1` passed.
-- `go test ./pkg/oss -count=1` passed.
-- `go build $(./scripts/ci/go-packages.sh --build)` passed.
-- `go test $(./scripts/ci/go-packages.sh)` passed.
+Files changed for P2A-002:
+- pkg/mcp/protocol.go
+- pkg/mcp/protocol_test.go
+- pkg/mcp/http_transport_test.go
+
+Codebase Patterns:
+- MCP JSON-RPC protocol errors must preserve the distinction between malformed JSON (`-32700` Parse Error) and valid JSON with an invalid request shape (`-32600` Invalid Request). HTTP transport still returns protocol-level MCP errors with HTTP 200.
+- `weave-mcp` bridge errors caused by upstream transport or invalid upstream response payloads are converted into JSON-RPC server errors (`-32000`) on stdout when the original envelope expects a response; notification-only envelopes still produce no stdout.
+
+## Iteration 2026-05-22T23:00:47+08:00
+
+Selected story for this Codex execution:
+- P2A-003 - Convert empty upstream MCP bridge responses into JSON-RPC errors.
+
+Planned TDD:
+- Add failing bridge tests for response-required requests whose upstream returns HTTP 200 or 204 with an empty body.
+- Preserve notification-only behavior for empty upstream bodies.
+- Implement the smallest `RunHTTPBridge` guard before normal response line normalization.
+
+P2A-003 evidence:
+- RED: `go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge_Given_(ResponseRequiredRequestAndEmptyUpstreamBody|NotificationOnlyRequestAndEmptyUpstreamBody)' -count=1` failed for both HTTP 200 and HTTP 204 response-required cases with `expected one JSON-RPC error line, got empty stdout`.
+- Implementation: `cmd/weave-mcp.RunHTTPBridge` now detects an empty or whitespace-only upstream body after a successful POST when the classified JSON-RPC envelope expects a response, writes `makeErrorLine(classification.errorID, errors.New("upstream returned empty response body"))`, and skips the blank-line passthrough path. Notification-only envelopes still continue before this check and remain silent.
+- GREEN targeted: `go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge_Given_(ResponseRequiredRequestAndEmptyUpstreamBody|NotificationOnlyRequestAndEmptyUpstreamBody)' -count=1` passed.
+- GREEN acceptance: `go test ./cmd/weave-mcp ./pkg/mcp -count=1` passed.
+- Integration check: `go test ./cmd/server ./pkg/mcp ./cmd/weave-mcp -count=1` passed.
+
+Files changed for P2A-003:
+- cmd/weave-mcp/http_bridge.go
+- cmd/weave-mcp/empty_response_p2a003_test.go
+
+## Iteration 2026-05-22T23:06:36+08:00
+
+Selected story for this Codex execution:
+- P2A-004 - Adopt single-value JSON request decoding on one backend write surface.
+
+Planned TDD:
+- Add a failing feature-flags admin POST test proving concatenated JSON is rejected and no flag is created.
+- Reuse the existing single-value JSON request reader on the selected create handler only.
+- Run targeted package and server-focused tests before marking P2A-004 passing.
+
+P2A-004 evidence:
+- RED: `go test ./pkg/featureflags -run TestHandler_CreateRejectsConcatenatedJSONWithoutCreatingFlag -count=1` failed because POST `/api/admin/feature-flags` returned 201 and created `ambiguous-flag` from the first JSON value.
+- Implementation: `pkg/featureflags.Handler.Create` now decodes through `httputil.ReadJSON`, preserving the existing `InvalidRequestBody` API error path while rejecting extra top-level JSON values.
+- GREEN targeted: `go test ./pkg/featureflags -run TestHandler_CreateRejectsConcatenatedJSONWithoutCreatingFlag -count=1` passed.
+- GREEN acceptance: `go test ./pkg/featureflags -count=1` passed.
+- Server-focused gate: `go test ./cmd/server ./pkg/featureflags -count=1` passed.
+
+Files changed for P2A-004:
+- pkg/featureflags/handlers.go
+- pkg/featureflags/handlers_test.go
+
+Codebase Patterns:
+- Backend write handlers should prefer `httputil.ReadJSON` over direct `json.NewDecoder(r.Body).Decode` when accepting a single JSON request object, so concatenated JSON is rejected before store/service side effects.
 
 
 ---
 
-## Stream B: ralph/self-iteration-20260522-214033-B
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-214033-B
-HEAD: eedb1b5d21a2
+## Stream B: ralph/self-iteration-20260522-224557-B
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-224557-B
+HEAD: 1c69d8c13492
 
 # Ralph Progress Log - Parallel2 Stream B
-Started: 2026-05-22T21:46:00+08:00
-Integration branch: ralph/self-iteration-20260522-214033
-Stream branch: ralph/self-iteration-20260522-214033-B
+Started: 2026-05-22T22:52:33+08:00
+Integration branch: ralph/self-iteration-20260522-224557
+Stream branch: ralph/self-iteration-20260522-224557-B
 Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
 
-## State Reset
-- Archived previous empty stream PRD/progress to `scripts/ralph/archive/self-iteration-20260522-214600/`.
-- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the previous progress file.
-- Branch verified: `ralph/self-iteration-20260522-214033-B`.
-
-## Local Health Evidence Before New Story Selection
-- `npm install` in `web/`: installed dependencies from the existing lockfile for this isolated worktree.
-- `npm test -- ComplianceReportsPage.test.tsx`: passed 1 test file / 8 tests, so the known US-453 `object.stream is not a function` issue is not currently reproducing.
-- `npm test`: passed 291 test files / 2923 tests.
-- `npm run build`: passed `tsc -b`, Vite production build, and bundle budget check.
-
-## Selected Story
-- P2B-001 — Saved Browser Searches Hydrate the Visible Search Box.
-- Rationale: Browser saved-search load updates BrowserPage query state, but `SearchBar` owns its own local input state. A saved search with `searchText` can therefore run while the visible input still appears empty, which makes the active object search difficult to audit or edit during dogfood.
-
-## P2B-001 Evidence
-- RED: `npm test -- BrowserPage.savedSearches.bdd.test.tsx` failed as expected because the visible `search-input` remained empty after loading a saved search with `searchText: "OpenAI"`.
-- Implementation: added a `value` prop to `SearchBar`, kept a draft value for normal type-then-Enter behavior, synced the draft from BrowserPage committed `searchText`, and passed `searchText` from `BrowserPage`.
-- GREEN targeted: `npm test -- BrowserPage.savedSearches.bdd.test.tsx` passed 1 test.
-- Adjacent regression: `npm test -- BrowserPage.test.tsx BrowserPage.search.bdd.test.tsx BrowserPage.savedSearches.bdd.test.tsx` passed 3 test files / 21 tests.
-- Full web verification: `npm test` passed 292 test files / 2924 tests.
-- Build verification: `npm run build` passed `tsc -b`, Vite production build, and bundle budget check.
-- Files changed for commit:
-  - `web/src/components/browser/SearchBar.tsx`
-  - `web/src/components/browser/BrowserPage.tsx`
-  - `web/src/components/browser/__tests__/BrowserPage.savedSearches.bdd.test.tsx`
-- Result: P2B-001 marked `passes: true` in `scripts/ralph/prd.json`.
-
-## P2B-002 Evidence
-- Started: 2026-05-22T21:56:19+08:00.
-- Story: Browser Bulk Selection Clears on Query Context Changes.
-- Root cause: `BrowserPage` stored bulk selections in `selectedRowMap`, but search/filter/facet/saved-search handlers only reset pagination. Replacing the visible result set could leave previously selected hidden rows eligible for export/delete.
-- RED: `npm test -- BrowserPage.bulkSelection.bdd.test.tsx` failed as expected because `bulk-action-toolbar` remained visible with `1 selected` after a text search replaced `task-1` with `task-2`.
-- Implementation: added `web/src/components/browser/__tests__/BrowserPage.bulkSelection.bdd.test.tsx`; cleared `selectedRowMap` in `BrowserPage` when text search, filters, facet toggle/clear, or saved-search load replaces the active query context.
-- GREEN targeted: `npm test -- BrowserPage.bulkSelection.bdd.test.tsx` passed 1 test.
-- Adjacent regression: `npm test -- BrowserPage.bulkSelection.bdd.test.tsx BrowserPage.savedSearches.bdd.test.tsx BrowserPage.routeState.bdd.test.tsx BrowserPage.test.tsx` passed 4 test files / 20 tests.
-- Build verification: `npm run build` passed `tsc -b`, Vite production build, and bundle budget check.
-- Files changed for commit:
-  - `web/src/components/browser/BrowserPage.tsx`
-  - `web/src/components/browser/__tests__/BrowserPage.bulkSelection.bdd.test.tsx`
-- Result: P2B-002 marked `passes: true` in `scripts/ralph/prd.json`.
-
-## P2B-003 Evidence
-- Started: 2026-05-22T22:03:18+08:00.
-- Story: Browser Live Mode Surfaces SSE Fallback Provisioning Failures.
-- Root cause: `BrowserPage` pre-provisioned the temporary ObjectSet required by the documented SSE fallback but only handled `onSuccess`; `createTemporaryObjectSet` failures were never recorded, so a WebSocket reconnect could only render the generic transport status.
-- RED: `npm test -- BrowserPage.liveFallback.bdd.test.tsx` failed as expected because `live-status` remained `Reconnecting` instead of `Fallback failed` after `createTemporaryObjectSet` returned `SSESubscribeNotConfigured`.
-- Implementation: added `web/src/components/browser/__tests__/BrowserPage.liveFallback.bdd.test.tsx`; `BrowserPage` now stores fallback provisioning errors, renders an inline `Fallback failed` live status with the API reason when WebSocket reconnects and no ObjectSet RID exists, and clears the error when Live is turned off or retried.
-- GREEN targeted: `npm test -- BrowserPage.liveFallback.bdd.test.tsx` passed 1 test file / 2 tests.
-- Adjacent regression: `npm test -- BrowserPage.liveFallback.bdd.test.tsx BrowserPage.test.tsx` passed 2 test files / 19 tests.
-- Build verification: `npm run build` passed `tsc -b`, Vite production build, and bundle budget check.
-- Files changed for commit:
-  - `web/src/components/browser/BrowserPage.tsx`
-  - `web/src/components/browser/__tests__/BrowserPage.liveFallback.bdd.test.tsx`
-- Result: P2B-003 marked `passes: true` in `scripts/ralph/prd.json`.
-
 ## Codebase Patterns
-- Browser page BDD tests commonly use React Testing Library plus MSW and mocked metadata hooks; see `web/src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx` for request-contract assertions.
-- Browser route state is reset by keying `BrowserPageContent` on `ontology/objectType`; keep changes scoped inside Browser controls unless route identity changes are part of the story.
-- SearchBar now treats BrowserPage `searchText` as the committed source of truth while maintaining a local draft so ad hoc typing still waits for Enter except when clearing the input.
-- Browser bulk selection intentionally persists across pagination within a query, but should be cleared when a handler replaces the query context (text search, filters, facets, or saved search).
-- Browser live mode uses WebSocket first and only flips to the documented SSE fallback after WebSocket reports `reconnecting` and a temporary ObjectSet RID is available; ObjectSet provisioning errors should be held separately from transport status so the header can explain fallback readiness failures.
+- ObjectSet Live treats canonical SSE `seq` values as UI idempotency keys; replayed duplicate sequences should be ignored, while seq-less hand-rolled events still render via the local capture fallback key.
+
+## Baseline Inspection
+- Branch verified: `ralph/self-iteration-20260522-224557-B`.
+- Initial worktree status: clean.
+- Existing PRD was branch-local but empty; archived to `scripts/ralph/archive/self-iteration-20260522-225233/`.
+- No `PR CI auto-fix context` or `LLM review auto-fix context` was present.
+- Fresh-CI embed guard checked with `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -v`: PASS.
+- Static-asset token-auth router check `go test ./cmd/server -run TestFullRouter_WithSPA_AuthTokenMode_BlocksAssets -v`: PASS.
+- Installed local web deps with `npm --prefix web ci` because Vitest was absent in this worktree.
+- Web BDD baseline `npm --prefix web test -- --run bdd`: PASS, 35 files / 88 tests.
+- US-453 compliance report regression `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`: PASS, 8 tests.
+- Browser P2B regressions `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.liveFallback.bdd.test.tsx src/components/browser/__tests__/BrowserPage.savedSearches.bdd.test.tsx src/components/browser/__tests__/BrowserPage.bulkSelection.bdd.test.tsx`: PASS, 3 files / 4 tests.
+- Dogfood DOG-002/DOG-004/DOG-005 frontend BDD checks: PASS, 3 files / 10 tests.
+- `npm --prefix web run typecheck`: PASS.
+- `npm --prefix web run build`: PASS.
+- `go test ./cmd/server`: PASS.
+- `npm --prefix web run lint`: FAILS with broad pre-existing frontend lint debt across unrelated files; not selected as this story's completion gate.
+
+---
+
+## 2026-05-22T22:56:40+08:00 - P2B-001
+- Implemented ObjectSet Live SSE replay deduplication by ignoring already-rendered canonical `seq` values in `ObjectSetLivePage`.
+- Added BDD coverage for duplicate seq replay: first run failed as expected with two `seq-42` rows and React duplicate-key warning; after the fix it passes.
+- Moved the Live toggle's immediate idle reset out of a synchronous `useEffect` state update and into the toggle click handler so targeted ESLint passes for the touched component.
+- Documented SSE sequence numbers as UI idempotency keys in `docs/subscriptions/sse.md`.
+- Files changed:
+  - `web/src/components/objectsets/ObjectSetLivePage.tsx`
+  - `web/src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx`
+  - `docs/subscriptions/sse.md`
+- Verification:
+  - RED: `npm --prefix web test -- --run src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx` failed with duplicate `objectset-live-event-42` rows.
+  - GREEN targeted: `npm --prefix web test -- --run src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx` PASS, 1 file / 4 tests.
+  - Regression targeted: `npm --prefix web test -- --run src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetLivePage.test.tsx` PASS, 2 files / 11 tests.
+  - Web BDD: `npm --prefix web test -- --run bdd` PASS, 35 files / 89 tests.
+  - Typecheck: `npm --prefix web run typecheck` PASS.
+  - Build: `npm --prefix web run build` PASS, bundle budgets passed.
+  - Targeted lint: `(cd web && npm exec eslint -- src/components/objectsets/ObjectSetLivePage.tsx src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx)` PASS.
+- **Learnings for future iterations:**
+  - ObjectSet Live has both canonical `seq`-keyed rows and seq-less fallback rows; keep duplicate suppression limited to canonical `seq` values so hand-rolled payloads still render.
+  - Full `npm --prefix web run lint` is not currently a reliable completion gate because unrelated pre-existing lint errors remain across many frontend files; use targeted lint for touched files plus typecheck/build unless the story explicitly addresses global lint debt.
+---
 
 
 ---

@@ -258,4 +258,45 @@ describe('US-501 BDD: ObjectSet Live toggle', () => {
       screen.getByTestId('objectset-live-events-empty'),
     ).toBeInTheDocument();
   });
+
+  it(
+    'Scenario 3: Given a canonical seq is already rendered, When reconnect replay delivers the same seq, ' +
+      'Then the event log remains idempotent and the counter is not inflated',
+    () => {
+      renderPage(`/objectsets/${ONTOLOGY}/live?rid=ri.set.replay`);
+      fireEvent.click(screen.getByTestId('objectset-live-toggle'));
+
+      const es = MockEventSource.instances[0];
+      act(() => {
+        es.simulateOpen();
+        es.simulateMessage(
+          JSON.stringify({
+            seq: 42,
+            type: 'modified',
+            rid: 'Order:o42',
+            properties: { amount: 42 },
+            eventType: 'ADDED_OR_UPDATED',
+            object: { __apiName: 'Order', __primaryKey: 'o42', amount: 42 },
+          }),
+          '42',
+        );
+        es.simulateMessage(
+          JSON.stringify({
+            seq: 42,
+            type: 'modified',
+            rid: 'Order:o42',
+            properties: { amount: 42 },
+            eventType: 'ADDED_OR_UPDATED',
+            object: { __apiName: 'Order', __primaryKey: 'o42', amount: 42 },
+          }),
+          '42',
+        );
+      });
+
+      expect(screen.getAllByTestId('objectset-live-event-42')).toHaveLength(1);
+      expect(
+        screen.getByTestId('objectset-live-event-count').textContent,
+      ).toMatch(/1 event/);
+    },
+  );
 });

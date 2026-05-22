@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { useSavedObjectSets, useCreateTemporaryObjectSet } from '../../hooks/useObjectSets';
 import {
@@ -103,6 +103,12 @@ export function ObjectSetLivePage() {
         properties: evt.properties,
       };
       setEvents((prev) => {
+        if (
+          row.seq !== undefined &&
+          prev.some((existing) => existing.seq === row.seq)
+        ) {
+          return prev;
+        }
         const updated = [row, ...prev];
         return updated.length > MAX_EVENTS ? updated.slice(0, MAX_EVENTS) : updated;
       });
@@ -120,12 +126,9 @@ export function ObjectSetLivePage() {
     onStatusChange: handleStatusChange,
   });
 
-  // When the toggle goes off, force the indicator back to idle (covers
-  // the case where the EventSource hadn't yet errored / opened — the
-  // hook's cleanup will also fire 'idle' but the local handler keeps
-  // things visible immediately).
-  useEffect(() => {
-    if (!live) setStatus('idle');
+  const handleToggleLive = useCallback(() => {
+    if (live) setStatus('idle');
+    setLive((v) => !v);
   }, [live]);
 
   const sortedSaved = useMemo(
@@ -246,7 +249,7 @@ export function ObjectSetLivePage() {
             type="button"
             data-testid="objectset-live-toggle"
             disabled={!canToggle}
-            onClick={() => setLive((v) => !v)}
+            onClick={handleToggleLive}
             className={
               live
                 ? 'bg-accent-error text-bg-primary px-4 py-1.5 rounded text-xs font-mono font-medium'

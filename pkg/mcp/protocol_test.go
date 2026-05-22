@@ -86,6 +86,32 @@ func TestProtocol_ParseInvalidJSON_Returns32700(t *testing.T) {
 	}
 }
 
+func TestProtocol_GivenValidJSONNonObject_WhenParseRequest_ThenInvalidRequest_P2A002(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "string", raw: `"not-a-request"`},
+		{name: "number", raw: `42`},
+		{name: "boolean", raw: `true`},
+		{name: "array", raw: `[{"jsonrpc":"2.0","id":1,"method":"tools/list"}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseRequest([]byte(tc.raw))
+			if err == nil {
+				t.Fatal("ParseRequest returned nil error for non-object JSON")
+			}
+			rpcErr, ok := err.(*RPCError)
+			if !ok {
+				t.Fatalf("error = %T, want *RPCError", err)
+			}
+			if rpcErr.Code != CodeInvalidRequest {
+				t.Fatalf("code = %d, want %d", rpcErr.Code, CodeInvalidRequest)
+			}
+		})
+	}
+}
+
 func TestProtocol_ErrorResponseFormat(t *testing.T) {
 	resp := NewErrorResponse(json.RawMessage(`42`), CodeMethodNotFound, "method not found", nil)
 	buf, err := json.Marshal(resp)
