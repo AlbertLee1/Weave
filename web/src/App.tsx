@@ -416,6 +416,7 @@ export default function App() {
                   </PermissionRoute>
                 }
               />
+              <Route path="admin/performance" element={<Navigate to="/admin/perf" replace />} />
               <Route
                 path="audit"
                 element={
