@@ -31,7 +31,10 @@ import { EmptyState } from '../common/EmptyState';
 import { TimeTravelToolbar } from './TimeTravelToolbar';
 import { useTimeTravelActive } from './useTimeTravel';
 import type { WhereClause, WireObject } from '../../api/types';
-import type { SavedSearchDefinition } from '../../api/savedSearches';
+import type {
+  BrowserViewMode,
+  SavedSearchDefinition,
+} from '../../api/savedSearches';
 import { ApiRequestError } from '../../api/client';
 
 // DOG-004: surface the backend `parameters.reason` alongside the
@@ -66,6 +69,13 @@ const FACETABLE_BASE_TYPES = new Set([
   'date',
   'datetime',
   'timestamp',
+]);
+const BROWSER_VIEW_MODES = new Set<BrowserViewMode>([
+  'table',
+  'map',
+  'gantt',
+  'sankey',
+  'pivot',
 ]);
 
 type BrowserLiveStatus = {
@@ -133,9 +143,7 @@ function BrowserPageContent({
   );
 
   // View mode: table | map | gantt | sankey | pivot
-  const [viewMode, setViewMode] = useState<
-    'table' | 'map' | 'gantt' | 'sankey' | 'pivot'
-  >('table');
+  const [viewMode, setViewMode] = useState<BrowserViewMode>('table');
 
   // Realtime mode state: 'off' | 'ws' (WebSocket) | 'sse' (SSE fallback)
   const [realtimeMode, setRealtimeMode] = useState<'off' | 'ws' | 'sse'>('off');
@@ -548,14 +556,27 @@ function BrowserPageContent({
       filters: filters.length > 0 ? filters : undefined,
       facets: hasFacetSelection ? selectedFacets : undefined,
       sort: sortField ? { field: sortField, direction: sortDirection } : null,
+      viewMode,
     };
-  }, [searchText, filters, hasFacetSelection, selectedFacets, sortField, sortDirection]);
+  }, [
+    searchText,
+    filters,
+    hasFacetSelection,
+    selectedFacets,
+    sortField,
+    sortDirection,
+    viewMode,
+  ]);
 
   const handleApplySavedSearch = useCallback(
     (def: SavedSearchDefinition) => {
+      const savedViewMode = BROWSER_VIEW_MODES.has(def.viewMode ?? 'table')
+        ? def.viewMode ?? 'table'
+        : 'table';
       setSearchText(def.searchText ?? '');
       setFilters(def.filters ?? []);
       setSelectedFacets(def.facets ?? {});
+      setViewMode(savedViewMode);
       setSelectedRowMap(new Map());
       if (def.sort) {
         setSortField(def.sort.field);
@@ -889,7 +910,7 @@ function BrowserPageContent({
               ontology={ontology}
               objectType={objectTypeParam}
               currentDefinition={currentDefinition}
-              hasCurrentState={hasActiveSearch}
+              hasCurrentState={hasActiveSearch || viewMode !== 'table'}
               onLoad={handleApplySavedSearch}
             />
             {hasActiveSearch && facetFields.length > 0 && (

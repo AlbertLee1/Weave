@@ -3,6 +3,8 @@ import type { WhereClause } from './types';
 import type { FilterCondition } from '../lib/whereBuilder';
 import type { FacetSelection } from '../components/browser/FacetsPanel';
 
+export type BrowserViewMode = 'table' | 'map' | 'gantt' | 'sankey' | 'pivot';
+
 // SavedSearchDefinition is the front-end-owned envelope persisted on
 // the backend as opaque JSONB. The shape is intentionally a wire-only
 // concern — the server round-trips it untouched. Adding new keys to
@@ -14,6 +16,7 @@ export interface SavedSearchDefinition {
   facets?: FacetSelection;
   where?: WhereClause | null;
   sort?: { field: string; direction: 'asc' | 'desc' } | null;
+  viewMode?: BrowserViewMode;
 }
 
 export interface SavedSearch {
