@@ -33,7 +33,7 @@
           "scenario": "Standard non-instrumented gate remains meaningful",
           "given": "pkg/security tests run without race or coverage instrumentation",
           "when": "`go test ./pkg/security -run '^TestBDD_RLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` is executed",
-          "then": "the selected profile remains `standard` with the one-million-iteration strict warm-cache gate"
+          "then": "the selected profile remains `standard` with one-million-iteration warm-cache samples, keeps the 50ms strict budget, and uses the best of three warm samples to smooth scheduler jitter without hiding real regressions"
         }
       ],
       "dependencies": [
@@ -46,7 +46,9 @@
         "Targeted RED output for the adjusted instrumented profile expectation",
         "Targeted GREEN output for the RLS performance profile and gate",
         "Full pkg/security race+coverage verification",
-        "Standard non-instrumented RLS performance gate verification"
+        "Standard non-instrumented RLS performance gate verification",
+        "Local verifier RED output showing standard-profile scheduler jitter at warm 53.747ms > 50ms",
+        "Standard profile multi-sample GREEN evidence and full make test pass"
       ]
     }
   ]
