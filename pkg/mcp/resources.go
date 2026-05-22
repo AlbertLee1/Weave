@@ -303,7 +303,7 @@ func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Respons
 		}
 		text, err := s.readObjectType(ctx, ontAPI, otAPI)
 		if err != nil {
-			return NewErrorResponse(req.ID, CodeInvalidParams, err.Error(), nil)
+			return NewErrorResponse(req.ID, CodeToolError, err.Error(), nil)
 		}
 		return NewSuccessResponse(req.ID, map[string]any{
 			"contents": []ResourceContent{{

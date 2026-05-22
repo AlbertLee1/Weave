@@ -116,7 +116,7 @@ func TestResourcesRead_Given_ObjectTypeURI_When_Read_Then_SchemaTextHasApiName_U
 	}
 }
 
-func TestResourcesRead_Given_UnknownObjectType_When_Read_Then_InvalidParams_US307(t *testing.T) {
+func TestResourcesRead_Given_UnknownObjectType_When_Read_Then_ToolError_US307(t *testing.T) {
 	srv, _, _, _ := newTestServer(t)
 	params, _ := json.Marshal(map[string]any{"uri": "weave://objecttype/demo/Ghost"})
 	resp := srv.Handle(context.Background(), &Request{
@@ -126,15 +126,15 @@ func TestResourcesRead_Given_UnknownObjectType_When_Read_Then_InvalidParams_US30
 	if resp.Error == nil {
 		t.Fatal("expected error for unknown object type")
 	}
-	if resp.Error.Code != CodeInvalidParams {
-		t.Errorf("Code = %d, want %d (CodeInvalidParams)", resp.Error.Code, CodeInvalidParams)
+	if resp.Error.Code != CodeToolError {
+		t.Errorf("Code = %d, want %d (CodeToolError)", resp.Error.Code, CodeToolError)
 	}
 	if !strings.Contains(strings.ToLower(resp.Error.Message), "object type") {
 		t.Errorf("error.message should mention 'object type', got %q", resp.Error.Message)
 	}
 }
 
-func TestResourcesRead_Given_UnknownOntologyOnObjectTypeURI_When_Read_Then_InvalidParams_US307(t *testing.T) {
+func TestResourcesRead_Given_UnknownOntologyOnObjectTypeURI_When_Read_Then_ToolError_US307(t *testing.T) {
 	srv, _, _, _ := newTestServer(t)
 	params, _ := json.Marshal(map[string]any{"uri": "weave://objecttype/nosuch/Order"})
 	resp := srv.Handle(context.Background(), &Request{
@@ -144,8 +144,11 @@ func TestResourcesRead_Given_UnknownOntologyOnObjectTypeURI_When_Read_Then_Inval
 	if resp.Error == nil {
 		t.Fatal("expected error for unknown ontology")
 	}
-	if resp.Error.Code != CodeInvalidParams {
-		t.Errorf("Code = %d, want %d", resp.Error.Code, CodeInvalidParams)
+	if resp.Error.Code != CodeToolError {
+		t.Errorf("Code = %d, want %d (CodeToolError)", resp.Error.Code, CodeToolError)
+	}
+	if !strings.Contains(strings.ToLower(resp.Error.Message), "ontology") {
+		t.Errorf("error.message should mention ontology lookup, got %q", resp.Error.Message)
 	}
 }
 
