@@ -1,52 +1,95 @@
 {
   "project": "Weave parallel2 self-iteration",
-  "branchName": "ralph/self-iteration-20260522-161015",
+  "branchName": "ralph/self-iteration-20260522-165538",
   "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
   "userStories": [
     {
       "id": "P2A-001",
-      "title": "MCP ObjectType Resource Misses Use Application Errors",
-      "priority": "high",
-      "passes": true,
-      "story": "As an MCP client reading a previously listed ObjectType resource, I want stale ontology or ObjectType URIs to return a resource-not-found application error instead of an invalid-params error, so that malformed URI handling stays distinct from catalog drift and retry/error UI can classify the failure correctly.",
+      "title": "Reject invalid Vertex time-series windows",
+      "priority": 1,
+      "area": "backend/api/vertex-timeseries",
+      "asA": "Vertex time-series API caller",
+      "iWant": "the window aggregation endpoint to reject zero-length or inverted time windows before querying storage",
+      "soThat": "bad OSv2-style time-series requests fail fast with a clear 400 instead of doing undefined or expensive backend work",
       "acceptanceCriteria": [
-        "Given a well-formed `weave://objecttype/<ontologyApiName>/<objectTypeApiName>` URI whose ObjectType no longer exists, when `resources/read` is called, then the JSON-RPC error code is `CodeToolError` and the message mentions the missing object type.",
-        "Given a well-formed `weave://objecttype/<ontologyApiName>/<objectTypeApiName>` URI whose ontology no longer exists, when `resources/read` is called, then the JSON-RPC error code is `CodeToolError` and the message mentions the ontology lookup.",
-        "Given a malformed ObjectType resource URI missing the ObjectType segment, when `resources/read` is called, then the JSON-RPC error code remains `CodeInvalidParams`."
-      ],
-      "bdd": [
-        "Given a stale ObjectType resource URI, when the MCP client reads it, then Weave reports an application resource miss.",
-        "Given a malformed ObjectType resource URI, when the MCP client reads it, then Weave reports invalid params."
-      ],
-      "dependencies": [],
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-161015-A"
-    },
-    {
-      "id": "P2B-001",
-      "title": "CI Discovers Full Playwright BDD Suite",
-      "priority": "high",
-      "status": "completed",
-      "passes": true,
-      "story": "As a Weave maintainer, I want the web CI list-only Playwright gate to discover the full BDD suite under web/tests so syntax and import regressions in browser dogfood specs are caught before full E2E runs.",
-      "acceptanceCriteria": [
-        "Given checked-in Playwright BDD specs live under web/tests, when CI runs the Playwright spec discovery command, then the command includes the web/tests suite root rather than only a few sampled BDD files.",
-        "Given the workflow is edited, when the contract test reads .github/workflows/ci.yml, then it fails if the discovery step omits tests/ from its target list.",
-        "Given a local developer needs to verify discovery, when they read web/tests/README.md, then it documents the list-only CI discovery command for the BDD suite."
-      ],
-      "bddScenarios": [
         {
-          "given": "the repository contains multiple web/tests/feature.*.spec.ts browser BDD specs",
-          "when": "the CI Playwright spec discovery step is inspected",
-          "then": "it includes tests/ so every BDD spec is parsed in list-only mode"
+          "type": "BDD",
+          "given": "a configured Vertex time-series HTTP handler",
+          "when": "GET /api/v2/ontologies/{ontology}/objects/{objectType}/{primaryKey}/timeseries/{property} is called with to equal to or before from",
+          "then": "the response is HTTP 400 with errorName InvalidTimeWindow and the querier is not invoked"
+        },
+        {
+          "type": "BDD",
+          "given": "a configured Vertex time-series HTTP handler",
+          "when": "the request supplies a strictly forward from/to window",
+          "then": "the handler continues to call the querier and returns the existing bucketed series response"
         }
       ],
       "dependencies": [
-        "web/playwright.config.ts includes web/tests/**/*.spec.ts in normal Playwright discovery",
-        "CI web job runs from the web/ working directory"
+        "pkg/oss Vertex time-series handler tests",
+        "pkg/timeseries VertexQuery contract"
+      ],
+      "passes": true,
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260522-165538-A"
+    },
+    {
+      "id": "P2B-001",
+      "title": "Aggregation Results Export CSV",
+      "priority": "high",
+      "passes": true,
+      "description": "Operators using the browser aggregation page can download the current aggregation result buckets as CSV instead of manually copying table cells.",
+      "bddAcceptanceCriteria": [
+        "Given /aggregation/:ontology/:objectType has returned grouped aggregation buckets, when the operator clicks Export CSV, then a CSV download is created with group columns followed by metric columns.",
+        "Given CSV cells contain commas, quotes, nulls, or nested values, when the CSV is generated, then values are escaped using RFC4180-style quoting and stable stringification.",
+        "Given an aggregation response has no buckets, when the results panel renders, then the export affordance is not shown."
+      ],
+      "dependencies": [
+        "web/src/components/aggregation/AggregationPage.tsx",
+        "web/src/components/aggregation/ResultTable.tsx",
+        "web/src/api/aggregation.ts"
+      ],
+      "verification": [
+        "Frontend BDD regression test for the export button and generated CSV content.",
+        "Targeted Vitest for aggregation tests.",
+        "Web typecheck.",
+        "Worktree-local Playwright aggregation feature run."
       ],
       "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-161015-B"
+      "source_branch": "ralph/self-iteration-20260522-165538-B"
+    },
+    {
+      "id": "P2B-002",
+      "title": "Aggregation Chart Type Switcher",
+      "priority": "medium",
+      "passes": true,
+      "description": "Operators can switch aggregation visualizations between bar, line, and pie modes rather than being locked to a bar chart.",
+      "bddAcceptanceCriteria": [
+        "Given grouped aggregation data exists, when the operator switches chart type, then the selected chart renderer updates without losing the result table.",
+        "Given no grouped data exists, when the results render, then chart controls remain hidden."
+      ],
+      "dependencies": [
+        "P2B-001 result handling conventions",
+        "web/src/components/aggregation/SimpleChart.tsx"
+      ],
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260522-165538-B"
+    },
+    {
+      "id": "P2B-003",
+      "title": "ObjectSet Diff CSV Export",
+      "priority": "medium",
+      "passes": true,
+      "description": "Operators comparing saved ObjectSets can export the diff sections to CSV for review and handoff.",
+      "bddAcceptanceCriteria": [
+        "Given a computed ObjectSet diff with only-in-A, only-in-B, and changed rows, when the operator exports CSV, then the file contains section and row metadata.",
+        "Given no diff has been computed, when the page renders, then export remains disabled or hidden."
+      ],
+      "dependencies": [
+        "web/src/components/objectsets/ObjectSetDiffPage.tsx"
+      ],
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260522-165538-B"
     }
   ]
 }
