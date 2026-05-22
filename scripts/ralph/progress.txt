@@ -1,194 +1,95 @@
 # Ralph Progress Log - Parallel2 Integration
-Integrated: 2026-05-22T15:34:31+08:00
-Integration branch: ralph/self-iteration-20260522-150048
+Integrated: 2026-05-22T16:21:51+08:00
+Integration branch: ralph/self-iteration-20260522-161015
 
-## Stream A: ralph/self-iteration-20260522-150048-A
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-150048-A
-HEAD: b916fb61245b
+## Stream A: ralph/self-iteration-20260522-161015-A
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-161015-A
+HEAD: 6331a32876f0
 
 # Ralph Progress Log - Parallel2 Stream A
-Started: 2026-05-22T15:06:32+08:00
-Integration branch: ralph/self-iteration-20260522-150048
-Stream branch: ralph/self-iteration-20260522-150048-A
+Started: 2026-05-22T16:18:39+08:00
+Integration branch: ralph/self-iteration-20260522-161015
+Stream branch: ralph/self-iteration-20260522-161015-A
 Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
-
-Archived previous empty PRD/progress under scripts/ralph/archive/self-iteration-20260522-150632/.
+Archived prior empty PRD/progress: scripts/ralph/archive/self-iteration-20260522-161839/
 
 Initial inspection:
-- Branch verified: ralph/self-iteration-20260522-150048-A.
-- Root symlinks verified: prd.json -> scripts/ralph/prd.json and progress.txt -> scripts/ralph/progress.txt.
-- No PR CI auto-fix context or LLM review auto-fix context was present.
-- Known fresh-CI embed concern appears already guarded by cmd/server/embed_ci_bdd_test.go and cmd/server/embed.go embedding all:web with a tracked placeholder.
-- Baseline command passed before story work: go test $(./scripts/ci/go-packages.sh).
+- Branch verified: ralph/self-iteration-20260522-161015-A.
+- No PR CI auto-fix context or LLM review auto-fix context was present in the prior progress file.
+- Current Go package sweep passed with `go test $(./scripts/ci/go-packages.sh)`.
+- Known embed and DOG-004 concerns already have passing coverage on this branch.
+
+Selected story:
+- P2A-001 - MCP ObjectType Resource Misses Use Application Errors.
+
+P2A-001 evidence:
+- RED: `go test ./pkg/mcp -run 'TestResourcesRead_Given_(UnknownObjectType|UnknownOntologyOnObjectTypeURI|ObjectTypeURIMissingType)' -count=1`
+  - Failed as expected: stale ObjectType resources returned `-32602 CodeInvalidParams`, not `-32000 CodeToolError`.
+- Implementation:
+  - `pkg/mcp/resources.go`: `resources/read` now maps `readObjectType` repository misses to `CodeToolError` after URI shape validation has already passed.
+  - `pkg/mcp/resources_us307_test.go`: updated BDD expectations for unknown ontology/ObjectType resource reads; malformed ObjectType URI still expects `CodeInvalidParams`.
+- GREEN targeted: `go test ./pkg/mcp -run 'TestResourcesRead_Given_(UnknownObjectType|UnknownOntologyOnObjectTypeURI|ObjectTypeURIMissingType)' -count=1`
+  - Passed.
+- Relevant package gate: `go test ./pkg/mcp ./cmd/server ./cmd/weave-mcp -count=1`
+  - Passed: `pkg/mcp`, `cmd/server`, and `cmd/weave-mcp`.
+
+Files changed for commit:
+- pkg/mcp/resources.go
+- pkg/mcp/resources_us307_test.go
 
 Codebase Patterns:
-- Keep stream-A work scoped to backend/API/MCP/ontology service files and Go tests.
-- For server middleware behavior, prefer focused cmd/server unit tests over broad router integration unless route wiring is the behavior under test.
-- Wildcard CORS cannot be combined with Access-Control-Allow-Credentials; explicit origin allowlists keep the credential header and Vary: Origin.
-
-Story P2A-001 - Harden wildcard CORS credentials:
-- RED: go test ./cmd/server -run TestCORSMiddleware_WildcardDoesNotAllowCredentials -count=1
-  Result: failed as expected because wildcard responses emitted Access-Control-Allow-Credentials: "true" for simple and preflight requests.
-- Implementation: cmd/server/security_middleware.go now only sets Access-Control-Allow-Credentials for explicit allowed origins, not wildcard origins.
-- Tests updated: cmd/server/security_middleware_test.go covers wildcard no-credentials for simple/preflight, explicit origin credentials + Vary, and disallowed origin no-credentials.
-- GREEN: go test ./cmd/server -run TestCORSMiddleware_WildcardDoesNotAllowCredentials -count=1
-  Result: pass.
-- Verification: go test ./cmd/server -run 'TestCORSMiddleware' -count=1
-  Result: pass.
-- Verification: go test ./cmd/server -count=1
-  Result: pass.
-- Verification: go test $(./scripts/ci/go-packages.sh)
-  Result: pass.
-- Files changed for commit: cmd/server/security_middleware.go, cmd/server/security_middleware_test.go.
-
-Story P2A-002 - Bound rate-limit bucket growth:
-- Started: 2026-05-22T15:15:58+08:00.
-- RED: go test ./cmd/server -run 'TestRateLimitMiddleware_Prune' -count=1
-  Result: failed as expected at compile time because RateLimitRule did not expose an IdleTTL configuration and the middleware had no clock-aware constructor for deterministic cleanup tests.
-- Implementation: cmd/server/rate_limit.go now stores per-key limiter buckets with lastSeen metadata, supports optional RateLimitRule.IdleTTL with a 5 minute default, and lazily prunes idle buckets during request handling while preserving recently active buckets.
-- Tests updated: cmd/server/rate_limit_test.go covers idle bucket recreation after the configured window and verifies recently active buckets are not pruned/reset.
-- GREEN: go test ./cmd/server -run 'TestRateLimitMiddleware_Prune' -count=1
-  Result: pass.
-- Verification: go test ./cmd/server -run 'TestRateLimit' -count=1
-  Result: pass.
-- Verification: go test ./cmd/server -count=1
-  Result: pass.
-- Verification: go test $(./scripts/ci/go-packages.sh)
-  Result: pass.
-- Files changed for commit: cmd/server/rate_limit.go, cmd/server/rate_limit_test.go.
-
-Codebase Patterns:
-- Rate-limit cleanup should be opportunistic and request-driven instead of a background goroutine in server middleware tests; fake clocks keep pruning behavior deterministic without sleeps.
-
-Story P2A-003 - Preserve audit query bounds on bad pagination tokens:
-- Started: 2026-05-22T15:22:31+08:00.
-- Root cause: decodeAuditCursor decoded pageToken JSON directly into an int field, so structurally invalid but base64-valid cursors such as `{}` used Go's zero value and silently requested the first page; negative offsets were also accepted and then ignored by stores that only apply positive offsets.
-- RED: go test ./cmd/server -run 'TestAuditEventsEndpoint_InvalidPageToken' -count=1
-  Result: failed as expected because missing-offset and negative-offset tokens returned HTTP 200 with the first page of audit events.
-- Implementation: cmd/server/admin_audit.go now decodes cursor JSON through a pointer-backed wire struct and rejects page tokens missing `o` or carrying a negative offset before building the audit.ListFilter.
-- Tests updated: cmd/server/admin_audit_test.go now table-tests invalid base64, missing-offset, and negative-offset page tokens, and asserts the Palantir-style INVALID_ARGUMENT JSON error identifies pageToken.
-- GREEN: go test ./cmd/server -run 'TestAuditEventsEndpoint_InvalidPageToken' -count=1
-  Result: pass.
-- Verification: go test ./cmd/server -run 'TestAuditEventsEndpoint|TestUS493_AuditEndpoint' -count=1
-  Result: pass.
-- Verification: go test ./cmd/server -run 'TestAdminAudit' -count=1
-  Result: pass, but Go reported "[no tests to run]" because current admin audit tests use TestAuditEventsEndpoint/TestUS493_AuditEndpoint names.
-- Verification: go test ./cmd/server -count=1
-  Result: pass.
-- Verification: go test $(./scripts/ci/go-packages.sh)
-  Result: pass.
-- Files changed for commit: cmd/server/admin_audit.go, cmd/server/admin_audit_test.go.
-
-Codebase Patterns:
-- For cursor tokens backed by JSON, decode into pointer/validated wire fields when zero values have semantic meaning; otherwise malformed tokens can collapse to first-page behavior.
+- MCP `resources/read` should reserve `CodeInvalidParams` for malformed resource URIs/params. Well-formed resources that miss live catalog state should return application `CodeToolError`, matching ontology and objectset resource miss behavior.
 
 
 ---
 
-## Stream B: ralph/self-iteration-20260522-150048-B
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-150048-B
-HEAD: accac492427f
+## Stream B: ralph/self-iteration-20260522-161015-B
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-161015-B
+HEAD: 4825bc48b1ba
 
 # Ralph Progress Log - Parallel2 Stream B
-Started: 2026-05-22T15:07:49+08:00
-Integration branch: ralph/self-iteration-20260522-150048
-Stream branch: ralph/self-iteration-20260522-150048-B
+Started: 2026-05-22T16:14:40+08:00
+Integration branch: ralph/self-iteration-20260522-161015
+Stream branch: ralph/self-iteration-20260522-161015-B
 Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
 
-Archived previous empty runtime state:
-- scripts/ralph/archive/self-iteration-20260522-150749/prd.json
-- scripts/ralph/archive/self-iteration-20260522-150749/progress.txt
-
-Initial inspection:
-- Verified branch: ralph/self-iteration-20260522-150048-B.
-- Verified clean worktree before edits.
-- No PR CI auto-fix context or LLM review auto-fix context was present.
-- Existing known-risk checks:
-  - `go test ./cmd/server` passed, covering fresh Go build without generated SPA assets.
-  - `npm test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx` passed: 8 tests.
-  - `npm test -- --run src/components/dashboard/__tests__/DashboardPage.totalObjectTypes.bdd.test.tsx` passed: 3 tests.
-  - `npm test -- --run src/components/layout/__tests__/Sidebar.test.tsx` passed: 10 tests.
-  - `npm test` passed: 284 files, 2907 tests.
-
-Selected story for this iteration:
-- P2B-001 - Command Palette Ontology Workspace Routes
-
-P2B-001 implementation:
-- Added active-ontology workspace page entries to `web/src/components/common/CommandPalette.tsx`.
-- Entries mirror the sidebar's ontology-scoped navigation for Query Builder, Quiver TS, Import Data, Approvals, Action History, Saga Jobs, QueryTypes, Automation Rules, Proposals, Object Types, Link Types, Action Types, Interfaces, Value Types, Schema Graph, History, Saga DLQ, Dataset Rollback, and Security Policies.
-- Each scoped page records a recent command with a stable ontology-qualified id, the active ontology as the hint, and the exact target route.
-- Added BDD-style unit coverage in `web/src/components/common/__tests__/CommandPalette.test.tsx`.
-
-TDD evidence:
-- RED: `npm test -- --run src/components/common/__tests__/CommandPalette.test.tsx` failed with 2 expected failures because `Query Builder` was not present as a command palette option.
-- GREEN: `npm test -- --run src/components/common/__tests__/CommandPalette.test.tsx` passed: 1 file, 18 tests.
-
-Verification evidence:
-- `npm test` passed: 284 files, 2910 tests.
-- `npm run typecheck` passed.
-- `npx eslint src/components/common/CommandPalette.tsx src/components/common/__tests__/CommandPalette.test.tsx` passed.
-- `npm run build` passed and bundle budgets passed.
-- `go test ./cmd/server` passed from cache.
-- `npm run lint` failed on pre-existing repo-wide issues outside this story, including unrelated errors in e2e specs, AuthContext, BindingsEditor, LogicFlowsPage, BrowserPage, ThreadsPage, and web/src/test/setup.ts. The two touched command palette files pass scoped ESLint.
-
-Files changed for P2B-001:
-- `web/src/components/common/CommandPalette.tsx`
-- `web/src/components/common/__tests__/CommandPalette.test.tsx`
-
-Codebase Patterns:
-- Command palette tests use a global `fetch` stub plus `MemoryRouter` and validate user-visible options with role `option`.
-- Command palette selections persist through `useRecentCommandsStore`; tests can assert selected destinations through the most recent entry without mocking React Router internals.
-- README and workflow documentation can be guarded with Vitest raw imports (`?raw`) from `web/src/lib/__tests__`, matching the existing Playwright spec contract pattern.
-
-Selected story for this iteration:
-- P2B-002 - Frontend Runbook Replaces Vite Boilerplate
-
-P2B-002 implementation:
-- Replaced the stock Vite `web/README.md` with a Weave Web UI runbook covering local development, verification commands, Playwright BDD/E2E layout, `make e2e-up` stack usage, primary browser surfaces, and related docs.
-- Added a README contract test in `web/src/lib/__tests__/webReadmeContracts.test.ts` so future template drift or missing dogfood instructions are caught by Vitest.
-
-TDD evidence:
-- RED: `npm test -- --run src/lib/__tests__/webReadmeContracts.test.ts` failed with the expected assertion because `web/README.md` still started with `# React + TypeScript + Vite` and did not contain `# Weave Web UI`.
-- GREEN: `npm test -- --run src/lib/__tests__/webReadmeContracts.test.ts` passed: 1 file, 1 test.
-
-Verification evidence:
-- `npm test` passed: 285 files, 2911 tests.
-- `npx eslint src/lib/__tests__/webReadmeContracts.test.ts` passed.
-- `npm run typecheck` passed.
-- `npm run build` passed and bundle budgets passed.
-
-Files changed for P2B-002:
-- `web/README.md`
-- `web/src/lib/__tests__/webReadmeContracts.test.ts`
-
-Selected story for this iteration:
-- P2B-003 - Dogfood Smoke Route Coverage Stays Discoverable
-
-P2B-003 implementation:
-- Added `web/tests/feature.command-palette.spec.ts`, a BDD Playwright smoke probe for opening the command palette inside `/explorer/northwind`, selecting Query Builder, and routing to `/objectsets/northwind`.
-- Added the command-palette, sidebar dogfood, and dashboard BDD smoke specs to the CI Playwright `--list` discovery step.
-- Extended `web/src/lib/__tests__/playwrightSpecContracts.test.ts` so CI discovery must keep listing the command-palette, sidebar, dashboard, dogfood verify, and dogfood empty-state route probes.
-
-TDD evidence:
-- RED: `npm test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` failed with the expected assertion because CI did not contain `tests/feature.command-palette.spec.ts`.
-- GREEN: `npm test -- --run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 23 tests.
-
-Verification evidence:
-- `npx playwright test --list tests/feature.command-palette.spec.ts tests/feature.sidebar.dogfood.spec.ts tests/feature.dashboard.spec.ts dogfood-verify.spec.ts dogfood-empty-states.spec.ts` passed and listed 21 tests in 5 files.
-- `npx eslint src/lib/__tests__/playwrightSpecContracts.test.ts tests/feature.command-palette.spec.ts` passed.
-- Exact CI discovery command passed: `npx playwright test --list us444/ phase6/ phase7/ vtx-099-system-graph-render.spec.ts dogfood-verify.spec.ts dogfood-diagnose.spec.ts dogfood-empty-states.spec.ts tests/feature.command-palette.spec.ts tests/feature.sidebar.dogfood.spec.ts tests/feature.dashboard.spec.ts us-456-perf-dashboard.spec.ts us-457-timeseries-tab.spec.ts us-458-hotkey-help.spec.ts zzz-login-rate-limit.spec.ts` listed 79 tests in 40 files.
+## Initial Health Survey
+- Branch confirmed: `ralph/self-iteration-20260522-161015-B`.
+- Previous PRD had no user stories, so it was archived under `scripts/ralph/archive/self-iteration-20260522-161440/`.
+- `go test ./cmd/server -run TestFullRouter_WithSPA_AuthTokenMode_BlocksAssets -count=1 -v` passed; token-mode SPA asset coverage is already green.
+- `npm ci` completed successfully in `web/`.
 - `npm test` passed: 285 files, 2911 tests.
 - `npm run typecheck` passed.
-- `npm run build` passed and bundle budgets passed.
+- `npm run build` passed and bundle budget passed.
+- CI Playwright list-only command passed for the currently configured targets and listed 79 tests.
 
-Files changed for P2B-003:
+## Stories
+
+### P2B-001 - CI Discovers Full Playwright BDD Suite
+Status: completed
+Passes: true
+
+Evidence:
+- RED: `npx vitest run src/lib/__tests__/playwrightSpecContracts.test.ts` failed as expected because `.github/workflows/ci.yml` did not include `tests/` as an exact Playwright discovery target.
+- GREEN focused contract: `npx vitest run src/lib/__tests__/playwrightSpecContracts.test.ts` passed: 1 file, 24 tests.
+- GREEN CI discovery command: `npx playwright test --list us444/ phase6/ phase7/ vtx-099-system-graph-render.spec.ts dogfood-verify.spec.ts dogfood-diagnose.spec.ts dogfood-empty-states.spec.ts tests/ us-456-perf-dashboard.spec.ts us-457-timeseries-tab.spec.ts us-458-hotkey-help.spec.ts zzz-login-rate-limit.spec.ts` passed and listed 271 tests in 76 files.
+- Broader web gate: `npm test` passed: 285 files, 2912 tests.
+- TypeScript gate: `npm run typecheck` passed.
+- Workflow contract gate: `go test ./scripts/ci -count=1` passed.
+- Whitespace check: `git diff --check` passed.
+
+Files changed:
 - `.github/workflows/ci.yml`
 - `web/src/lib/__tests__/playwrightSpecContracts.test.ts`
-- `web/tests/feature.command-palette.spec.ts`
+- `web/tests/README.md`
 
-Codebase Patterns:
-- CI Playwright discovery is a list-only syntax/import gate; adding BDD specs under `web/tests/` requires explicit `tests/<file>.spec.ts` targets when they are critical enough to protect in PR CI.
-- Command-palette browser smoke should use `Control+K`, scope option assertions to `data-testid="command-palette"`, and verify the final URL rather than internal router calls.
+Reusable learning:
+- Use `tests/` in the Playwright list-only CI command to parse every BDD browser spec without requiring a live backend.
+- Keep an exact-root regex contract (`/(^|\\s)tests\\/(\\s|$)/`) because a plain substring check would pass on sampled files like `tests/feature.dashboard.spec.ts`.
+
+## Codebase Patterns
+- Web CI runs Playwright discovery from `web/`, so workflow target paths are relative to `web/`.
+- `web/src/lib/__tests__/playwrightSpecContracts.test.ts` reads `.github/workflows/ci.yml?raw` to keep workflow discovery targets versioned by Vitest.
 
 
 ---

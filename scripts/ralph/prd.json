@@ -1,142 +1,52 @@
 {
   "project": "Weave parallel2 self-iteration",
-  "branchName": "ralph/self-iteration-20260522-150048",
+  "branchName": "ralph/self-iteration-20260522-161015",
   "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
   "userStories": [
     {
       "id": "P2A-001",
-      "title": "Harden wildcard CORS credentials",
-      "priority": 1,
+      "title": "MCP ObjectType Resource Misses Use Application Errors",
+      "priority": "high",
       "passes": true,
-      "story": "As a Weave operator exposing OSv2 APIs through browser clients, I want wildcard CORS responses to avoid credential headers so public development origins do not create an invalid or misleading browser security contract.",
+      "story": "As an MCP client reading a previously listed ObjectType resource, I want stale ontology or ObjectType URIs to return a resource-not-found application error instead of an invalid-params error, so that malformed URI handling stays distinct from catalog drift and retry/error UI can classify the failure correctly.",
       "acceptanceCriteria": [
-        "Given CORSMiddleware is configured with allowedOrigins [\"*\"], when a request includes any Origin header, then the response includes Access-Control-Allow-Origin: *.",
-        "Given CORSMiddleware is configured with allowedOrigins [\"*\"], when a simple or preflight request is handled, then the response does not include Access-Control-Allow-Credentials.",
-        "Given CORSMiddleware is configured with an explicit allowed origin, when that origin is used, then Access-Control-Allow-Credentials remains true and Vary: Origin remains present.",
-        "Given a disallowed origin, when a request is handled, then no Access-Control-Allow-Origin or credentials headers are emitted."
+        "Given a well-formed `weave://objecttype/<ontologyApiName>/<objectTypeApiName>` URI whose ObjectType no longer exists, when `resources/read` is called, then the JSON-RPC error code is `CodeToolError` and the message mentions the missing object type.",
+        "Given a well-formed `weave://objecttype/<ontologyApiName>/<objectTypeApiName>` URI whose ontology no longer exists, when `resources/read` is called, then the JSON-RPC error code is `CodeToolError` and the message mentions the ontology lookup.",
+        "Given a malformed ObjectType resource URI missing the ObjectType segment, when `resources/read` is called, then the JSON-RPC error code remains `CodeInvalidParams`."
       ],
-      "dependencies": [
-        "cmd/server/security_middleware.go",
-        "cmd/server/security_middleware_test.go"
+      "bdd": [
+        "Given a stale ObjectType resource URI, when the MCP client reads it, then Weave reports an application resource miss.",
+        "Given a malformed ObjectType resource URI, when the MCP client reads it, then Weave reports invalid params."
       ],
-      "verification": [
-        "go test ./cmd/server -run 'TestCORSMiddleware' -count=1",
-        "go test ./cmd/server -count=1"
-      ],
+      "dependencies": [],
       "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-150048-A"
-    },
-    {
-      "id": "P2A-002",
-      "title": "Bound rate-limit bucket growth",
-      "priority": 2,
-      "passes": true,
-      "story": "As a Weave API operator, I want endpoint rate-limit buckets to expire when inactive so long-running OSv2 services are not vulnerable to unbounded limiter growth from high-cardinality IP, user, or ontology keys.",
-      "acceptanceCriteria": [
-        "Given a rate-limit rule receives requests from many distinct keys, then inactive limiter buckets can be pruned after a configurable idle window.",
-        "Given a key remains active, then pruning does not remove its limiter or reset its quota unexpectedly.",
-        "Given the default middleware constructor is used, then existing rate-limit behavior remains unchanged except for safe cleanup."
-      ],
-      "dependencies": [
-        "cmd/server/rate_limit.go",
-        "cmd/server/rate_limit_test.go"
-      ],
-      "verification": [
-        "go test ./cmd/server -run 'TestRateLimit' -count=1"
-      ],
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-150048-A"
-    },
-    {
-      "id": "P2A-003",
-      "title": "Preserve audit query bounds on bad pagination tokens",
-      "priority": 3,
-      "passes": true,
-      "story": "As a security administrator reviewing OSv2 audit events, I want invalid admin audit page tokens to fail clearly instead of silently falling back to an unbounded first page.",
-      "acceptanceCriteria": [
-        "Given /api/v2/admin/auditEvents receives a malformed pageToken, then the handler returns a 400-class JSON error.",
-        "Given a valid pageToken is supplied, then pagination behavior remains unchanged.",
-        "Given no pageToken is supplied, then the first page behavior remains unchanged."
-      ],
-      "dependencies": [
-        "cmd/server/admin_audit.go",
-        "cmd/server/admin_audit_test.go",
-        "pkg/audit"
-      ],
-      "verification": [
-        "go test ./cmd/server -run 'TestAdminAudit' -count=1"
-      ],
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-150048-A"
+      "source_branch": "ralph/self-iteration-20260522-161015-A"
     },
     {
       "id": "P2B-001",
-      "title": "Command Palette Ontology Workspace Routes",
-      "priority": 1,
+      "title": "CI Discovers Full Playwright BDD Suite",
+      "priority": "high",
+      "status": "completed",
       "passes": true,
-      "story": "As an operator working inside an ontology, I want the global command palette to expose the same ontology-scoped workspace routes as the sidebar so I can jump between Query Builder, Quiver, Import, Approvals, action history, jobs, QueryTypes, automation, proposals, and admin surfaces without leaving keyboard flow.",
+      "story": "As a Weave maintainer, I want the web CI list-only Playwright gate to discover the full BDD suite under web/tests so syntax and import regressions in browser dogfood specs are caught before full E2E runs.",
       "acceptanceCriteria": [
+        "Given checked-in Playwright BDD specs live under web/tests, when CI runs the Playwright spec discovery command, then the command includes the web/tests suite root rather than only a few sampled BDD files.",
+        "Given the workflow is edited, when the contract test reads .github/workflows/ci.yml, then it fails if the discovery step omits tests/ from its target list.",
+        "Given a local developer needs to verify discovery, when they read web/tests/README.md, then it documents the list-only CI discovery command for the BDD suite."
+      ],
+      "bddScenarios": [
         {
-          "scenario": "Active ontology exposes workspace destinations",
-          "given": "the command palette is open with activeOntology set to northwind",
-          "when": "the operator searches for ontology-scoped page labels such as Query Builder, Quiver TS, Import Data, Object Types, or Security Policies",
-          "then": "the palette lists those page options and selecting one navigates to the matching /objectsets, /quiver, /import, /admin, or related ontology-scoped route for northwind"
-        },
-        {
-          "scenario": "Global mode stays uncluttered",
-          "given": "the command palette is open with no active ontology",
-          "when": "the operator searches for ontology-scoped page labels",
-          "then": "those ontology-scoped routes are not listed because they cannot resolve safely without an ontology"
+          "given": "the repository contains multiple web/tests/feature.*.spec.ts browser BDD specs",
+          "when": "the CI Playwright spec discovery step is inspected",
+          "then": "it includes tests/ so every BDD spec is parsed in list-only mode"
         }
       ],
       "dependencies": [
-        "web/src/components/common/CommandPalette.tsx",
-        "web/src/components/common/__tests__/CommandPalette.test.tsx"
+        "web/playwright.config.ts includes web/tests/**/*.spec.ts in normal Playwright discovery",
+        "CI web job runs from the web/ working directory"
       ],
       "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-150048-B"
-    },
-    {
-      "id": "P2B-002",
-      "title": "Frontend Runbook Replaces Vite Boilerplate",
-      "priority": 2,
-      "passes": true,
-      "story": "As a contributor dogfooding the browser UX, I want web/README.md to document the real Weave Web UI routes, test commands, and E2E setup instead of the stock Vite template so local verification is repeatable.",
-      "acceptanceCriteria": [
-        {
-          "scenario": "Web README describes Weave UI workflows",
-          "given": "a contributor opens web/README.md",
-          "when": "they look for setup, test, and E2E instructions",
-          "then": "the README documents npm install/test/build, make e2e-up, Playwright BDD locations, and the primary Weave OSv2-facing UI surfaces"
-        }
-      ],
-      "dependencies": [
-        "web/README.md"
-      ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-150048-B"
-    },
-    {
-      "id": "P2B-003",
-      "title": "Dogfood Smoke Route Coverage Stays Discoverable",
-      "priority": 3,
-      "passes": true,
-      "story": "As a release verifier, I want the dogfood Playwright discovery contract to include newly critical browser UX smoke specs so route regressions cannot silently fall out of CI listing.",
-      "acceptanceCriteria": [
-        {
-          "scenario": "Dogfood route probes are listed by contract",
-          "given": "CI runs frontend contract tests",
-          "when": "Playwright discovery targets are checked",
-          "then": "the contract covers command-palette, sidebar, dashboard, dogfood verify, and empty-state smoke specs that protect browser dogfood paths"
-        }
-      ],
-      "dependencies": [
-        "web/src/lib/__tests__/playwrightSpecContracts.test.ts",
-        ".github/workflows/ci.yml",
-        "web/tests"
-      ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-150048-B"
+      "source_branch": "ralph/self-iteration-20260522-161015-B"
     }
   ]
 }
