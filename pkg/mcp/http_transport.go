@@ -13,9 +13,8 @@ import (
 // invalid request, method not found, invalid params, internal error, and
 // any application error) are returned as a well-formed response envelope
 // with HTTP 200. Non-200 status codes are reserved for transport-level
-// failures (wrong HTTP method, missing body, content too large) so MCP
-// clients can distinguish "the server returned an MCP error" from "the
-// HTTP layer rejected the call".
+// failures such as the wrong HTTP method. Malformed JSON-RPC bodies, including
+// oversized bodies stopped by the read cap, travel as JSON-RPC errors.
 type HTTPHandler struct {
 	srv *Server
 }
@@ -41,7 +40,8 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			http.Error(w, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
+			writeJSON(w, NewErrorResponse(nil, CodeInvalidRequest,
+				"request body exceeds limit", map[string]int64{"limitBytes": maxBytesErr.Limit}))
 			return
 		}
 		writeJSON(w, NewErrorResponse(nil, CodeInvalidRequest,
