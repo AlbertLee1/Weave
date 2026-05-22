@@ -6,11 +6,17 @@ import type { AggregationMetric, GroupByClause, AggregationRequest } from '../..
 import { MetricSelector } from './MetricSelector';
 import { GroupByBuilder } from './GroupByBuilder';
 import { ResultTable } from './ResultTable';
-import { SimpleChart } from './SimpleChart';
+import { SimpleChart, type SimpleChartType } from './SimpleChart';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import { FilterBuilder } from '../browser/FilterBuilder';
 import { buildWhereClause, type FilterCondition } from '../../lib/whereBuilder';
+import {
+  aggregationCsvFilename,
+  downloadAggregationCsv,
+} from '../../lib/aggregationCsv';
+
+const CHART_TYPES: SimpleChartType[] = ['bar', 'line', 'pie'];
 
 export function AggregationPage() {
   const { ontology, objectType } = useParams<{ ontology: string; objectType: string }>();
@@ -24,6 +30,7 @@ export function AggregationPage() {
   const [groupBy, setGroupBy] = useState<GroupByClause[]>([]);
   const [filters, setFilters] = useState<FilterCondition[]>([]);
   const [aggRequest, setAggRequest] = useState<AggregationRequest | null>(null);
+  const [chartType, setChartType] = useState<SimpleChartType>('bar');
 
   const availableProperties = useMemo<
     Record<string, { dataType: { type: string; itemType?: unknown }; rid: string }>
@@ -58,6 +65,14 @@ export function AggregationPage() {
       groupBy: groupBy.length > 0 ? groupBy : undefined,
       where,
     });
+  }
+
+  function handleExportCsv() {
+    if (!aggResult?.data.length || !ontology || !objectType) return;
+    downloadAggregationCsv(
+      aggResult.data,
+      aggregationCsvFilename(ontology, objectType),
+    );
   }
 
   if (!ontology || !objectType) {
@@ -171,6 +186,18 @@ export function AggregationPage() {
             data-bucket-count={aggResult.data.length}
             className="flex flex-col gap-6"
           >
+            {aggResult.data.length > 0 && (
+              <div className="flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={handleExportCsv}
+                  data-testid="aggregation-export-csv"
+                  className="rounded border border-accent-cyan/40 bg-accent-cyan/10 px-3 py-1.5 text-xs font-medium text-accent-cyan hover:bg-accent-cyan/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/50"
+                >
+                  Export CSV
+                </button>
+              </div>
+            )}
             {aggResult.accuracy && (
               <div
                 data-testid="aggregation-accuracy-badge"
@@ -190,11 +217,44 @@ export function AggregationPage() {
             {aggResult.data.length > 0 && chartMetricKey && groupBy.length > 0 && (
               <div
                 data-testid="aggregation-chart"
-                data-chart-type="bar"
+                data-chart-type={chartType}
                 className="border border-border rounded p-4 bg-bg-tertiary"
               >
-                <h3 className="text-xs font-medium text-text-primary mb-3">Chart</h3>
-                <SimpleChart data={aggResult.data} metricKey={chartMetricKey} />
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="text-xs font-medium text-text-primary">Chart</h3>
+                  <div
+                    role="tablist"
+                    aria-label="Chart type"
+                    data-testid="aggregation-chart-type-tabs"
+                    className="inline-flex overflow-hidden rounded border border-border bg-bg-primary"
+                  >
+                    {CHART_TYPES.map((type) => {
+                      const selected = chartType === type;
+                      return (
+                        <button
+                          key={type}
+                          type="button"
+                          role="tab"
+                          aria-selected={selected}
+                          data-testid={`aggregation-chart-type-${type}`}
+                          onClick={() => setChartType(type)}
+                          className={
+                            selected
+                              ? 'px-3 py-1.5 text-xs font-medium capitalize text-bg-primary bg-accent-cyan'
+                              : 'px-3 py-1.5 text-xs font-medium capitalize text-text-secondary hover:bg-bg-elevated hover:text-text-primary'
+                          }
+                        >
+                          {type}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <SimpleChart
+                  data={aggResult.data}
+                  metricKey={chartMetricKey}
+                  chartType={chartType}
+                />
               </div>
             )}
           </div>

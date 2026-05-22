@@ -26,6 +26,7 @@ export class ObjectSetDiffPage {
   readonly error: Locator;
   readonly results: Locator;
   readonly computeBtn: Locator;
+  readonly exportCsvBtn: Locator;
   readonly onlyInA: Locator;
   readonly onlyInB: Locator;
   readonly changed: Locator;
@@ -40,6 +41,7 @@ export class ObjectSetDiffPage {
     this.error = page.getByTestId('objectset-diff-error');
     this.results = page.getByTestId('objectset-diff-results');
     this.computeBtn = page.getByTestId('objectset-diff-compute-btn');
+    this.exportCsvBtn = page.getByTestId('objectset-diff-export-csv');
     this.onlyInA = page.getByTestId('diff-only-in-a');
     this.onlyInB = page.getByTestId('diff-only-in-b');
     this.changed = page.getByTestId('diff-changed');

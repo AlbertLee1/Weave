@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 import {
   Given,
   ObjectSetDiffPage,
@@ -29,10 +30,8 @@ import {
  *     `within(section).getByText(...)`, which locks the row → section
  *     contract; the three accent colour classes (cyan / amber / magenta)
  *     are CSS-only and stay implicit in the section structure.
- *   - "导出 diff CSV": the page has no export affordance today. Per the
- *     US-025/026 honest-mapping rule we keep an explicit absence
- *     assertion that documents the gap and would fail the day an
- *     "Export CSV" button is added without follow-up.
+ *   - "导出 diff CSV": after Compute, the Export CSV control downloads
+ *     the current diff sections with section + primary-key metadata.
  *
  * Each scenario:
  *   - seeds saved ObjectSets via `addInitScript` so React Query's
@@ -370,16 +369,9 @@ describeFeature('ObjectSet Diff Viewer', () => {
     });
   });
 
-  test('Scenario: the page exposes no CSV-export affordance today', async ({
+  test('Scenario: Export CSV downloads the computed diff sections', async ({
     page,
   }) => {
-    // Honest mapping for AC "导出 diff CSV": the diff page in its
-    // current shape (read-only viewer over two saved sets) has no
-    // export button. We document the gap explicitly so the day a PR
-    // adds an "Export CSV" button, this scenario fails and the team
-    // must replace this absence assertion with a click-driven one.
-    // Same pattern as US-025 "回滚 → no rollback button" and
-    // US-026 "stale-pending → no TIMED_OUT badge".
     const diff = new ObjectSetDiffPage(page);
     const captured: CapturedLoad[] = [];
 
@@ -401,16 +393,21 @@ describeFeature('ObjectSet Diff Viewer', () => {
       await expect(diff.results).toBeVisible();
     });
 
-    await Then('no "Export CSV" affordance is present on the page', async () => {
-      // Accept variants like "Export CSV", "Download CSV", "Export
-      // diff CSV", or a plain CSV button label — all of them would
-      // count as adding the missing affordance.
-      await expect(
-        page.getByRole('button', { name: /export\s*(diff)?\s*csv|download\s*csv|\bcsv\b/i }),
-      ).toHaveCount(0);
-      await expect(
-        page.getByRole('link', { name: /export\s*(diff)?\s*csv|download\s*csv|\bcsv\b/i }),
-      ).toHaveCount(0);
+    await Then('Export CSV downloads a sectioned CSV artifact', async () => {
+      const downloadPromise = page.waitForEvent('download');
+      await diff.exportCsvBtn.click();
+      const download = await downloadPromise;
+      expect(download.suggestedFilename()).toBe(
+        'northwind-snapshot-a-vs-snapshot-b-objectset-diff.csv',
+      );
+      const path = await download.path();
+      if (!path) throw new Error('download path was not available');
+      const csv = await readFile(path, 'utf8');
+      expect(csv).toContain('section,primaryKey,field,valueA,valueB');
+      expect(csv).toContain('Only in A,EMP-1,name,Alice,');
+      expect(csv).toContain('Changed,EMP-3,title,Analyst,Senior Analyst');
+      expect(csv).toContain('Only in B,EMP-4,name,,Dave');
+      await expect(diff.exportCsvBtn).toBeVisible();
     });
   });
 
