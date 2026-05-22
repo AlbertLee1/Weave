@@ -136,6 +136,9 @@ func ParseRequest(data []byte) (*Request, error) {
 	if req.Method == "" {
 		return nil, &RPCError{Code: CodeInvalidRequest, Message: "method is required"}
 	}
+	if !isValidRequestID(req.ID) {
+		return nil, &RPCError{Code: CodeInvalidRequest, Message: "id must be string, number, or null"}
+	}
 	return &req, nil
 }
 
@@ -186,7 +189,27 @@ func sniffRequestID(data []byte) json.RawMessage {
 		ID json.RawMessage `json:"id"`
 	}
 	_ = json.Unmarshal(data, &sniff)
+	if !isValidRequestID(sniff.ID) {
+		return nil
+	}
 	return sniff.ID
+}
+
+func isValidRequestID(id json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(id)
+	if len(trimmed) == 0 {
+		return true
+	}
+	switch trimmed[0] {
+	case '"':
+		return true
+	case 'n':
+		return bytes.Equal(trimmed, []byte("null"))
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return true
+	default:
+		return false
+	}
 }
 
 // NewSuccessResponse builds a response envelope wrapping a successful result.

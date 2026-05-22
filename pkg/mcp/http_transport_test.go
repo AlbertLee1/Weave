@@ -127,6 +127,30 @@ func TestBDD_HTTPTransportRejectsEmptyJSONRPCBatch(t *testing.T) {
 	}
 }
 
+func TestBDD_HTTPTransport_GivenInvalidIDShape_WhenPost_ThenInvalidRequestWithNullID_P2A002(t *testing.T) {
+	srv, _, _, _ := newTestServer(t)
+	handler := NewHTTPHandler(srv)
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(
+		`{"jsonrpc":"2.0","id":{"nested":1},"method":"initialize","params":{}}`))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%q", rr.Code, rr.Body.String())
+	}
+	var resp Response
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v; body=%q", err, rr.Body.String())
+	}
+	if resp.Error == nil || resp.Error.Code != CodeInvalidRequest {
+		t.Fatalf("error = %+v, want code %d", resp.Error, CodeInvalidRequest)
+	}
+	if string(resp.ID) != "null" {
+		t.Fatalf("id = %s, want null", resp.ID)
+	}
+}
+
 func TestHTTPTransport_InvalidJSON_Returns32700_HTTPStatus200(t *testing.T) {
 	srv, _, _, _ := newTestServer(t)
 	handler := NewHTTPHandler(srv)
