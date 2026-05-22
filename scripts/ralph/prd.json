@@ -1,62 +1,53 @@
 {
-  "project": "Weave parallel2 self-iteration",
+  "project": "Weave self-iteration CI repair",
   "branchName": "ralph/self-iteration-20260522-123354",
-  "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
+  "description": "Focused Ralph PRD for repairing the current branch's GitHub CI failure before adding any broader OSv2 capability work.",
   "userStories": [
     {
-      "id": "P2A-001",
-      "title": "Repair RLS Performance Gate Flake",
+      "id": "SELF-501",
+      "title": "Repair RLS Race Coverage Performance Gate",
       "priority": "P0",
       "status": "completed",
       "passes": true,
-      "story": "As a backend maintainer, I want the CEL row-level-security performance gate to remain meaningful without failing under normal package-suite CPU contention, so stream verification can reliably distinguish regressions from test-environment variance.",
+      "story": "As a backend maintainer, I want the CEL row-level-security performance gate to stay strict in normal runs while tolerating race and coverage instrumentation variance, so GitHub CI blocks real hot-path regressions without failing from runner contention.",
       "acceptanceCriteria": [
         {
-          "scenario": "Focused RLS performance gate remains enforced",
-          "given": "the pkg/security CEL RLS evaluator test suite runs in standard, non-instrumented mode",
-          "when": "`go test ./pkg/security -run '^TestRLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` is executed",
-          "then": "the test logs the selected standard profile and passes with cache stats showing warm-cache hits"
+          "scenario": "Instrumented profile avoids CI wall-clock flake",
+          "given": "Go tests run with race detection or coverage instrumentation enabled",
+          "when": "the RLS performance profile is selected",
+          "then": "the profile uses a smaller instrumented iteration count and budgets that match race/coverage overhead while still exercising warm-cache hits"
         },
         {
-          "scenario": "Full package gate is not blocked by the RLS performance test",
-          "given": "the repository runs the Go package list used by CI",
-          "when": "`go test $(./scripts/ci/go-packages.sh)` is executed",
-          "then": "the command exits successfully or exposes a different unrelated failure, and `pkg/security` no longer fails `TestRLSEvaluator_PerformanceGate` due only to wall-clock variance"
+          "scenario": "Focused race and coverage RLS gate passes",
+          "given": "the pkg/security RLS performance tests run with `-race -covermode=atomic`",
+          "when": "`go test -race -coverprofile=/tmp/weave-security-coverage.out -covermode=atomic ./pkg/security -run '^TestBDD_RLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` is executed",
+          "then": "the selected profile is `instrumented`, cache hit stats are logged, and the test exits successfully"
         },
         {
-          "scenario": "Instrumented CI profile stays tolerant of race and coverage overhead",
-          "given": "race or coverage instrumentation is active",
-          "when": "the RLS perf profile helper is evaluated",
-          "then": "it keeps the lower-iteration, wider-budget instrumented profile"
+          "scenario": "Full pkg/security race coverage gate passes",
+          "given": "the same package shape used by GitHub CI is executed for pkg/security",
+          "when": "`go test -race -coverprofile=/tmp/weave-security-full.out -covermode=atomic ./pkg/security -count=1 -v` is executed",
+          "then": "all pkg/security tests pass, including `TestRLSEvaluator_PerformanceGate`"
+        },
+        {
+          "scenario": "Standard non-instrumented gate remains meaningful",
+          "given": "pkg/security tests run without race or coverage instrumentation",
+          "when": "`go test ./pkg/security -run '^TestBDD_RLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` is executed",
+          "then": "the selected profile remains `standard` with the one-million-iteration strict warm-cache gate"
         }
       ],
-      "dependencies": [],
-      "evidenceRequired": [
-        "Baseline failure output from `go test $(./scripts/ci/go-packages.sh)`",
-        "Targeted red/green output for the adjusted RLS performance profile",
-        "Targeted `pkg/security` verification",
-        "Relevant Go package gate evidence after the repair"
-      ],
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-123354-A"
-    },
-    {
-      "id": "P2B-001",
-      "title": "Admin Performance Route Alias",
-      "priority": 1,
-      "story": "As an operator using browser dogfood navigation, I want the label-derived /admin/performance URL to resolve to the Performance Dashboard so direct typing and bookmarks do not fall through to the Not Found page.",
-      "acceptanceCriteria": [
-        "Given an authenticated admin starts at /admin/performance, when the SPA router evaluates the route, then it redirects to /admin/perf and renders the Performance Dashboard heading.",
-        "Given an authenticated admin starts at /admin/performance, when the page renders, then the Not Found page is not mounted.",
-        "Given the existing dogfood alias suite runs, when route aliases are checked, then /admin/performance is covered alongside the other label-derived aliases."
-      ],
       "dependencies": [
-        "web/src/App.tsx",
-        "web/src/components/__tests__/route-aliases.performance.bdd.test.tsx"
+        "pkg/security/rls_bench_test.go",
+        "internal/testprofile/instrumentation.go"
       ],
-      "passes": true,
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-123354-B"
+      "evidenceRequired": [
+        "GitHub CI failed run evidence for run 26269888489",
+        "Local RED output from the current full pkg/security race+coverage command",
+        "Targeted RED output for the adjusted instrumented profile expectation",
+        "Targeted GREEN output for the RLS performance profile and gate",
+        "Full pkg/security race+coverage verification",
+        "Standard non-instrumented RLS performance gate verification"
+      ]
     }
   ]
 }
