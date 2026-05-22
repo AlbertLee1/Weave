@@ -49,6 +49,28 @@ func TestReadJSON_ExactlyAtLimit(t *testing.T) {
 	}
 }
 
+func TestReadJSON_RejectsTrailingJSONValue(t *testing.T) {
+	body := `{"name":"first"}{"name":"second"}`
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+
+	var out struct{ Name string }
+	if err := ReadJSON(r, &out); err == nil {
+		t.Fatal("expected error for trailing JSON value, got nil")
+	}
+}
+
+func TestReadJSON_RejectsTrailingNonWhitespace(t *testing.T) {
+	body := `{"name":"first"} trailing`
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+
+	var out struct{ Name string }
+	if err := ReadJSON(r, &out); err == nil {
+		t.Fatal("expected error for trailing non-whitespace, got nil")
+	}
+}
+
 func TestWriteJSON_StatusAndContentType(t *testing.T) {
 	w := httptest.NewRecorder()
 	WriteJSON(w, http.StatusCreated, map[string]string{"id": "123"})
