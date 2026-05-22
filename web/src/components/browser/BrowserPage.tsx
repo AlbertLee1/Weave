@@ -382,6 +382,8 @@ function BrowserPageContent({
     return sortablePropertyKeys.has(sortField) ? sortField : undefined;
   }, [objectType?.primaryKey, sortField, sortablePropertyKeys]);
 
+  const searchTextField = objectType?.titleProperty ?? objectType?.primaryKey;
+
   // Build where clause for search
   const whereClause = useMemo(() => {
     const allFilters: FilterCondition[] = [...filters];
@@ -391,8 +393,7 @@ function BrowserPageContent({
       // DOG-004: backend expects a single string (Bleve MatchQuery tokenises and
       // ORs on whitespace internally); sending an array yielded
       // `containsAnyTerm value must be a string` / SearchObjectsFailed.
-      const titleProp = objectType?.titleProperty ?? objectType?.primaryKey;
-      if (titleProp) {
+      if (searchTextField) {
         const normalized = searchText
           .trim()
           .split(/\s+/)
@@ -400,7 +401,7 @@ function BrowserPageContent({
           .join(' ');
         if (normalized.length > 0) {
           allFilters.push({
-            field: titleProp,
+            field: searchTextField,
             op: 'containsAnyTerm',
             value: normalized,
           });
@@ -433,7 +434,7 @@ function BrowserPageContent({
     return combined.length === 1
       ? combined[0]
       : { type: 'and', value: combined };
-  }, [filters, searchText, objectType, selectedFacets]);
+  }, [filters, searchText, searchTextField, selectedFacets]);
 
   // List objects (no filters/search)
   const listResult = useListObjects({
@@ -462,6 +463,10 @@ function BrowserPageContent({
     orderBy: effectiveSortField
       ? { field: effectiveSortField, direction: sortDirection }
       : undefined,
+    highlight:
+      searchText.trim().length > 0 && searchTextField
+        ? { fields: [searchTextField] }
+        : undefined,
     select: selectFields,
     facets: facetFields,
     enabled: hasActiveSearch,

@@ -35,6 +35,7 @@ export interface SearchObjectsParams {
   pageSize?: number;
   pageToken?: string;
   orderBy?: { field: string; direction?: 'asc' | 'desc' };
+  highlight?: { fields?: string[]; style?: string };
   select: string[];
   facets?: string[];
 }
@@ -48,6 +49,7 @@ export function searchObjects(params: SearchObjectsParams): Promise<ObjectPage> 
       pageSize: params.pageSize,
       pageToken: params.pageToken,
       orderBy: params.orderBy,
+      highlight: params.highlight,
       select: params.select,
       facets: params.facets && params.facets.length > 0 ? params.facets : undefined,
     },
