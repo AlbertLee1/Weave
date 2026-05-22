@@ -35,7 +35,7 @@
       "dependencies": [
         "RSI-001 establishes the strict JSON adoption pattern for OSv2 admin write surfaces."
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "RSI-003",

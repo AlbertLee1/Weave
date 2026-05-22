@@ -52,3 +52,21 @@ Archived previous completed state: scripts/ralph/archive/self-iteration-20260523
 - **Learnings for future iterations:**
   - OSv2 security-control write handlers should preserve their surface-specific error names while using `httputil.ReadJSON` for deterministic single-value body parsing.
 ---
+
+## 2026-05-23T00:27:36+08:00 - RSI-002
+- Implemented strict single-value JSON decoding for saved-search create/update handlers.
+- Added BDD router coverage proving concatenated JSON returns the existing `InvalidRequestBody` 400 error and does not create or mutate in-memory saved-search state.
+- Files changed:
+  - `pkg/savedsearches/handlers.go`
+  - `pkg/savedsearches/handlers_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- TDD evidence:
+  - RED: `go test ./pkg/savedsearches -run TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI002 -v` failed because create returned 201 and update returned 200 while applying the first JSON object.
+  - GREEN: the same command passed after switching write decoders to `httputil.ReadJSON`.
+- Verification:
+  - `go test ./pkg/savedsearches ./pkg/httputil` passed.
+  - `go test $(./scripts/ci/go-packages.sh)` passed.
+- **Learnings for future iterations:**
+  - Saved-search definitions are intentionally opaque, but the write API boundary still needs deterministic single-value JSON parsing before storing the opaque envelope.
+---

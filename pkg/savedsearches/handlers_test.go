@@ -2,9 +2,11 @@ package savedsearches
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -181,5 +183,90 @@ func TestHandler_DegradedModeNoStore(t *testing.T) {
 	}
 	if resp["errorName"] != "SavedSearchesUnavailable" {
 		t.Fatalf("unexpected errorName: %v", resp["errorName"])
+	}
+}
+
+func TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI002(t *testing.T) {
+	t.Run("create rejects a valid saved search followed by another JSON value", func(t *testing.T) {
+		store := NewMemoryStore()
+		user := &auth.User{ID: "user:alice"}
+		r := newTestRouter(store, user)
+
+		first := string(mustEncode(t, map[string]any{
+			"name":       "Recent Apples",
+			"ontology":   "main",
+			"objectType": "produce",
+			"definition": map[string]any{"searchText": "apples"},
+		}))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/api/v2/saved-searches",
+			strings.NewReader(first+`{"smuggled":true}`),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		assertRSI002BadRequest(t, w)
+		rows, err := store.List(context.Background(), user.ID, "", "")
+		if err != nil {
+			t.Fatalf("store.List: %v", err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("ambiguous create persisted %d saved searches", len(rows))
+		}
+	})
+
+	t.Run("update rejects a valid patch followed by another JSON value", func(t *testing.T) {
+		store := NewMemoryStore()
+		user := &auth.User{ID: "user:alice"}
+		originalDefinition := json.RawMessage(`{"searchText":"apples"}`)
+		row := &SavedSearch{
+			ID:         "11111111-1111-4111-8111-111111111111",
+			Name:       "Recent Apples",
+			Ontology:   "main",
+			ObjectType: "produce",
+			CreatedBy:  user.ID,
+			Definition: originalDefinition,
+		}
+		if err := store.Create(context.Background(), row); err != nil {
+			t.Fatalf("seed saved search: %v", err)
+		}
+		r := newTestRouter(store, user)
+
+		first := string(mustEncode(t, map[string]any{
+			"name":       "Mutated Apples",
+			"definition": map[string]any{"searchText": "pears"},
+		}))
+		req := httptest.NewRequest(
+			http.MethodPut,
+			"/api/v2/saved-searches/"+row.ID,
+			strings.NewReader(first+`{"smuggled":true}`),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		assertRSI002BadRequest(t, w)
+		got, err := store.Get(context.Background(), row.ID, user.ID)
+		if err != nil {
+			t.Fatalf("store.Get: %v", err)
+		}
+		if got.Name != "Recent Apples" {
+			t.Fatalf("ambiguous update mutated name to %q", got.Name)
+		}
+		if string(got.Definition) != string(originalDefinition) {
+			t.Fatalf("ambiguous update mutated definition to %s", got.Definition)
+		}
+	})
+}
+
+func assertRSI002BadRequest(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "InvalidRequestBody") {
+		t.Fatalf("expected InvalidRequestBody in response body: %s", w.Body.String())
 	}
 }
