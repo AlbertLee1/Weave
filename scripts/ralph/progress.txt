@@ -1,156 +1,188 @@
 # Ralph Progress Log - Parallel2 Integration
-Integrated: 2026-05-22T23:07:44+08:00
-Integration branch: ralph/self-iteration-20260522-224557
+Integrated: 2026-05-23T00:03:30+08:00
+Integration branch: ralph/self-iteration-20260522-233015
 
-## Stream A: ralph/self-iteration-20260522-224557-A
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-224557-A
-HEAD: 88780369d973
+## Stream A: ralph/self-iteration-20260522-233015-A
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-233015-A
+HEAD: 3bf746a267ad
 
 # Ralph Progress Log - Parallel2 Stream A
-Started: 2026-05-22T22:45:57+08:00
-Integration branch: ralph/self-iteration-20260522-224557
-Stream branch: ralph/self-iteration-20260522-224557-A
+Started: 2026-05-22T23:32:50+08:00
+Integration branch: ralph/self-iteration-20260522-233015
+Stream branch: ralph/self-iteration-20260522-233015-A
 Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
 
-## Iteration 2026-05-22T22:52:50+08:00
+## Codebase Patterns
+- Use `httputil.ReadJSON(r, &req)` for Go HTTP handlers that accept JSON request bodies and must reject concatenated/trailing JSON values at the API boundary.
 
-Archived previous empty stream state:
-- scripts/ralph/archive/self-iteration-20260522-225250/prd.json
-- scripts/ralph/archive/self-iteration-20260522-225250/progress.txt
+## Initial Context
+- Archived empty prior state under `scripts/ralph/archive/self-iteration-20260522-233250/`.
+- No PR CI auto-fix context or LLM review auto-fix context was present in the prior progress file.
+- Known fresh-CI embed risk was checked with `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -v` and passed.
+- Existing strict JSON utility and feature flag adoption were checked with `go test ./pkg/httputil ./pkg/featureflags` and passed.
+---
 
-Inspection evidence:
-- Branch verified: ralph/self-iteration-20260522-224557-A.
-- Initial git status was clean.
-- Existing PRD had no userStories, so a new small P2A PRD was created.
-- No PR CI auto-fix context or LLM review auto-fix context was present in progress.txt.
-- Dogfood backend findings DOG-003 and DOG-004 are already covered by existing regression tests.
-- Focused backend/MCP sweep passed: `go test ./cmd/server ./cmd/weave-mcp ./pkg/mcp ./pkg/oss/... ./pkg/oms/...`.
+## 2026-05-22T23:39:45+08:00 - P2A-001
+- Implemented strict single-value JSON decoding for permission request create and decision writes.
+- Added BDD router coverage proving concatenated JSON returns `400 InvalidRequestBody` and does not create or decide permission request rows.
+- Files changed:
+  - `pkg/permissionrequests/handlers.go`
+  - `pkg/permissionrequests/handlers_test.go`
+- TDD evidence:
+  - RED: `go test ./pkg/permissionrequests -run TestBDD_HandlerRejectsAmbiguousJSONBodies_P2A001 -v` failed because create returned 201 and approve returned 200 after applying the first JSON value.
+  - GREEN: `go test ./pkg/permissionrequests -run TestBDD_HandlerRejectsAmbiguousJSONBodies_P2A001 -v` passed after switching the write decoders to `httputil.ReadJSON`.
+- Verification:
+  - `go test ./pkg/permissionrequests ./pkg/httputil` passed.
+  - `go test $(./scripts/ci/go-packages.sh)` passed.
+- **Learnings for future iterations:**
+  - `httputil.ReadJSON` already closes/caps the request body and checks for a second decoded JSON value; prefer it over raw `json.NewDecoder(r.Body).Decode(&req)` for backend write APIs.
+---
 
-Selected story for this Codex execution:
-- P2A-002 - Classify valid non-object JSON-RPC envelopes as Invalid Request.
+## 2026-05-22T23:41:41+08:00 - P2A-002
+- Implemented strict single-value JSON decoding for tenant quota create and update writes.
+- Added BDD router coverage proving concatenated JSON returns `400 InvalidRequestBody`, does not create a quota, and does not mutate an existing quota.
+- Files changed:
+  - `pkg/tenants/handlers.go`
+  - `pkg/tenants/handlers_test.go`
+- TDD evidence:
+  - RED: `go test ./pkg/tenants -run TestBDD_HandlerRejectsAmbiguousJSONBodies_P2A002 -v` failed because create returned 201 and update returned 200 after applying the first JSON value.
+  - GREEN: `go test ./pkg/tenants -run TestBDD_HandlerRejectsAmbiguousJSONBodies_P2A002 -v` passed after switching tenant quota create/update decoders to `httputil.ReadJSON`.
+- Verification:
+  - `go test ./pkg/tenants ./pkg/httputil` passed.
+  - `go test $(./scripts/ci/go-packages.sh)` passed.
+- **Learnings for future iterations:**
+  - Tenant quota handlers share the same strict JSON body boundary as permission request writes; keep future admin write handlers on `httputil.ReadJSON` unless streaming/multi-value input is explicitly required.
+---
 
-Planned TDD:
-- Add failing MCP protocol/HTTP tests for valid JSON that is not a request object.
-- Implement the smallest parser classification change.
-- Run targeted MCP tests before marking P2A-002 passing.
-
-P2A-002 evidence:
-- RED: `go test ./pkg/mcp -run 'TestProtocol_GivenValidJSONNonObject|TestBDD_HTTPTransport_GivenValidNonObjectJSON|TestBDD_HTTPTransport_GivenBatchWithNonObjectMember' -count=1` failed because valid JSON scalar/array request envelopes returned `-32700` Parse Error instead of `-32600` Invalid Request.
-- Implementation: `pkg/mcp.ParseRequest` now checks trimmed input before struct decode; valid JSON whose top-level value is not an object returns `CodeInvalidRequest` with message `request must be a JSON object`, while malformed JSON continues through the existing parse-error path.
-- GREEN targeted: `go test ./pkg/mcp -run 'TestProtocol_GivenValidJSONNonObject|TestBDD_HTTPTransport_GivenValidNonObjectJSON|TestBDD_HTTPTransport_GivenBatchWithNonObjectMember' -count=1` passed.
-- GREEN acceptance: `go test ./pkg/mcp ./cmd/weave-mcp` passed.
-- Integration check: `go test ./cmd/server ./pkg/mcp ./cmd/weave-mcp` passed.
-
-Files changed for P2A-002:
-- pkg/mcp/protocol.go
-- pkg/mcp/protocol_test.go
-- pkg/mcp/http_transport_test.go
-
-Codebase Patterns:
-- MCP JSON-RPC protocol errors must preserve the distinction between malformed JSON (`-32700` Parse Error) and valid JSON with an invalid request shape (`-32600` Invalid Request). HTTP transport still returns protocol-level MCP errors with HTTP 200.
-- `weave-mcp` bridge errors caused by upstream transport or invalid upstream response payloads are converted into JSON-RPC server errors (`-32000`) on stdout when the original envelope expects a response; notification-only envelopes still produce no stdout.
-
-## Iteration 2026-05-22T23:00:47+08:00
-
-Selected story for this Codex execution:
-- P2A-003 - Convert empty upstream MCP bridge responses into JSON-RPC errors.
-
-Planned TDD:
-- Add failing bridge tests for response-required requests whose upstream returns HTTP 200 or 204 with an empty body.
-- Preserve notification-only behavior for empty upstream bodies.
-- Implement the smallest `RunHTTPBridge` guard before normal response line normalization.
-
-P2A-003 evidence:
-- RED: `go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge_Given_(ResponseRequiredRequestAndEmptyUpstreamBody|NotificationOnlyRequestAndEmptyUpstreamBody)' -count=1` failed for both HTTP 200 and HTTP 204 response-required cases with `expected one JSON-RPC error line, got empty stdout`.
-- Implementation: `cmd/weave-mcp.RunHTTPBridge` now detects an empty or whitespace-only upstream body after a successful POST when the classified JSON-RPC envelope expects a response, writes `makeErrorLine(classification.errorID, errors.New("upstream returned empty response body"))`, and skips the blank-line passthrough path. Notification-only envelopes still continue before this check and remain silent.
-- GREEN targeted: `go test ./cmd/weave-mcp -run 'TestBDD_HTTPBridge_Given_(ResponseRequiredRequestAndEmptyUpstreamBody|NotificationOnlyRequestAndEmptyUpstreamBody)' -count=1` passed.
-- GREEN acceptance: `go test ./cmd/weave-mcp ./pkg/mcp -count=1` passed.
-- Integration check: `go test ./cmd/server ./pkg/mcp ./cmd/weave-mcp -count=1` passed.
-
-Files changed for P2A-003:
-- cmd/weave-mcp/http_bridge.go
-- cmd/weave-mcp/empty_response_p2a003_test.go
-
-## Iteration 2026-05-22T23:06:36+08:00
-
-Selected story for this Codex execution:
-- P2A-004 - Adopt single-value JSON request decoding on one backend write surface.
-
-Planned TDD:
-- Add a failing feature-flags admin POST test proving concatenated JSON is rejected and no flag is created.
-- Reuse the existing single-value JSON request reader on the selected create handler only.
-- Run targeted package and server-focused tests before marking P2A-004 passing.
-
-P2A-004 evidence:
-- RED: `go test ./pkg/featureflags -run TestHandler_CreateRejectsConcatenatedJSONWithoutCreatingFlag -count=1` failed because POST `/api/admin/feature-flags` returned 201 and created `ambiguous-flag` from the first JSON value.
-- Implementation: `pkg/featureflags.Handler.Create` now decodes through `httputil.ReadJSON`, preserving the existing `InvalidRequestBody` API error path while rejecting extra top-level JSON values.
-- GREEN targeted: `go test ./pkg/featureflags -run TestHandler_CreateRejectsConcatenatedJSONWithoutCreatingFlag -count=1` passed.
-- GREEN acceptance: `go test ./pkg/featureflags -count=1` passed.
-- Server-focused gate: `go test ./cmd/server ./pkg/featureflags -count=1` passed.
-
-Files changed for P2A-004:
-- pkg/featureflags/handlers.go
-- pkg/featureflags/handlers_test.go
-
-Codebase Patterns:
-- Backend write handlers should prefer `httputil.ReadJSON` over direct `json.NewDecoder(r.Body).Decode` when accepting a single JSON request object, so concatenated JSON is rejected before store/service side effects.
+## 2026-05-22T23:45:59+08:00 - P2A-003
+- Changed the MCP HTTP transport oversized-body path to return a JSON-RPC error envelope instead of raw HTTP 413 while still using `http.MaxBytesReader` to cap reads at 1 MiB.
+- Added BDD HTTP handler coverage proving an oversized POST to `/mcp` returns HTTP 200 with `CodeInvalidRequest`, a null JSON-RPC id, and an oversized-body message.
+- Files changed:
+  - `pkg/mcp/http_transport.go`
+  - `pkg/mcp/http_transport_test.go`
+- TDD evidence:
+  - RED: `go test ./pkg/mcp -run TestBDD_HTTPTransport_GivenOversizedBody_WhenPost_ThenJSONRPCError_P2A003 -v` failed because the existing handler returned `413 Request Entity Too Large`.
+  - GREEN: `go test ./pkg/mcp -run TestBDD_HTTPTransport_GivenOversizedBody_WhenPost_ThenJSONRPCError_P2A003 -v` passed after the `*http.MaxBytesError` branch wrote `NewErrorResponse(nil, CodeInvalidRequest, ...)`.
+- Verification:
+  - `go test ./pkg/mcp -v` passed.
+  - `go test $(./scripts/ci/go-packages.sh)` passed.
+- **Learnings for future iterations:**
+  - MCP HTTP protocol/body errors should preserve the JSON-RPC envelope contract where possible; keep non-200 statuses for HTTP method/routing failures rather than JSON-RPC payload validation.
+---
 
 
 ---
 
-## Stream B: ralph/self-iteration-20260522-224557-B
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-224557-B
-HEAD: 1c69d8c13492
+## Stream B: ralph/self-iteration-20260522-233015-B
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-233015-B
+HEAD: c78cffe4546c
 
 # Ralph Progress Log - Parallel2 Stream B
-Started: 2026-05-22T22:52:33+08:00
-Integration branch: ralph/self-iteration-20260522-224557
-Stream branch: ralph/self-iteration-20260522-224557-B
+Started: 2026-05-22T23:34:30+08:00
+Integration branch: ralph/self-iteration-20260522-233015
+Stream branch: ralph/self-iteration-20260522-233015-B
 Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
+Archived previous empty state: scripts/ralph/archive/self-iteration-20260522-233430/
+---
+
+## Initial Inspection
+- Branch verified: ralph/self-iteration-20260522-233015-B
+- Initial git status: clean
+- Prior PRD had no stories, so a new small stream-local PRD was created.
+- No PR CI auto-fix context or LLM review auto-fix context was present in the previous progress file.
+- Dogfood reports reviewed: DOG-002, DOG-004, and DOG-005 already have BDD coverage and implementations in the current tree.
+- Local web baseline before story selection:
+  - `npm ci` passed.
+  - `npx tsc --noEmit` passed.
+  - `npx vitest run --coverage` passed: 294 files, 2928 tests.
+  - `npm run build` passed, including bundle budget.
+  - `npx playwright test --list ...` passed and discovered 271 tests.
+
+## Selected Story
+- P2B-001 Browser Search Renders API Highlight Snippets
+- Rationale: OpenAPI documents SearchObjectsRequest.highlight and `_highlights` snippets, backend tests cover the service contract, but the Browser UI does not request or render the snippets. This is a browser dogfood UX gap with a small, verifiable frontend surface.
 
 ## Codebase Patterns
-- ObjectSet Live treats canonical SSE `seq` values as UI idempotency keys; replayed duplicate sequences should be ignored, while seq-less hand-rolled events still render via the local capture fallback key.
+- Frontend BDD tests use `*.bdd.test.tsx` under the owning component's `__tests__` folder.
+- BrowserPage search request behavior is already covered in `web/src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx` with MSW and captured POST bodies.
+- Browser search highlights are documented in OpenAPI as `SearchObjectsRequest.highlight` and returned on rows as `_highlights: { field: [snippet...] }`.
+- Render API highlight snippets by parsing only the backend's `<mark>` / `</mark>` delimiters into React elements; leave all other snippet text as text nodes instead of using `dangerouslySetInnerHTML`.
+- Browser facet fields should prefer detailed Property[] metadata once available because it carries `isSearchable`, `isArray`, and `baseType`; compact `objectType.properties` remains the fallback while detailed metadata is loading or unavailable.
 
-## Baseline Inspection
-- Branch verified: `ralph/self-iteration-20260522-224557-B`.
-- Initial worktree status: clean.
-- Existing PRD was branch-local but empty; archived to `scripts/ralph/archive/self-iteration-20260522-225233/`.
-- No `PR CI auto-fix context` or `LLM review auto-fix context` was present.
-- Fresh-CI embed guard checked with `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -v`: PASS.
-- Static-asset token-auth router check `go test ./cmd/server -run TestFullRouter_WithSPA_AuthTokenMode_BlocksAssets -v`: PASS.
-- Installed local web deps with `npm --prefix web ci` because Vitest was absent in this worktree.
-- Web BDD baseline `npm --prefix web test -- --run bdd`: PASS, 35 files / 88 tests.
-- US-453 compliance report regression `npm --prefix web test -- --run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`: PASS, 8 tests.
-- Browser P2B regressions `npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.liveFallback.bdd.test.tsx src/components/browser/__tests__/BrowserPage.savedSearches.bdd.test.tsx src/components/browser/__tests__/BrowserPage.bulkSelection.bdd.test.tsx`: PASS, 3 files / 4 tests.
-- Dogfood DOG-002/DOG-004/DOG-005 frontend BDD checks: PASS, 3 files / 10 tests.
-- `npm --prefix web run typecheck`: PASS.
-- `npm --prefix web run build`: PASS.
-- `go test ./cmd/server`: PASS.
-- `npm --prefix web run lint`: FAILS with broad pre-existing frontend lint debt across unrelated files; not selected as this story's completion gate.
+## P2B-001 Evidence
+- RED: `npx vitest run src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx` failed as expected because `body.highlight?.fields` was undefined.
+- Implementation files:
+  - `web/src/api/objects.ts`
+  - `web/src/api/types.ts`
+  - `web/src/components/browser/BrowserPage.tsx`
+  - `web/src/components/browser/ObjectTable.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx`
+- GREEN / verification:
+  - `npx vitest run src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx` passed: 4 tests.
+  - `npx vitest run src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx src/components/browser/__tests__/ObjectTable.test.tsx src/api/__tests__/objects.test.ts` passed: 3 files, 16 tests.
+  - `npx tsc --noEmit` passed.
+  - `npx eslint src/components/browser/ObjectTable.tsx` passed.
+  - `npx vitest run --coverage` passed: 294 files, 2929 tests.
+  - `npm run build` passed, including bundle budget.
+  - `npx playwright test --list ... | tail -n 1` passed: 271 tests in 76 files.
+- Note: repo-wide `npm run lint` remains an existing non-clean gate in this checkout. It reports many unrelated lint errors in coverage output, E2E specs, React hook patterns, and other files. The only lint finding introduced by this story was fixed (`ObjectTable.tsx` unused `_prop`), and a scoped lint of that touched file passes.
 
----
+## P2B-002 Evidence
+- Started: 2026-05-22T23:47:32+08:00
+- Selected story: P2B-002 Browser Facets Prefer Detailed Searchable Metadata.
+- RED setup:
+  - Added a BrowserPage facet test where compact Delivery metadata exposes `summary` and `deliveredDate`, but detailed metadata marks `summary` as `isSearchable: false` and `deliveredDate` as searchable.
+  - Also made the existing compact facet test explicitly cover the fallback path by returning a detailed-properties 500.
+- RED:
+  - `npx vitest run src/components/browser/__tests__/BrowserPage.test.tsx -t "BrowserPage facets"` failed as expected: captured search body sent `facets: ["summary", "deliveredDate"]` instead of `["deliveredDate"]`.
+  - An earlier red attempt failed for a test harness mistake because `setup()` already rendered BrowserPage; fixed before recording the behavior failure.
+- Implementation files:
+  - `web/src/components/browser/BrowserPage.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.test.tsx`
+- Behavior implemented:
+  - `facetFields` now uses detailed `Property[]` when resolved, filters to `isSearchable && !isArray`, restricts to string/boolean/date/datetime/timestamp base types, excludes the primary key, and keeps `MAX_FACET_FIELDS`.
+  - When detailed metadata is undefined because it is still loading or unavailable, the existing compact `objectType.properties` fallback remains.
+- GREEN / verification:
+  - `npx vitest run src/components/browser/__tests__/BrowserPage.test.tsx -t "BrowserPage facets"` passed: 3 tests.
+  - `npx vitest run src/components/browser/__tests__/BrowserPage.test.tsx` passed: 18 tests.
+  - `npx vitest run src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx` passed: 4 tests.
+  - `npx tsc --noEmit` passed.
+  - `npx vitest run --coverage` passed: 294 files, 2930 tests.
+  - `npm run build` passed, including bundle budget.
+- Residual lint note:
+  - `npx eslint src/components/browser/BrowserPage.tsx src/components/browser/__tests__/BrowserPage.test.tsx` fails on an existing `react-hooks/set-state-in-effect` finding at `BrowserPage.tsx:229` in the live fallback effect. The finding is outside the facet code path and was not broadened into this P2B-002 story.
 
-## 2026-05-22T22:56:40+08:00 - P2B-001
-- Implemented ObjectSet Live SSE replay deduplication by ignoring already-rendered canonical `seq` values in `ObjectSetLivePage`.
-- Added BDD coverage for duplicate seq replay: first run failed as expected with two `seq-42` rows and React duplicate-key warning; after the fix it passes.
-- Moved the Live toggle's immediate idle reset out of a synchronous `useEffect` state update and into the toggle click handler so targeted ESLint passes for the touched component.
-- Documented SSE sequence numbers as UI idempotency keys in `docs/subscriptions/sse.md`.
-- Files changed:
-  - `web/src/components/objectsets/ObjectSetLivePage.tsx`
-  - `web/src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx`
-  - `docs/subscriptions/sse.md`
-- Verification:
-  - RED: `npm --prefix web test -- --run src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx` failed with duplicate `objectset-live-event-42` rows.
-  - GREEN targeted: `npm --prefix web test -- --run src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx` PASS, 1 file / 4 tests.
-  - Regression targeted: `npm --prefix web test -- --run src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetLivePage.test.tsx` PASS, 2 files / 11 tests.
-  - Web BDD: `npm --prefix web test -- --run bdd` PASS, 35 files / 89 tests.
-  - Typecheck: `npm --prefix web run typecheck` PASS.
-  - Build: `npm --prefix web run build` PASS, bundle budgets passed.
-  - Targeted lint: `(cd web && npm exec eslint -- src/components/objectsets/ObjectSetLivePage.tsx src/components/objectsets/__tests__/ObjectSetLivePage.bdd.test.tsx)` PASS.
-- **Learnings for future iterations:**
-  - ObjectSet Live has both canonical `seq`-keyed rows and seq-less fallback rows; keep duplicate suppression limited to canonical `seq` values so hand-rolled payloads still render.
-  - Full `npm --prefix web run lint` is not currently a reliable completion gate because unrelated pre-existing lint errors remain across many frontend files; use targeted lint for touched files plus typecheck/build unless the story explicitly addresses global lint debt.
----
+## P2B-003 Evidence
+- Started: 2026-05-22T23:50:20+08:00
+- Selected story: P2B-003 Saved Browser Views Restore Presentation Mode.
+- RED setup:
+  - Added BDD coverage in `web/src/components/browser/__tests__/BrowserPage.savedSearches.bdd.test.tsx` for saving a map-mode view and loading a saved map-mode definition.
+- RED:
+  - `npx vitest run src/components/browser/__tests__/BrowserPage.savedSearches.bdd.test.tsx -t P2B-003` failed as expected:
+    - save-only view state did not open the save dialog because `hasCurrentState` only considered active search/filter/facet state.
+    - loading `definition.viewMode: "map"` left the Browser in table mode.
+- Implementation files:
+  - `web/src/api/savedSearches.ts`
+  - `web/src/components/browser/BrowserPage.tsx`
+  - `web/src/components/browser/__tests__/BrowserPage.savedSearches.bdd.test.tsx`
+- Behavior implemented:
+  - `SavedSearchDefinition` now carries `viewMode?: BrowserViewMode`.
+  - Browser current definitions include the active presentation mode.
+  - Non-table presentation mode enables "Save current" even without a search/filter/facet.
+  - Applying a saved definition restores a validated view mode and falls back to table for legacy definitions with no `viewMode`.
+- GREEN / verification:
+  - `npx vitest run src/components/browser/__tests__/BrowserPage.savedSearches.bdd.test.tsx -t P2B-003` passed: 3 tests, 1 skipped.
+  - `npx vitest run src/components/browser/__tests__/BrowserPage.savedSearches.bdd.test.tsx src/components/browser/__tests__/BrowserPage.test.tsx src/components/browser/__tests__/SavedSearchesPanel.test.tsx` passed: 3 files, 27 tests.
+  - `npx tsc --noEmit` passed.
+  - `npx eslint src/api/savedSearches.ts src/components/browser/__tests__/BrowserPage.savedSearches.bdd.test.tsx` passed.
+  - `npx vitest run --coverage` passed: 294 files, 2933 tests.
+  - `npm run build` passed, including bundle budget.
+- Residual lint note:
+  - `npx eslint src/components/browser/BrowserPage.tsx` still reports the pre-existing `react-hooks/set-state-in-effect` finding at `BrowserPage.tsx:237` in the live fallback effect. This story did not broaden into that unrelated realtime refactor.
+
+## Codebase Patterns Added
+- Saved Browser view definitions are frontend-owned opaque JSON; adding presentation state is a type-only frontend contract change and does not require a backend API change.
+- BrowserPage should validate saved presentation mode values before applying them and should treat missing `viewMode` as the table fallback for legacy saved definitions.
 
 
 ---
