@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/auth"
@@ -97,6 +98,84 @@ func TestRateLimitMiddleware_DifferentIPsGetSeparateBuckets(t *testing.T) {
 	handler.ServeHTTP(w3, req3)
 	if w3.Code != http.StatusTooManyRequests {
 		t.Fatalf("IP1 second request: expected 429, got %d", w3.Code)
+	}
+}
+
+func TestRateLimitMiddleware_PrunesIdleBucketsAfterConfiguredWindow(t *testing.T) {
+	now := time.Date(2026, 5, 22, 7, 0, 0, 0, time.UTC)
+	rules := []RateLimitRule{
+		{Method: "POST", Pattern: "/api/auth/login", RPS: 1, Burst: 1, KeyBy: KeyByIP, IdleTTL: time.Minute},
+	}
+	mw := newRateLimitMiddlewareWithClock(rules, nil, func() time.Time { return now })
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req1 := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	req1.RemoteAddr = "10.0.0.1:12345"
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first request: expected 200, got %d", w1.Code)
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	req2.RemoteAddr = "10.0.0.1:12345"
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request before idle window: expected 429, got %d", w2.Code)
+	}
+
+	now = now.Add(2 * time.Minute)
+
+	req3 := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	req3.RemoteAddr = "10.0.0.1:12345"
+	w3 := httptest.NewRecorder()
+	handler.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("request after idle pruning: expected 200, got %d", w3.Code)
+	}
+}
+
+func TestRateLimitMiddleware_PruneKeepsActiveBuckets(t *testing.T) {
+	now := time.Date(2026, 5, 22, 7, 0, 0, 0, time.UTC)
+	rules := []RateLimitRule{
+		{Method: "POST", Pattern: "/api/auth/login", RPS: 1, Burst: 2, KeyBy: KeyByIP, IdleTTL: time.Minute},
+	}
+	mw := newRateLimitMiddlewareWithClock(rules, nil, func() time.Time { return now })
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req1 := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	req1.RemoteAddr = "10.0.0.2:12345"
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first request: expected 200, got %d", w1.Code)
+	}
+
+	now = now.Add(45 * time.Second)
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	req2.RemoteAddr = "10.0.0.2:12345"
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("second active request: expected 200, got %d", w2.Code)
+	}
+
+	now = now.Add(45 * time.Second)
+
+	req3 := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	req3.RemoteAddr = "10.0.0.2:12345"
+	w3 := httptest.NewRecorder()
+	handler.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusTooManyRequests {
+		t.Fatalf("recently active bucket should not be reset: expected 429, got %d", w3.Code)
 	}
 }
 
