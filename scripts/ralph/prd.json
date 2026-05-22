@@ -76,7 +76,7 @@
         "Targeted Vitest regression for one-bucket pie charts.",
         "Targeted aggregation component tests."
       ],
-      "passes": false
+      "passes": true
     }
   ]
 }

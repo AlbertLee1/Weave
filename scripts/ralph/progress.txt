@@ -77,3 +77,19 @@ Selected story:
 
 Remaining story:
 - LLM-002 - Render one-bucket pie charts as a full circle
+
+## 2026-05-22T18:24:00+08:00 - LLM-002
+- Rendered single-positive-bucket pie charts as a real SVG full circle instead of a 360-degree arc path whose identical endpoints collapse visually.
+- Preserved existing multi-positive-bucket pie rendering through `path[data-pie-slice]` arcs.
+- Files changed:
+  - `web/src/components/aggregation/SimpleChart.tsx`
+  - `web/src/components/aggregation/__tests__/SimpleChart.test.tsx`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- TDD evidence:
+  - RED targeted: `npm test -- SimpleChart.test.tsx` failed with `expected ... to have a length of 1 but got 0` for `circle[data-pie-full-slice]`.
+  - GREEN targeted: `npm test -- SimpleChart.test.tsx` passed with 4 tests.
+  - Relevant aggregation gate: `npm test -- src/components/aggregation` passed with 5 files and 15 tests.
+  - TypeScript gate: `npm run typecheck` passed.
+- Codebase Patterns:
+  - SVG pie charts cannot represent a full 360-degree slice as a single arc path because the arc start and end point coincide; use a `<circle>` for exactly one non-zero slice and keep arc paths for partial slices.

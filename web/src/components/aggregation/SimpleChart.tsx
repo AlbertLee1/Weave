@@ -241,6 +241,9 @@ export function SimpleChart({ data, metricKey, chartType = 'bar' }: SimpleChartP
     const positiveTotal = positiveValues.reduce((sum, value) => sum + value, 0);
     const sliceValues = positiveTotal > 0 ? positiveValues : data.map(() => 1);
     const total = positiveTotal > 0 ? positiveTotal : data.length;
+    const fullSliceIndex = sliceValues.filter((value) => value > 0).length === 1
+      ? sliceValues.findIndex((value) => value > 0)
+      : -1;
     let startAngle = 0;
     const centerX = padding.left + 150;
     const centerY = padding.top + 120;
@@ -254,17 +257,31 @@ export function SimpleChart({ data, metricKey, chartType = 'bar' }: SimpleChartP
           const path = describeSlice(centerX, centerY, radius, startAngle, endAngle);
           startAngle = endAngle;
           const label = getLabel(data[i]!);
+          const isFullSlice = i === fullSliceIndex;
 
           return (
             <g key={i}>
-              <path
-                data-pie-slice
-                d={path}
-                fill={PIE_COLORS[i % PIE_COLORS.length]}
-                stroke="currentColor"
-                className="text-bg-tertiary"
-                strokeWidth="2"
-              />
+              {isFullSlice ? (
+                <circle
+                  data-pie-full-slice
+                  cx={centerX}
+                  cy={centerY}
+                  r={radius}
+                  fill={PIE_COLORS[i % PIE_COLORS.length]}
+                  stroke="currentColor"
+                  className="text-bg-tertiary"
+                  strokeWidth="2"
+                />
+              ) : (
+                <path
+                  data-pie-slice
+                  d={path}
+                  fill={PIE_COLORS[i % PIE_COLORS.length]}
+                  stroke="currentColor"
+                  className="text-bg-tertiary"
+                  strokeWidth="2"
+                />
+              )}
               <rect
                 x={360}
                 y={padding.top + i * 22}
