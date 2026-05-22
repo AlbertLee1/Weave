@@ -1,50 +1,109 @@
 {
-  "project": "Weave self-iteration",
-  "branchName": "ralph/self-iteration-20260522-165538",
-  "description": "Focused LLM review repair PRD for PR #46. Scope is restricted to the blocking CSV formula-injection findings appended to progress.txt for the new aggregation and object-set diff export surfaces.",
-  "createdAt": "2026-05-22T18:47:04+08:00",
+  "project": "Weave parallel2 self-iteration",
+  "branchName": "ralph/self-iteration-20260522-191028",
+  "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
   "userStories": [
     {
-      "id": "LLM-003",
-      "title": "Harden CSV exports against formula injection",
+      "id": "P2A-001",
+      "title": "Return complete MCP ObjectType resource schema bundles",
+      "description": "As an MCP client, I want resources/read to return ObjectType properties and outgoing link metadata so agents can reason over ontology schemas without falling back to REST endpoints.",
       "priority": 1,
-      "area": "web/src/lib",
-      "asA": "user downloading aggregation or object-set diff CSV exports",
-      "iWant": "user-controlled CSV string cells to be forced to text when they look like spreadsheet formulas",
-      "soThat": "opening exported CSV files in spreadsheet software does not execute formulas from group values, primary keys, field names, or object values",
-      "acceptanceCriteria": [
-        {
-          "type": "BDD",
-          "given": "an aggregation bucket has string group keys or values beginning with =, +, -, @, tab, CR, or leading whitespace before those characters",
-          "when": "the aggregation CSV is built or downloaded",
-          "then": "those string cells are prefixed with an apostrophe before RFC4180 escaping, while numeric metric values remain unprefixed numbers"
-        },
-        {
-          "type": "BDD",
-          "given": "an object-set diff includes primary keys, field names, or object values beginning with =, +, -, @, tab, CR, or leading whitespace before those characters",
-          "when": "the object-set diff CSV is built or downloaded",
-          "then": "those string cells are prefixed with an apostrophe before RFC4180 escaping while section labels and existing row structure remain unchanged"
-        },
-        {
-          "type": "BDD",
-          "given": "hardened CSV cells also contain commas, quotes, CR, or LF",
-          "when": "the CSV serializers emit the file contents",
-          "then": "RFC4180 quoting remains correct and existing CSV export behavior is preserved"
-        }
+      "area": "backend/mcp",
+      "bddAcceptanceCriteria": [
+        "Given an ontology with an ObjectType that has properties and outgoing links, when resources/read is called for weave://objecttype/<ontology>/<objectType>, then the JSON content includes objectType, properties, and outgoingLinkTypes.",
+        "Given resources/read is called for a weave://ontology/<rid> resource, when the ontology contains ObjectTypes with properties, then each ObjectType in the ontology bundle includes its properties.",
+        "Given the OMS repository cannot list properties or outgoing links, when resources/read is called, then MCP returns a JSON-RPC tool error instead of silently returning partial schema data."
       ],
       "dependencies": [
-        "web/src/lib/aggregationCsv.ts",
-        "web/src/lib/objectSetDiffCsv.ts",
-        "web/src/lib/__tests__",
-        "web/src/components/aggregation/__tests__/AggregationPage.csvExport.bdd.test.tsx",
-        "web/src/components/objectsets/__tests__/ObjectSetDiffPage.csvExport.bdd.test.tsx"
+        "pkg/mcp resource handlers",
+        "oms.Repository metadata methods"
       ],
       "verification": [
-        "Targeted Vitest regression for aggregation CSV formula-like group keys and values.",
-        "Targeted Vitest regression for object-set diff CSV formula-like primary keys, field names, and values.",
-        "Relevant web CSV export tests and TypeScript gate."
+        "go test ./pkg/mcp -run P2A001 -count=1",
+        "go test ./pkg/mcp -count=1",
+        "go test ./cmd/weave-mcp ./pkg/mcp -count=1"
       ],
-      "passes": true
+      "passes": true,
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260522-191028-A"
+    },
+    {
+      "id": "P2A-002",
+      "title": "Reject invalid JSON-RPC id shapes in MCP transports",
+      "description": "As an MCP transport client, I want invalid JSON-RPC id values to be rejected with standard invalid-request errors so malformed envelopes do not leak unsupported response IDs.",
+      "priority": 2,
+      "area": "backend/mcp",
+      "bddAcceptanceCriteria": [
+        "Given a JSON-RPC request whose id is an object or array, when the HTTP MCP endpoint receives it, then the response is HTTP 200 with JSON-RPC error code -32600 and id null.",
+        "Given a stdio MCP request whose id is an object or array, when the bridge parses it, then stdout receives a JSON-RPC error line with code -32600 and id null.",
+        "Given string, number, or null ids, when MCP parses the envelope, then existing request handling and id round-tripping still work."
+      ],
+      "dependencies": [
+        "pkg/mcp protocol parsing",
+        "HTTP and stdio MCP transports"
+      ],
+      "verification": [
+        "go test ./pkg/mcp -run 'TestProtocol|TestHTTPTransport|TestStdioTransport' -count=1"
+      ],
+      "passes": true,
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260522-191028-A"
+    },
+    {
+      "id": "P2A-003",
+      "title": "Harden stream ingest metadata validation against schema drift",
+      "description": "As an ingest writer, I want stream ingest to reject object properties that no longer exist in OMS metadata before publishing to Funnel so accepted batches cannot become invisible or partially indexed.",
+      "priority": 3,
+      "area": "backend/ontology/ingest",
+      "bddAcceptanceCriteria": [
+        "Given an ingest edit contains an object property not declared on the target ObjectType, when the stream ingest endpoint validates the batch, then it returns InvalidIngestEdit and does not publish.",
+        "Given a valid batch containing only declared properties, when the stream ingest endpoint validates the batch, then it publishes the batch unchanged except for source=ingest and URL objectType enforcement.",
+        "Given metadata lookup fails, when ingest validation runs, then the endpoint returns a stable server-side metadata lookup error and does not publish."
+      ],
+      "dependencies": [
+        "pkg/oss stream ingest metadata validator",
+        "oms.Repository object metadata"
+      ],
+      "verification": [
+        "go test ./pkg/oss -run 'TestStreamIngest.*Metadata|TestBDD_StreamIngest' -count=1"
+      ],
+      "passes": true,
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260522-191028-A"
+    },
+    {
+      "id": "P2B-001",
+      "title": "Reset Browser route-scoped state when switching object types",
+      "priority": "high",
+      "passes": true,
+      "context": "BrowserPage currently keeps committed search text, filters, selected facets, selected rows, pagination, detail state, and live subscription state in component-local state. React Router can reuse the same BrowserPage instance when navigating between /browser/:ontology/:objectType routes, so stale fields or selected primary keys from one object type can leak into the next object grid.",
+      "dependencies": [
+        "web/src/components/browser/BrowserPage.tsx",
+        "web/src/components/browser/SearchBar.tsx",
+        "web/src/components/browser/__tests__/BrowserPage.test.tsx",
+        "TanStack Query object list/search hooks"
+      ],
+      "acceptanceCriteria": [
+        {
+          "scenario": "Given an operator has searched and selected rows on one object type, when they navigate to another /browser/:ontology/:objectType route, then the search input, active search/filter state, selected rows, detail panel, pagination, and bulk toolbar reset for the new object type."
+        },
+        {
+          "scenario": "Given the route changes to a new object type, when the new object grid loads, then BrowserPage does not send the previous object type's search/filter where clause to the new object type."
+        },
+        {
+          "scenario": "Given live updates were enabled for the previous object type, when the route changes, then BrowserPage resets the live/objectSet subscription state instead of reusing a subscription RID created for the previous object type."
+        }
+      ],
+      "bddTests": [
+        "web/src/components/browser/__tests__/BrowserPage.test.tsx adds a BDD scenario that navigates between two object types in the same BrowserPage instance and asserts stale search/selection state is cleared."
+      ],
+      "verificationCommands": [
+        "npm --prefix web test -- --run src/components/browser/__tests__/BrowserPage.test.tsx",
+        "npm --prefix web test -- --run bdd",
+        "npm --prefix web test"
+      ],
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260522-191028-B"
     }
   ]
 }
