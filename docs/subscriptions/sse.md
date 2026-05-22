@@ -114,6 +114,9 @@ The server maintains an in-memory ring buffer of recent events (default capacity
 
 If the requested sequence is older than the ring buffer's oldest entry, replay starts from the oldest available event. There is no error -- the client may miss events that have rotated out.
 
+UI clients should treat the SSE sequence number as an idempotency key. If a reconnect path or intermediate retry delivers a sequence number that is already rendered, ignore the
+duplicate instead of adding another visible event row.
+
 ### NATS Durable Storage
 
 Beyond the ring buffer, NATS JetStream retains edit events for up to 24 hours. The ring buffer is tuned for brief disconnects (seconds); longer outages may require application-level reconciliation.
