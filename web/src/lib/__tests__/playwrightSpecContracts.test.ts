@@ -45,9 +45,7 @@ describe('Playwright spec contracts', () => {
       'dogfood-verify.spec.ts',
       'dogfood-diagnose.spec.ts',
       'dogfood-empty-states.spec.ts',
-      'tests/feature.command-palette.spec.ts',
-      'tests/feature.sidebar.dogfood.spec.ts',
-      'tests/feature.dashboard.spec.ts',
+      'tests/',
       'us-456-perf-dashboard.spec.ts',
       'us-457-timeseries-tab.spec.ts',
       'us-458-hotkey-help.spec.ts',
@@ -58,6 +56,14 @@ describe('Playwright spec contracts', () => {
     for (const target of requiredTargets) {
       expect(discoveryStep).toContain(target);
     }
+  });
+
+  it('discovers the entire Playwright BDD suite in CI list-only mode', () => {
+    const stepStart = ciWorkflowSource.indexOf('- name: Playwright spec discovery');
+    expect(stepStart).toBeGreaterThanOrEqual(0);
+
+    const discoveryStep = ciWorkflowSource.slice(stepStart);
+    expect(discoveryStep).toMatch(/(^|\s)tests\/(\s|$)/);
   });
 
   it('keeps the Phase 7 SSE reconnect scenario discoverable and deterministic', () => {
