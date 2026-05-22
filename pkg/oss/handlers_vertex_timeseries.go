@@ -57,6 +57,12 @@ func (h *Handler) GetVertexTimeSeries(w http.ResponseWriter, r *http.Request) {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidTo", map[string]string{"reason": err.Error()}))
 		return
 	}
+	if !to.After(from) {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidTimeWindow", map[string]string{
+			"reason": "to must be after from",
+		}))
+		return
+	}
 	agg, err := parseAggParam(q.Get("agg"))
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidAgg", map[string]string{"reason": err.Error()}))
