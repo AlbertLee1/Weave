@@ -6,7 +6,7 @@ import type { AggregationMetric, GroupByClause, AggregationRequest } from '../..
 import { MetricSelector } from './MetricSelector';
 import { GroupByBuilder } from './GroupByBuilder';
 import { ResultTable } from './ResultTable';
-import { SimpleChart } from './SimpleChart';
+import { SimpleChart, type SimpleChartType } from './SimpleChart';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
 import { FilterBuilder } from '../browser/FilterBuilder';
@@ -15,6 +15,8 @@ import {
   aggregationCsvFilename,
   downloadAggregationCsv,
 } from '../../lib/aggregationCsv';
+
+const CHART_TYPES: SimpleChartType[] = ['bar', 'line', 'pie'];
 
 export function AggregationPage() {
   const { ontology, objectType } = useParams<{ ontology: string; objectType: string }>();
@@ -28,6 +30,7 @@ export function AggregationPage() {
   const [groupBy, setGroupBy] = useState<GroupByClause[]>([]);
   const [filters, setFilters] = useState<FilterCondition[]>([]);
   const [aggRequest, setAggRequest] = useState<AggregationRequest | null>(null);
+  const [chartType, setChartType] = useState<SimpleChartType>('bar');
 
   const availableProperties = useMemo<
     Record<string, { dataType: { type: string; itemType?: unknown }; rid: string }>
@@ -214,11 +217,44 @@ export function AggregationPage() {
             {aggResult.data.length > 0 && chartMetricKey && groupBy.length > 0 && (
               <div
                 data-testid="aggregation-chart"
-                data-chart-type="bar"
+                data-chart-type={chartType}
                 className="border border-border rounded p-4 bg-bg-tertiary"
               >
-                <h3 className="text-xs font-medium text-text-primary mb-3">Chart</h3>
-                <SimpleChart data={aggResult.data} metricKey={chartMetricKey} />
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="text-xs font-medium text-text-primary">Chart</h3>
+                  <div
+                    role="tablist"
+                    aria-label="Chart type"
+                    data-testid="aggregation-chart-type-tabs"
+                    className="inline-flex overflow-hidden rounded border border-border bg-bg-primary"
+                  >
+                    {CHART_TYPES.map((type) => {
+                      const selected = chartType === type;
+                      return (
+                        <button
+                          key={type}
+                          type="button"
+                          role="tab"
+                          aria-selected={selected}
+                          data-testid={`aggregation-chart-type-${type}`}
+                          onClick={() => setChartType(type)}
+                          className={
+                            selected
+                              ? 'px-3 py-1.5 text-xs font-medium capitalize text-bg-primary bg-accent-cyan'
+                              : 'px-3 py-1.5 text-xs font-medium capitalize text-text-secondary hover:bg-bg-elevated hover:text-text-primary'
+                          }
+                        >
+                          {type}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <SimpleChart
+                  data={aggResult.data}
+                  metricKey={chartMetricKey}
+                  chartType={chartType}
+                />
               </div>
             )}
           </div>

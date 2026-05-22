@@ -32,12 +32,10 @@ import {
  *     builder; the scenario captures the POST body and asserts the
  *     optional AggregationRequest.where key is included only when the
  *     user has added a filter.
- *   - "切换图表类型 (bar/line/pie)" → SimpleChart hard-codes a bar
- *     chart and there is no chart-type switcher today. Happy-path
- *     scenario asserts the chart wrapper carries `data-chart-type="bar"`
- *     + an `<svg>` with bar elements is rendered; absence scenario locks
- *     "no line/pie/area toggle exists" via role+name triple absence and
- *     pre-emptively prevents accidental partial swaps.
+ *   - "切换图表类型 (bar/line/pie)" → the chart wrapper starts in
+ *     `data-chart-type="bar"` mode, exposes a tab-style switcher, and
+ *     swaps the rendered SVG marks for line and pie while preserving
+ *     the bucket table.
  *   - "导出 CSV" → CSV export is available once buckets exist. The
  *     scenario captures the browser download and asserts group columns
  *     precede metric columns with RFC4180 escaping.
@@ -347,14 +345,12 @@ describeFeature('Aggregation page', () => {
     });
   });
 
-  test('Scenario: chart type switcher (line/pie/area) is absent today', async ({
+  test('Scenario: chart type switcher updates bar, line, and pie renderers', async ({
     page,
   }) => {
-    // Honest mapping for the second half of AC "切换图表类型":
-    // SimpleChart hard-codes a bar SVG; there is no toggle to switch
-    // to line/pie/area. We lock the gap with role+name triple
-    // absence so a partial swap (e.g. someone replaces bar with pie
-    // but forgets the user-facing toggle) is rejected.
+    // Locks AC "切换图表类型": the operator can switch the grouped
+    // aggregation chart between bar, line, and pie renderers without
+    // losing the result table.
     const agg = new AggregationPage(page);
     const captured: CapturedAgg[] = [];
 
@@ -378,20 +374,31 @@ describeFeature('Aggregation page', () => {
       await expect(agg.chart).toBeVisible();
     });
 
-    await Then('no chart-type toggle is rendered alongside the chart', async () => {
-      await expect(
-        page.getByRole('button', { name: /^(line|pie|area)\b|chart\s*type|switch\s*chart/i }),
-      ).toHaveCount(0);
-      await expect(
-        page.getByRole('tab', { name: /^(bar|line|pie|area)\b/i }),
-      ).toHaveCount(0);
-      await expect(
-        page.getByRole('radio', { name: /^(bar|line|pie|area)\b/i }),
-      ).toHaveCount(0);
+    await Then('bar is selected and the bucket table remains visible', async () => {
+      await expect(agg.chart).toHaveAttribute('data-chart-type', 'bar');
+      await expect(agg.chartTypeTabs).toBeVisible();
+      await expect(agg.chartTypeButton('bar')).toHaveAttribute('aria-selected', 'true');
+      await expect(agg.bucketTree).toContainText('USA');
     });
 
-    await Then('the chart wrapper still locks chart-type=bar exclusively', async () => {
-      await expect(agg.chart).toHaveAttribute('data-chart-type', 'bar');
+    await When('the user switches to the line chart', async () => {
+      await agg.chartTypeButton('line').click();
+    });
+
+    await Then('the line renderer is active and the bucket table remains visible', async () => {
+      await expect(agg.chart).toHaveAttribute('data-chart-type', 'line');
+      await expect(agg.chart.locator('[data-line]')).toHaveCount(1);
+      await expect(agg.bucketTree).toContainText('France');
+    });
+
+    await When('the user switches to the pie chart', async () => {
+      await agg.chartTypeButton('pie').click();
+    });
+
+    await Then('the pie renderer is active and the bucket table remains visible', async () => {
+      await expect(agg.chart).toHaveAttribute('data-chart-type', 'pie');
+      await expect(agg.chart.locator('[data-pie-slice]')).toHaveCount(3);
+      await expect(agg.bucketTree).toContainText('Brazil');
     });
   });
 

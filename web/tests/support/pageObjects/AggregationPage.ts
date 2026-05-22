@@ -31,6 +31,7 @@ export class AggregationPage {
   readonly accuracyBadge: Locator;
   readonly chart: Locator;
   readonly exportCsvBtn: Locator;
+  readonly chartTypeTabs: Locator;
   readonly metricAddBtn: Locator;
   readonly groupByAddBtn: Locator;
   readonly activeFilters: Locator;
@@ -54,6 +55,7 @@ export class AggregationPage {
     this.accuracyBadge = page.getByTestId('aggregation-accuracy-badge');
     this.chart = page.getByTestId('aggregation-chart');
     this.exportCsvBtn = page.getByTestId('aggregation-export-csv');
+    this.chartTypeTabs = page.getByTestId('aggregation-chart-type-tabs');
     this.metricAddBtn = page.getByTestId('metric-add');
     this.groupByAddBtn = page.getByTestId('groupby-add');
     this.activeFilters = page.getByTestId('active-filters');
@@ -109,5 +111,9 @@ export class AggregationPage {
 
   filterValueInput(): Locator {
     return this.page.getByTestId('filter-value-input');
+  }
+
+  chartTypeButton(type: 'bar' | 'line' | 'pie'): Locator {
+    return this.page.getByTestId(`aggregation-chart-type-${type}`);
   }
 }
