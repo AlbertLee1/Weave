@@ -1,4 +1,5 @@
 import type { AggregationBucket } from '../api/aggregation';
+import { serializeCsvCell } from './csvCell';
 
 export function buildAggregationCsv(data: AggregationBucket[]): string {
   if (data.length === 0) return '';
@@ -15,14 +16,14 @@ export function buildAggregationCsv(data: AggregationBucket[]): string {
   const groups = Array.from(groupKeys);
   const metrics = Array.from(metricKeys);
   const columns = [...groups, ...metrics];
-  const lines = [columns.map(escapeCsvCell).join(',')];
+  const lines = [columns.map(serializeCsvCell).join(',')];
 
   for (const bucket of data) {
     const cells = [
       ...groups.map((key) => bucket.group?.[key]),
       ...metrics.map((key) => bucket.metrics[key]),
     ];
-    lines.push(cells.map(formatCsvValue).map(escapeCsvCell).join(','));
+    lines.push(cells.map(serializeCsvCell).join(','));
   }
 
   return `${lines.join('\n')}\n`;
@@ -57,16 +58,4 @@ export function aggregationCsvFilename(
     .filter(Boolean)
     .join('-');
   return `${prefix || 'aggregation'}-aggregation.csv`;
-}
-
-function formatCsvValue(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'object') return JSON.stringify(value);
-  return String(value);
-}
-
-function escapeCsvCell(value: unknown): string {
-  const text = String(value ?? '');
-  if (!/[",\r\n]/.test(text)) return text;
-  return `"${text.replace(/"/g, '""')}"`;
 }

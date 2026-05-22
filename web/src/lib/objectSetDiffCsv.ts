@@ -1,4 +1,5 @@
 import type { WireObject } from '../api/types';
+import { serializeCsvCell } from './csvCell';
 import type { ObjectSetDiff } from './objectSetDiff';
 
 const ENVELOPE_KEYS = new Set(['__rid', '__primaryKey', '__apiName']);
@@ -92,8 +93,8 @@ function appendCsvLine(
   valueB: unknown,
 ): void {
   lines.push(
-    [section, primaryKey, field, formatCsvValue(valueA), formatCsvValue(valueB)]
-      .map(escapeCsvCell)
+    [section, primaryKey, field, valueA, valueB]
+      .map(serializeCsvCell)
       .join(','),
   );
 }
@@ -118,18 +119,6 @@ function fieldOrderForRows(rows: WireObject[], propertyOrder: string[]): string[
   }
 
   return fields;
-}
-
-function formatCsvValue(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'object') return JSON.stringify(value);
-  return String(value);
-}
-
-function escapeCsvCell(value: unknown): string {
-  const text = String(value ?? '');
-  if (!/[",\r\n]/.test(text)) return text;
-  return `"${text.replace(/"/g, '""')}"`;
 }
 
 function sanitizeFilenamePart(part: string): string {

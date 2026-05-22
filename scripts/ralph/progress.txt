@@ -1,95 +1,81 @@
 # Ralph Progress Log
-Started: 2026-05-22T18:15:17+08:00
+Started: 2026-05-22T18:47:04+08:00
 Branch: ralph/self-iteration-20260522-165538
 
 Archived completed prior Ralph state:
-- scripts/ralph/archive/self-iteration-20260522-181517/prd.json
-- scripts/ralph/archive/self-iteration-20260522-181517/progress.txt
+- scripts/ralph/archive/self-iteration-20260522-184704/prd.json
+- scripts/ralph/archive/self-iteration-20260522-184704/progress.txt
 
 Initial inspection:
 - Branch verified with `git branch --show-current`: ralph/self-iteration-20260522-165538.
 - Prior PRD matched this branch, but all stories had `passes: true`.
-- `LLM review auto-fix context` was present in the active progress file and is the highest-priority target for this PRD.
+- A newer `LLM review auto-fix context` was appended to the active progress file and is the strict highest-priority target for this PRD.
 - Latest GitHub CI entries checked with `gh run list --limit 8 --json ...`: recent runs for this branch and main completed with conclusion success.
-- Code/docs/tests/dogfood-output inspected with `rg` / `rg --files`; the review findings map to `pkg/vertex/graphsvc` live share-link code and `web/src/components/aggregation/SimpleChart.tsx`.
+- Relevant code inspected: `web/src/lib/aggregationCsv.ts`, `web/src/lib/objectSetDiffCsv.ts`, and existing browser export CSV helper `web/src/lib/exportObjects.ts`.
+- Relevant tests inspected: `web/src/components/aggregation/__tests__/AggregationPage.csvExport.bdd.test.tsx`, `web/src/components/objectsets/__tests__/ObjectSetDiffPage.csvExport.bdd.test.tsx`, and `web/src/lib/__tests__/exportObjects.test.ts`.
+- Docs and dogfood output were scanned with `rg --files`; no existing CSV formula-injection hardening contract was found there.
 
-Preserved LLM review auto-fix context - 2026-05-22T18:13:20+08:00:
+Preserved LLM review auto-fix context - 2026-05-22T18:45:26+08:00:
 - PR: https://github.com/AlbertLee1/Weave/pull/46
 - Branch: ralph/self-iteration-20260522-165538
-- Reviewed HEAD: 564a6d2e1dac
+- Reviewed HEAD: c3e035db9ee5
 - Review status: request_changes
-- Summary: Request changes: the share-link security stories are not wired into production behavior, and the new pie chart has a single-bucket rendering bug.
+- Summary: Request changes: the previous share-link and one-bucket pie issues appear addressed, but the newly added CSV export surfaces need formula-injection hardening before auto-merge.
 - Blocking findings:
 ```json
 [
   {
-    "severity": "critical",
-    "file": "pkg/vertex/sharelinks/sharelinks.go",
-    "line": 67,
-    "issue": "The SI-001/SI-003 security fixes are implemented in pkg/vertex/sharelinks, but that package is not imported by the live share-link service. The production graph share-link path still uses pkg/vertex/graphsvc.ShareLink, has no ExpiresAt field/persistence, checks only Revoked in getViaShareLink, and masks through graphsvc.maskLayerPropertyValues instead of MaskGraphPayload. As written, the PR's expiry-boundary and JSON-decoded masking changes do not affect actual share-link responses.",
-    "suggestion": "Wire these rules into the graphsvc share-link path or move the fixes there: add/persist ExpiresAt, enforce !now.Before(expiresAt) in the HTTP handler, use the cloned masking helper on the live payload shape, and add handler-level BDD tests proving expired links return 410 and masked live responses do not leak properties."
+    "severity": "warning",
+    "file": "web/src/lib/aggregationCsv.ts",
+    "line": 68,
+    "issue": "The new aggregation CSV exporter only applies RFC4180 quoting. User-controlled group/header values that begin with spreadsheet formula prefixes such as =, +, -, @, tab, or CR will be emitted as executable formulas when opened in Excel/LibreOffice, creating a CSV injection risk on the new export surface.",
+    "suggestion": "Add a formula-injection guard to the CSV cell serializer, ideally shared with the object-set diff exporter. Preserve numeric metric values as numbers, but prefix dangerous string cells after leading-whitespace handling with an apostrophe or another accepted text-forcing escape, and add tests for formula-like group/header values."
   },
   {
     "severity": "warning",
-    "file": "web/src/components/aggregation/SimpleChart.tsx",
-    "line": 252,
-    "issue": "Pie rendering builds every slice as a single SVG arc. When there is exactly one positive bucket, sweep is 360 degrees, so the arc start and end points are identical and SVG cannot render a full circle from that path. Selecting pie for a one-bucket aggregation can show a blank pie mark even though data exists.",
-    "suggestion": "Special-case full-circle slices, for example render a <circle> for a 360-degree single slice or split full slices into two 180-degree arcs, and add a test for one-bucket pie charts."
+    "file": "web/src/lib/objectSetDiffCsv.ts",
+    "line": 129,
+    "issue": "The new object-set diff CSV exporter has the same formula-injection gap for primary keys, field names, and object values. Diff data can come from object records controlled by other users, so a downloaded CSV can carry executable spreadsheet formulas.",
+    "suggestion": "Use the same hardened CSV serializer here and cover primaryKey/valueA/valueB cases that start with formula trigger characters, including values that contain leading whitespace before the trigger."
   }
 ]
 ```
+- Recommended fix prompt:
+```text
+Harden the new aggregation and object-set diff CSV exporters against spreadsheet formula injection. Introduce a shared CSV cell serializer or equivalent local helpers that RFC4180-quote cells and force dangerous string cells beginning with =, +, -, @, tab, CR, or leading whitespace before those characters to be treated as text, while preserving numeric values. Add Vitest coverage for formula-like group values, primary keys, field names, and diff values, then run the relevant web tests.
+```
 
 Codebase Patterns:
-- Vertex pure rule packages such as `pkg/vertex/sharelinks` keep transport-agnostic behavior in package-level functions with focused Go tests.
-- For share-link masking, preserve structural graph fields while replacing node property values; callers may reuse the source graph, so masking helpers should return cloned structures.
-- JSON-decoded graph payloads expose arrays as `[]any`; masking helpers that operate on HTTP payloads should support that shape in addition to test-friendly typed slices.
-- Time-boxed authorization checks should use `!now.Before(expiry)` when the expiry instant itself must be closed.
-- Live Vertex graph share-link behavior is in `pkg/vertex/graphsvc`, wired through `Handler.SetShareLinkStore`, `getViaShareLink`, `MemShareLinkStore`, and `PGShareLinkStore`.
+- Web CSV exporters currently build strings in `web/src/lib` and are exercised through component-level BDD tests that inspect the downloaded `Blob` text.
+- Aggregation CSV rows derive string group keys and values from user-controlled bucket data, while metric values can be numeric and should remain number-shaped in the emitted CSV.
+- Object-set diff CSV rows include section, primaryKey, field, valueA, and valueB; primary keys, field names, and object values can originate from object data and need the same cell-level hardening.
+- RFC4180 escaping is local to exporter helpers today; a shared helper is appropriate for the two new CSV export surfaces so formula hardening and quote handling stay consistent.
 
 Selected story:
-- LLM-001 - Wire live Vertex graph share-link expiry and masking
+- LLM-003 - Harden CSV exports against formula injection
 
-## 2026-05-22T18:23:08+08:00 - LLM-001
-- Wired the reviewed share-link security rules into the live `pkg/vertex/graphsvc` HTTP path.
-- Added `ShareLink.ExpiresAt`, nullable PostgreSQL create/scan support, and migration `000212_graph_share_links_expires_at` so existing indefinite links remain compatible while time-boxed links can be enforced.
-- `getViaShareLink` now returns 410 `ShareLinkExpired` for non-zero `ExpiresAt` values where `now >= expiresAt`, before loading or returning the graph payload.
-- Extended the live graphsvc masking helper to mask root `nodes[*].properties` payloads in addition to existing `layers[*]...properties`, preserving graph name, node id, edges, positions, and other structural fields.
+## 2026-05-22T18:51:57+08:00 - LLM-003
+- Hardened the reviewed aggregation and object-set diff CSV export surfaces with shared cell serialization in `web/src/lib/csvCell.ts`.
+- Dangerous string cells beginning with `=`, `+`, `-`, `@`, tab, CR, or benign leading whitespace before those triggers are prefixed with an apostrophe before RFC4180 escaping.
+- Numeric metric/object values remain emitted as number-shaped CSV cells, so negative numbers such as `-42` are not text-prefixed.
+- Aggregation CSV now applies the shared serializer to group headers, metric headers, group values, and metric values.
+- Object-set diff CSV now applies the shared serializer to section, primaryKey, field, valueA, and valueB cells.
 - Files changed:
-  - `pkg/vertex/graphsvc/handler.go`
-  - `pkg/vertex/graphsvc/handler_acl_test.go`
-  - `pkg/vertex/graphsvc/pg_sharing.go`
-  - `pkg/vertex/graphsvc/sharing.go`
-  - `migrations/000212_graph_share_links_expires_at.up.sql`
-  - `migrations/000212_graph_share_links_expires_at.down.sql`
+  - `web/src/lib/csvCell.ts`
+  - `web/src/lib/aggregationCsv.ts`
+  - `web/src/lib/objectSetDiffCsv.ts`
+  - `web/src/lib/__tests__/aggregationCsv.test.ts`
+  - `web/src/lib/__tests__/objectSetDiffCsv.test.ts`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - TDD evidence:
-  - RED compile: `go test ./pkg/vertex/graphsvc -run 'TestGraphsACL_Given_(ShareLinkExpiresAtRequestBoundary_When_GET_Then_410Gone|NodePayloadShareLink_When_GET_Then_NodePropertiesMasked)' -count=1 -v` failed because `graphsvc.ShareLink` had no `ExpiresAt` field.
-  - RED behavior after adding the field only: same command failed because expired live links returned 200 and root node properties leaked `100` / `JFK`.
-  - GREEN targeted: same command passed.
-  - Package gate: `go test ./pkg/vertex/graphsvc -count=1` passed.
-  - Relevant project gate: `go test ./pkg/vertex/... -count=1` passed.
-  - Migration/CI package gate: `go test ./scripts/ci -count=1` passed.
-  - Share-link OpenAPI contract smoke: `go test ./cmd/server -run TestBDD_VertexShareLinksAndWidgetOpenAPIContract -count=1` passed.
-- Codebase Patterns:
-  - Keep graph share-link expiry nullable at the database boundary so existing links remain indefinite unless a caller/store explicitly sets `ExpiresAt`.
-  - Live graph share-link masking must cover both workspace `layers` and graph-shaped `nodes`; masking operates on JSON-decoded `map[string]any` / `[]any` payloads and re-marshals a cloned response payload.
-
-Remaining story:
-- LLM-002 - Render one-bucket pie charts as a full circle
-
-## 2026-05-22T18:24:00+08:00 - LLM-002
-- Rendered single-positive-bucket pie charts as a real SVG full circle instead of a 360-degree arc path whose identical endpoints collapse visually.
-- Preserved existing multi-positive-bucket pie rendering through `path[data-pie-slice]` arcs.
-- Files changed:
-  - `web/src/components/aggregation/SimpleChart.tsx`
-  - `web/src/components/aggregation/__tests__/SimpleChart.test.tsx`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- TDD evidence:
-  - RED targeted: `npm test -- SimpleChart.test.tsx` failed with `expected ... to have a length of 1 but got 0` for `circle[data-pie-full-slice]`.
-  - GREEN targeted: `npm test -- SimpleChart.test.tsx` passed with 4 tests.
-  - Relevant aggregation gate: `npm test -- src/components/aggregation` passed with 5 files and 15 tests.
+  - RED targeted: `npm test -- aggregationCsv.test.ts objectSetDiffCsv.test.ts` failed with both new tests showing dangerous formula-like cells emitted unchanged.
+  - GREEN targeted: `npm test -- aggregationCsv.test.ts objectSetDiffCsv.test.ts` passed with 2 files and 2 tests.
+  - Relevant CSV export gate: `npm test -- src/lib AggregationPage.csvExport.bdd.test.tsx ObjectSetDiffPage.csvExport.bdd.test.tsx` passed with 27 files and 247 tests.
   - TypeScript gate: `npm run typecheck` passed.
 - Codebase Patterns:
-  - SVG pie charts cannot represent a full 360-degree slice as a single arc path because the arc start and end point coincide; use a `<circle>` for exactly one non-zero slice and keep arc paths for partial slices.
+  - Keep CSV hardening before RFC4180 escaping so the apostrophe itself is included in the quoted cell when commas, quotes, CR, or LF require quoting.
+  - Preserve value types until serialization; stringify objects and protect only raw string cells so numeric values remain numeric in exported CSV.
+
+Remaining story:
+- All stories in the active PRD pass.

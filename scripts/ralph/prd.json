@@ -1,80 +1,48 @@
 {
   "project": "Weave self-iteration",
   "branchName": "ralph/self-iteration-20260522-165538",
-  "description": "Focused LLM review repair PRD for PR #46. Scope is restricted to the blocking review findings appended to progress.txt: live Vertex graph share-link expiry/masking wiring and SimpleChart one-bucket pie rendering.",
-  "createdAt": "2026-05-22T18:15:17+08:00",
+  "description": "Focused LLM review repair PRD for PR #46. Scope is restricted to the blocking CSV formula-injection findings appended to progress.txt for the new aggregation and object-set diff export surfaces.",
+  "createdAt": "2026-05-22T18:47:04+08:00",
   "userStories": [
     {
-      "id": "LLM-001",
-      "title": "Wire live Vertex graph share-link expiry and masking",
+      "id": "LLM-003",
+      "title": "Harden CSV exports against formula injection",
       "priority": 1,
-      "area": "pkg/vertex/graphsvc",
-      "asA": "Vertex graph owner sharing a live graph link",
-      "iWant": "production share-link reads to enforce expiry boundaries and mask the live JSON-decoded payload shape",
-      "soThat": "reviewed security rules protect the actual HTTP share-link surface, not only the pure helper package",
+      "area": "web/src/lib",
+      "asA": "user downloading aggregation or object-set diff CSV exports",
+      "iWant": "user-controlled CSV string cells to be forced to text when they look like spreadsheet formulas",
+      "soThat": "opening exported CSV files in spreadsheet software does not execute formulas from group values, primary keys, field names, or object values",
       "acceptanceCriteria": [
         {
           "type": "BDD",
-          "given": "a live graph share link whose ExpiresAt equals the request time",
-          "when": "GET /api/vertex/v1/share-links/{token}/graph is called",
-          "then": "the response is HTTP 410 Gone and the graph payload is not returned"
+          "given": "an aggregation bucket has string group keys or values beginning with =, +, -, @, tab, CR, or leading whitespace before those characters",
+          "when": "the aggregation CSV is built or downloaded",
+          "then": "those string cells are prefixed with an apostrophe before RFC4180 escaping, while numeric metric values remain unprefixed numbers"
         },
         {
           "type": "BDD",
-          "given": "a live graph share link for a graph payload decoded from JSON with node objects under nodes",
-          "when": "an outside viewer fetches the graph through the share-link endpoint",
-          "then": "node property values are masked while graph name, node ids, and other structural fields remain visible"
+          "given": "an object-set diff includes primary keys, field names, or object values beginning with =, +, -, @, tab, CR, or leading whitespace before those characters",
+          "when": "the object-set diff CSV is built or downloaded",
+          "then": "those string cells are prefixed with an apostrophe before RFC4180 escaping while section labels and existing row structure remain unchanged"
         },
         {
           "type": "BDD",
-          "given": "the live share-link store is PostgreSQL-backed",
-          "when": "share links are created and loaded",
-          "then": "ExpiresAt is persisted and scanned without breaking existing revoked-link behavior"
+          "given": "hardened CSV cells also contain commas, quotes, CR, or LF",
+          "when": "the CSV serializers emit the file contents",
+          "then": "RFC4180 quoting remains correct and existing CSV export behavior is preserved"
         }
       ],
       "dependencies": [
-        "pkg/vertex/graphsvc/sharing.go",
-        "pkg/vertex/graphsvc/handler.go",
-        "pkg/vertex/graphsvc/pg_sharing.go",
-        "pkg/vertex/graphsvc/handler_acl_test.go",
-        "pkg/vertex/graphsvc/sharing_test.go",
-        "migrations"
+        "web/src/lib/aggregationCsv.ts",
+        "web/src/lib/objectSetDiffCsv.ts",
+        "web/src/lib/__tests__",
+        "web/src/components/aggregation/__tests__/AggregationPage.csvExport.bdd.test.tsx",
+        "web/src/components/objectsets/__tests__/ObjectSetDiffPage.csvExport.bdd.test.tsx"
       ],
       "verification": [
-        "Targeted graphsvc handler BDD tests for expired live links and JSON-decoded node masking.",
-        "Targeted graphsvc package tests."
-      ],
-      "passes": true
-    },
-    {
-      "id": "LLM-002",
-      "title": "Render one-bucket pie charts as a full circle",
-      "priority": 2,
-      "area": "web/src/components/aggregation",
-      "asA": "aggregation dashboard viewer",
-      "iWant": "pie charts with exactly one positive bucket to render a visible full circle",
-      "soThat": "single-result aggregations do not appear blank when data exists",
-      "acceptanceCriteria": [
-        {
-          "type": "BDD",
-          "given": "a SimpleChart pie chart with exactly one positive bucket",
-          "when": "the chart renders",
-          "then": "the SVG contains a visible full-circle mark for that bucket"
-        },
-        {
-          "type": "BDD",
-          "given": "a SimpleChart pie chart with multiple positive buckets",
-          "when": "the chart renders",
-          "then": "existing slice path rendering is preserved"
-        }
-      ],
-      "dependencies": [
-        "web/src/components/aggregation/SimpleChart.tsx",
-        "web/src/components/aggregation/__tests__/SimpleChart.test.tsx"
-      ],
-      "verification": [
-        "Targeted Vitest regression for one-bucket pie charts.",
-        "Targeted aggregation component tests."
+        "Targeted Vitest regression for aggregation CSV formula-like group keys and values.",
+        "Targeted Vitest regression for object-set diff CSV formula-like primary keys, field names, and values.",
+        "Relevant web CSV export tests and TypeScript gate."
       ],
       "passes": true
     }
