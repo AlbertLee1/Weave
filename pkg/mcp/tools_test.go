@@ -18,6 +18,10 @@ type fakeOmsRepo struct {
 	ontologies         []oms.Ontology
 	listOntologiesErr  error
 	objectTypes        map[string][]oms.ObjectType // ontology rid/apiName -> object types
+	properties         map[string][]oms.Property   // object type rid -> properties
+	listPropertiesErr  map[string]error
+	outgoingLinkTypes  map[string][]oms.LinkType // object type rid -> outgoing links
+	listOutgoingErr    map[string]error
 	actionTypes        map[string][]oms.ActionType
 	listActionTypesErr map[string]error
 	actionLogs         []*oms.ActionLog
@@ -51,6 +55,30 @@ func (f *fakeOmsRepo) ListObjectTypes(ctx context.Context, ontologyRID string) (
 	return nil, nil
 }
 
+func (f *fakeOmsRepo) ListProperties(ctx context.Context, objectTypeRID string) ([]oms.Property, error) {
+	if f.listPropertiesErr != nil {
+		if err := f.listPropertiesErr[objectTypeRID]; err != nil {
+			return nil, err
+		}
+	}
+	if v, ok := f.properties[objectTypeRID]; ok {
+		return v, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeOmsRepo) ListOutgoingLinkTypes(ctx context.Context, objectTypeRID string) ([]oms.LinkType, error) {
+	if f.listOutgoingErr != nil {
+		if err := f.listOutgoingErr[objectTypeRID]; err != nil {
+			return nil, err
+		}
+	}
+	if v, ok := f.outgoingLinkTypes[objectTypeRID]; ok {
+		return v, nil
+	}
+	return nil, nil
+}
+
 func (f *fakeOmsRepo) ListActionTypes(ctx context.Context, ontologyRID string) ([]oms.ActionType, error) {
 	if f.listActionTypesErr != nil {
 		if err := f.listActionTypesErr[ontologyRID]; err != nil {
@@ -75,10 +103,6 @@ func (f *fakeOmsRepo) GetObjectTypeByAPIName(ctx context.Context, ontologyRID, a
 		}
 	}
 	return nil, oms.ErrNotFound
-}
-
-func (f *fakeOmsRepo) ListOutgoingLinkTypes(ctx context.Context, objectTypeRID string) ([]oms.LinkType, error) {
-	return nil, nil
 }
 
 func (f *fakeOmsRepo) GetActionTypeByAPIName(ctx context.Context, ontologyRID, apiNameOrRID string) (*oms.ActionType, error) {
@@ -147,9 +171,11 @@ func (stubPublisher) Publish(batch *funnel.EditBatch) (uint64, error) { return 0
 func newTestServer(t *testing.T) (*Server, *fakeOmsRepo, *fakeOssService, *actions.Executor) {
 	t.Helper()
 	repo := &fakeOmsRepo{
-		ontologies:  []oms.Ontology{{RID: "ri.weave.main.ontology.demo", APIName: "demo", DisplayName: "Demo"}},
-		objectTypes: map[string][]oms.ObjectType{},
-		actionTypes: map[string][]oms.ActionType{},
+		ontologies:        []oms.Ontology{{RID: "ri.weave.main.ontology.demo", APIName: "demo", DisplayName: "Demo"}},
+		objectTypes:       map[string][]oms.ObjectType{},
+		properties:        map[string][]oms.Property{},
+		outgoingLinkTypes: map[string][]oms.LinkType{},
+		actionTypes:       map[string][]oms.ActionType{},
 	}
 	svc := &fakeOssService{}
 	exec := actions.NewExecutor(repo, stubPublisher{})

@@ -419,9 +419,10 @@ func (s *Server) validateSubscribableResource(ctx context.Context, uri string) e
 }
 
 // readObjectType resolves <ontologyApiName>/<objectTypeApiName> via the OMS
-// repository and returns the ObjectType row JSON-encoded. Unknown ontology
-// and unknown ObjectType both produce errors with the substring 'object
-// type' so callers can match on it deterministically (OSV2-307 acceptance).
+// repository and returns the ObjectType schema bundle JSON-encoded. Unknown
+// ontology and unknown ObjectType both produce errors with the substring
+// 'object type' so callers can match on it deterministically (OSV2-307
+// acceptance).
 func (s *Server) readObjectType(ctx context.Context, ontologyAPIName, objectTypeAPIName string) (string, error) {
 	if s.oms == nil {
 		return "", errors.New("oms repository not configured")
@@ -434,9 +435,23 @@ func (s *Server) readObjectType(ctx context.Context, ontologyAPIName, objectType
 	if err != nil || ot == nil {
 		return "", fmt.Errorf("object type %q not found under ontology %q", objectTypeAPIName, ontologyAPIName)
 	}
-	buf, err := json.MarshalIndent(ot, "", "  ")
+	props, err := s.oms.ListProperties(ctx, ot.RID)
 	if err != nil {
-		return "", fmt.Errorf("marshal object type: %w", err)
+		return "", fmt.Errorf("list properties for object type %q: %w", objectTypeAPIName, err)
+	}
+	ot.Properties = props
+	outgoing, err := s.oms.ListOutgoingLinkTypes(ctx, ot.RID)
+	if err != nil {
+		return "", fmt.Errorf("list outgoing link types for object type %q: %w", objectTypeAPIName, err)
+	}
+	out := map[string]any{
+		"objectType":        ot,
+		"properties":        props,
+		"outgoingLinkTypes": outgoing,
+	}
+	buf, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal object type schema: %w", err)
 	}
 	return string(buf), nil
 }
@@ -477,6 +492,13 @@ func (s *Server) readOntology(ctx context.Context, rid string) (string, error) {
 	objectTypes, err := s.oms.ListObjectTypes(ctx, rid)
 	if err != nil {
 		return "", fmt.Errorf("list object types: %w", err)
+	}
+	for i := range objectTypes {
+		props, err := s.oms.ListProperties(ctx, objectTypes[i].RID)
+		if err != nil {
+			return "", fmt.Errorf("list properties for object type %q: %w", objectTypes[i].APIName, err)
+		}
+		objectTypes[i].Properties = props
 	}
 	linkTypes, err := s.oms.ListLinkTypes(ctx, rid)
 	if err != nil {
