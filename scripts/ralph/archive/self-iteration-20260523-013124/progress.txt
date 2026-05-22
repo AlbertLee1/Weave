@@ -1,0 +1,122 @@
+# Ralph Progress Log
+Started: 2026-05-23T00:48:44+08:00
+Integration branch: ralph/self-iteration-20260522-233015
+Archived previous completed state: scripts/ralph/archive/self-iteration-20260523-004844/
+
+## Codebase Patterns
+- Use `httputil.ReadJSON(r, &req)` for Go HTTP handlers that accept JSON request bodies and must reject concatenated/trailing JSON values at the API boundary.
+- Frontend BDD tests use `*.bdd.test.tsx` under the owning component's `__tests__` folder.
+- BrowserPage search request behavior is covered in `web/src/components/browser/__tests__/BrowserPage.search.bdd.test.tsx` with MSW and captured POST bodies.
+- Browser search highlights are documented in OpenAPI as `SearchObjectsRequest.highlight` and returned on rows as `_highlights: { field: [snippet...] }`.
+- Render API highlight snippets by parsing only the backend's `<mark>` / `</mark>` delimiters into React elements; leave all other snippet text as text nodes instead of using `dangerouslySetInnerHTML`.
+- Browser facet fields should prefer detailed `Property[]` metadata once available because it carries `isSearchable`, `isArray`, and `baseType`; compact `objectType.properties` remains the fallback while detailed metadata is loading or unavailable.
+- Saved Browser view definitions are frontend-owned opaque JSON; adding presentation state is a type-only frontend contract change and does not require a backend API change.
+- BrowserPage should validate saved presentation mode values before applying them and should treat missing `viewMode` as the table fallback for legacy saved definitions.
+- CI contract BDD tests live in `scripts/ci/ci_workflow_bdd_test.go` and should guard workflow/tooling expectations that are easy to miss in local verifier subsets.
+
+## Preserved LLM Review Auto-Fix Context
+- PR: https://github.com/AlbertLee1/Weave/pull/50
+- Branch: ralph/self-iteration-20260522-233015
+- Reviewed HEAD: 37dbbe9db3e8
+- Review status: blocked
+- Summary: Blocked on failing GitHub Go CI; no additional blocking code issue identified from the local diff review.
+- Blocking findings:
+```json
+[
+  {
+    "severity": "critical",
+    "file": ".github/workflows/ci.yml",
+    "line": 22,
+    "issue": "The GitHub Go CI job for this PR is red. The local verifier only ran gofmt, make test, make web-test, and make web-build, so it did not cover CI-only gates such as go vet, golangci-lint, race+coverage, covercheck, contract tests, and govulncheck.",
+    "suggestion": "Do not auto-merge until the Go workflow is green. Inspect the failed GitHub job log, fix the failing step, and rerun the PR workflow successfully."
+  }
+]
+```
+- Recommended fix prompt:
+```text
+Inspect the failed Go CI job for PR #50/run 26298559112, identify the failing step, fix the root cause, then rerun the full Go CI-equivalent gates including vet, golangci-lint, race+coverage/covercheck, contract tests, and govulncheck.
+```
+
+## Initial Inspection
+- Branch verified: `ralph/self-iteration-20260522-233015`.
+- Prior PRD matched this branch and all stories had `passes: true`, so a new focused auto-fix PRD was created.
+- Root Ralph symlinks are intact: `prd.json -> scripts/ralph/prd.json`, `progress.txt -> scripts/ralph/progress.txt`.
+- GitHub PR checks for PR #50 currently show Go CI failing and Web CI passing.
+- GitHub run 26298559112 failed only at `govulncheck` after build, vet, golangci-lint, race+coverage, covercheck, and contract tests passed.
+- Latest PR check run 26300065159 fails at the same `govulncheck` step.
+- Failure evidence: `GO-2026-5026` in `golang.org/x/net/idna`; module `golang.org/x/net@v0.54.0`; fixed in `golang.org/x/net@v0.55.0`; trace `internal/cliclient/client.go:996:24: cliclient.Client.PostJSONRaw calls http.Client.Do, which eventually calls idna.ToASCII`.
+- `go list -m -u -json golang.org/x/net` shows current `v0.54.0` and update `v0.55.0`.
+- `go mod why -m golang.org/x/net` shows the module is pulled through `github.com/liyang/weave/pkg/xlsxstream -> github.com/xuri/excelize/v2 -> golang.org/x/net/html/charset`.
+- Docs inspected: `docs/cli.md` confirms `internal/cliclient` powers the CLI's HTTP wrapper.
+- Tests inspected: `scripts/ci/ci_workflow_bdd_test.go` already guards govulncheck workflow wiring and package scope.
+- Dogfood output inspected: 2026-05-17 ontology/web UI dogfood reports contain previously tracked DOG findings; no higher-priority review auto-fix target than the CI failure.
+
+## Selected Story
+- RCI-001 Govulncheck uses fixed x/net release.
+- Rationale: this is the sole blocking LLM review finding and the current GitHub Go CI failure is a vulnerability-gate failure with a fixed dependency release available. Scope is limited to dependency/test/Ralph state needed to preserve the govulncheck gate and clear the reviewed failure.
+
+---
+
+## 2026-05-23T00:59:33+08:00 - RCI-001
+- Implemented the focused CI review repair for the failing `govulncheck` gate.
+- Added a BDD guard in `scripts/ci/ci_workflow_bdd_test.go` requiring `golang.org/x/net >= v0.55.0`, the fixed version reported by GitHub CI for `GO-2026-5026`.
+- Updated `golang.org/x/net` from `v0.54.0` to `v0.55.0`; `go get` also advanced `golang.org/x/sys` from `v0.44.0` to `v0.45.0` as a transitive module update.
+- Files changed:
+  - `go.mod`
+  - `go.sum`
+  - `scripts/ci/ci_workflow_bdd_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+  - `scripts/ralph/archive/self-iteration-20260523-004844/prd.json`
+  - `scripts/ralph/archive/self-iteration-20260523-004844/progress.txt`
+- TDD evidence:
+  - RED: `go test ./scripts/ci -run TestBDD_GovulncheckDependencyGraphUsesFixedXNetForGO20265026 -v` failed with `golang.org/x/net must be at or above v0.55.0 so govulncheck clears GO-2026-5026, got v0.54.0`.
+  - GREEN: the same command passed after `go get golang.org/x/net@v0.55.0`.
+- Verification:
+  - `go test ./scripts/ci -v` passed.
+  - `make vulncheck` passed with `No vulnerabilities found` and `Your code is affected by 0 vulnerabilities`.
+  - `go build $(./scripts/ci/go-packages.sh --build)` passed.
+  - `go vet $(./scripts/ci/go-packages.sh)` passed.
+  - Raw `golangci-lint run --timeout=5m` through pinned v2.11.4 reported the repository's historical lint backlog, matching the existing workflow contract that CI runs with `only-new-issues: true`.
+  - CI-equivalent PR-diff lint passed: `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m --new-from-rev=b70f46686fb1ba6370baa8ecad012c62bed79072` returned `0 issues`.
+  - `go test -race -coverprofile=coverage.out -covermode=atomic $(./scripts/ci/go-packages.sh)` passed.
+  - `go tool cover -func=coverage.out` passed; total statement coverage was `64.8%`.
+  - `go run ./cmd/covercheck -profile coverage.out -thresholds coverage/thresholds.json -baseline coverage/baseline.json -md coverage/report.md -output coverage/report.json` passed with `Coverage gate: PASS`.
+  - `make test-contract` passed.
+  - `go list -m -json golang.org/x/net` reports `Version: v0.55.0`.
+- **Learnings for future iterations:**
+  - When GitHub CI uses `golangci-lint-action` with `only-new-issues: true`, the local equivalent should use the pinned linter with `--new-from-rev=<merge-base>` to avoid conflating story changes with historical lint debt.
+  - Security-gate dependency repairs should add a small CI BDD guard for the fixed module floor so the same vulnerability class does not silently regress.
+
+
+## LLM review auto-fix context - 2026-05-23T01:29:18+08:00
+- PR: https://github.com/AlbertLee1/Weave/pull/50
+- Branch: ralph/self-iteration-20260522-233015
+- Reviewed HEAD: b0e1356a54dd
+- Review status: request_changes
+- Summary: Request changes: most ambiguous-body fixes are consistent, but one tenant admin write and chunked permission-decision bodies still bypass the single-JSON-value contract.
+- Blocking findings:
+```json
+[
+  {
+    "severity": "warning",
+    "file": "pkg/tenants/handlers.go",
+    "line": 344,
+    "issue": "POST /api/admin/tenant-usage/{tenant}/{metric} is still a tenant-admin write, but AddUsage still uses json.NewDecoder(r.Body).Decode(&req). That accepts the first JSON value and ignores trailing values, so a concatenated body such as {\"delta\":1}{\"delta\":999} records usage instead of returning InvalidRequestBody. This leaves P2A-002 incomplete and inconsistent with the quota create/update fixes.",
+    "suggestion": "Switch AddUsage to httputil.ReadJSON, remove the now-unused encoding/json import if applicable, and add a BDD test for concatenated JSON that asserts 400 and no usage mutation."
+  },
+  {
+    "severity": "warning",
+    "file": "pkg/permissionrequests/handlers.go",
+    "line": 341,
+    "issue": "Permission decision bodies are only parsed when ContentLength > 0. Real chunked requests have ContentLength == -1 even with a body, so a non-empty or concatenated approve/reject JSON body can bypass ReadJSON and still commit the decision with an empty note. That leaves an ambiguous-body gap in P2A-001 for real HTTP clients.",
+    "suggestion": "Use a capped optional JSON reader that treats truly empty bodies as no note but validates any present bytes as exactly one JSON value. Add a regression test with ContentLength = -1 and concatenated JSON asserting 400 and that the request remains pending."
+  }
+]
+```
+- Recommended fix prompt:
+```text
+Close the remaining ambiguous JSON body gaps: convert tenants AddUsage to httputil.ReadJSON with no mutation on concatenated bodies, and make permission request approve/reject validate optional chunked bodies instead of gating only on ContentLength > 0; add BDD regressions for both.
+```
+
+Instruction for Codex/Ralph: treat the LLM review blocking findings above as the highest-priority repair target. Create or update a focused PRD story on this same branch, fix ONLY the review findings with TDD/BDD evidence, commit the fix, and leave the PR branch ready for Hermes verifier, PR update, CI rerun, and LLM review rerun.

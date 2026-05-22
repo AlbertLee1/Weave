@@ -71,6 +71,43 @@ func TestHandler_AddUsage_BumpsCounterAndFiresAlerts(t *testing.T) {
 	}
 }
 
+func TestBDD_HandlerRejectsAmbiguousAddUsageJSONBodies_RRF001(t *testing.T) {
+	now := time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC)
+	h, r, _, quotas := newAlertingHandlerRouter(t, now)
+
+	if err := quotas.CreateQuota(context.Background(), &Quota{
+		Tenant:     "acme",
+		MaxObjects: 100,
+	}); err != nil {
+		t.Fatalf("CreateQuota: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, authedRawReq(http.MethodPost, "/api/admin/tenant-usage/acme/objects", `{"delta":1} {"delta":999}`))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("AddUsage concatenated JSON: want 400, got %d (%s)", w.Code, w.Body.String())
+	}
+	var apiErr struct {
+		ErrorName string `json:"errorName"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &apiErr); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if apiErr.ErrorName != "InvalidRequestBody" {
+		t.Fatalf("errorName: want InvalidRequestBody, got %q", apiErr.ErrorName)
+	}
+
+	rows, err := h.manager.MonthlyUsageFor(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("MonthlyUsageFor: %v", err)
+	}
+	for _, row := range rows {
+		if row.Metric == MetricObjects && row.Amount != 0 {
+			t.Fatalf("ambiguous AddUsage must not mutate objects usage, got %+v", row)
+		}
+	}
+}
+
 func TestHandler_AddUsage_RejectsInvalidMetric(t *testing.T) {
 	now := time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC)
 	_, r, _, _ := newAlertingHandlerRouter(t, now)

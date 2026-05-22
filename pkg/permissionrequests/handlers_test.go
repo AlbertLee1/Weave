@@ -205,6 +205,71 @@ func TestBDD_HandlerRejectsAmbiguousJSONBodies_P2A001(t *testing.T) {
 			t.Fatalf("ambiguous decision must leave request pending, got %+v", got)
 		}
 	})
+
+	t.Run("chunked decision rejects concatenated JSON without deciding the request", func(t *testing.T) {
+		for _, action := range []string{"approve", "reject"} {
+			t.Run(action, func(t *testing.T) {
+				store := NewMemoryStore()
+				if err := store.Create(context.Background(), &Request{
+					ID: "p1", TargetRID: targetRID, RequestedBy: "user:bob",
+					Reason: "need access", Status: StatusPending,
+				}); err != nil {
+					t.Fatalf("seed request: %v", err)
+				}
+				r := newTestRouter(store, adminUser())
+				body := `{"note":"first"} {"note":"second"}`
+				req := httptest.NewRequest(http.MethodPost, "/api/v2/permission-requests/p1/"+action, strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.ContentLength = -1
+				req.TransferEncoding = []string{"chunked"}
+				w := httptest.NewRecorder()
+				r.ServeHTTP(w, req)
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("%s chunked concatenated JSON: want 400, got %d (%s)", action, w.Code, w.Body.String())
+				}
+				var apiErr struct {
+					ErrorName string `json:"errorName"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &apiErr); err != nil {
+					t.Fatalf("decode error response: %v", err)
+				}
+				if apiErr.ErrorName != "InvalidRequestBody" {
+					t.Fatalf("errorName: want InvalidRequestBody, got %q", apiErr.ErrorName)
+				}
+				got, err := store.Get(context.Background(), "p1")
+				if err != nil {
+					t.Fatalf("get request: %v", err)
+				}
+				if got.Status != StatusPending || got.DecidedBy != "" || got.DecisionNote != "" || got.DecidedAt != nil {
+					t.Fatalf("ambiguous chunked decision must leave request pending, got %+v", got)
+				}
+			})
+		}
+	})
+
+	t.Run("approve accepts an empty decision body", func(t *testing.T) {
+		store := NewMemoryStore()
+		if err := store.Create(context.Background(), &Request{
+			ID: "p1", TargetRID: targetRID, RequestedBy: "user:bob",
+			Reason: "need access", Status: StatusPending,
+		}); err != nil {
+			t.Fatalf("seed request: %v", err)
+		}
+		r := newTestRouter(store, adminUser())
+		req := httptest.NewRequest(http.MethodPost, "/api/v2/permission-requests/p1/approve", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("approve empty body: want 200, got %d (%s)", w.Code, w.Body.String())
+		}
+		got, err := store.Get(context.Background(), "p1")
+		if err != nil {
+			t.Fatalf("get request: %v", err)
+		}
+		if got.Status != StatusApproved || got.DecisionNote != "" {
+			t.Fatalf("empty decision body should approve with empty note, got %+v", got)
+		}
+	})
 }
 
 func TestHandler_GetScopedToRequesterOrApprover(t *testing.T) {

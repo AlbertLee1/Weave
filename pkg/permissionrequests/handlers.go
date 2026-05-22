@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -160,6 +163,30 @@ type createRequest struct {
 
 type decisionRequest struct {
 	Note string `json:"note,omitempty"`
+}
+
+func readOptionalJSON(r *http.Request, v interface{}) error {
+	if r.Body == nil {
+		return nil
+	}
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(nil, r.Body, httputil.MaxBodySize)
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(v); err != nil {
+		if err == io.EOF {
+			return nil
+		}
+		return err
+	}
+
+	var extra interface{}
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("request body must contain a single JSON value")
+		}
+		return fmt.Errorf("request body must contain a single JSON value: %w", err)
+	}
+	return nil
 }
 
 type listResponse struct {
@@ -338,13 +365,11 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, status string) 
 	}
 	id := chi.URLParam(r, "id")
 	var req decisionRequest
-	if r.ContentLength > 0 {
-		if err := httputil.ReadJSON(r, &req); err != nil {
-			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
-				"reason": err.Error(),
-			}))
-			return
-		}
+	if err := readOptionalJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
 	}
 	if err := ValidateReason(req.Note); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidPermissionRequestNote", map[string]string{
