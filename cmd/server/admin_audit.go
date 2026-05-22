@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -34,11 +35,19 @@ func decodeAuditCursor(s string) (auditPageCursor, error) {
 	if err != nil {
 		return auditPageCursor{}, err
 	}
-	var c auditPageCursor
-	if err := json.Unmarshal(data, &c); err != nil {
+	var wire struct {
+		Offset *int `json:"o"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return auditPageCursor{}, err
 	}
-	return c, nil
+	if wire.Offset == nil {
+		return auditPageCursor{}, errors.New("audit cursor missing offset")
+	}
+	if *wire.Offset < 0 {
+		return auditPageCursor{}, errors.New("audit cursor offset must be non-negative")
+	}
+	return auditPageCursor{Offset: *wire.Offset}, nil
 }
 
 // auditEventsResponse is the JSON shape of the list endpoint.
