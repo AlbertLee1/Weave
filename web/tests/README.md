@@ -118,6 +118,9 @@ npx playwright test tests/
 
 # Run only the smoke subset
 npx playwright test --grep @smoke
+
+# Match CI's list-only discovery gate for the BDD suite
+npx playwright test --list tests/
 ```
 
 The Playwright config (`web/playwright.config.ts`) discovers both
