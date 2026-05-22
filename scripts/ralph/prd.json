@@ -1,27 +1,62 @@
 {
-  "project": "Weave self-iteration LLM review repair",
-  "branchName": "ralph/self-iteration-20260521-171221",
-  "description": "Focused repair PRD for the blocking LLM review finding on the Ralph self-iteration integration branch.",
+  "project": "Weave parallel2 self-iteration",
+  "branchName": "ralph/self-iteration-20260522-123354",
+  "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
   "userStories": [
     {
-      "id": "RLLM-001",
-      "title": "Harden MCP Resource List Pagination",
-      "priority": 1,
-      "area": "MCP backend",
-      "story": "As a Weave MCP client operator, I want resources/list pagination to reject unsafe page-size inputs before slicing so crafted cursors cannot panic the public MCP endpoint.",
+      "id": "P2A-001",
+      "title": "Repair RLS Performance Gate Flake",
+      "priority": "P0",
+      "status": "completed",
+      "passes": true,
+      "story": "As a backend maintainer, I want the CEL row-level-security performance gate to remain meaningful without failing under normal package-suite CPU contention, so stream verification can reliably distinguish regressions from test-environment variance.",
       "acceptanceCriteria": [
-        "Given a resources/list request with a valid-looking cursor and an unsafe huge pageSize, when it is posted to the MCP HTTP transport, then the server returns a JSON-RPC invalid params response instead of panicking.",
-        "Given a resources/list request that resumes from a cursor near the end of the resource catalog, when the requested pageSize is larger than the remaining catalog length but within policy, then pagination returns the safe final page without overflow-prone arithmetic.",
-        "Given a resources/list cursor carrying an unsafe decoded pageSize, when the request omits an explicit pageSize, then cursor decoding rejects it with invalid params.",
-        "Given the Ralph loop state, when the repair is verified, then this story is marked passes=true and progress records the review evidence and verification commands."
+        {
+          "scenario": "Focused RLS performance gate remains enforced",
+          "given": "the pkg/security CEL RLS evaluator test suite runs in standard, non-instrumented mode",
+          "when": "`go test ./pkg/security -run '^TestRLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` is executed",
+          "then": "the test logs the selected standard profile and passes with cache stats showing warm-cache hits"
+        },
+        {
+          "scenario": "Full package gate is not blocked by the RLS performance test",
+          "given": "the repository runs the Go package list used by CI",
+          "when": "`go test $(./scripts/ci/go-packages.sh)` is executed",
+          "then": "the command exits successfully or exposes a different unrelated failure, and `pkg/security` no longer fails `TestRLSEvaluator_PerformanceGate` due only to wall-clock variance"
+        },
+        {
+          "scenario": "Instrumented CI profile stays tolerant of race and coverage overhead",
+          "given": "race or coverage instrumentation is active",
+          "when": "the RLS perf profile helper is evaluated",
+          "then": "it keeps the lower-iteration, wider-budget instrumented profile"
+        }
+      ],
+      "dependencies": [],
+      "evidenceRequired": [
+        "Baseline failure output from `go test $(./scripts/ci/go-packages.sh)`",
+        "Targeted red/green output for the adjusted RLS performance profile",
+        "Targeted `pkg/security` verification",
+        "Relevant Go package gate evidence after the repair"
+      ],
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260522-123354-A"
+    },
+    {
+      "id": "P2B-001",
+      "title": "Admin Performance Route Alias",
+      "priority": 1,
+      "story": "As an operator using browser dogfood navigation, I want the label-derived /admin/performance URL to resolve to the Performance Dashboard so direct typing and bookmarks do not fall through to the Not Found page.",
+      "acceptanceCriteria": [
+        "Given an authenticated admin starts at /admin/performance, when the SPA router evaluates the route, then it redirects to /admin/perf and renders the Performance Dashboard heading.",
+        "Given an authenticated admin starts at /admin/performance, when the page renders, then the Not Found page is not mounted.",
+        "Given the existing dogfood alias suite runs, when route aliases are checked, then /admin/performance is covered alongside the other label-derived aliases."
       ],
       "dependencies": [
-        "pkg/mcp/resources.go",
-        "pkg/mcp/http_transport.go",
-        "pkg/mcp/resources_list_cursor_p2a002_test.go",
-        "LLM review request_changes on PR #42"
+        "web/src/App.tsx",
+        "web/src/components/__tests__/route-aliases.performance.bdd.test.tsx"
       ],
-      "passes": true
+      "passes": true,
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260522-123354-B"
     }
   ]
 }

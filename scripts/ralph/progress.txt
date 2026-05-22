@@ -1,76 +1,98 @@
-# Ralph Progress Log
-Started: 2026-05-21T18:38:42+08:00
-Branch: ralph/self-iteration-20260521-171221
+# Ralph Progress Log - Parallel2 Integration
+Integrated: 2026-05-22T12:56:04+08:00
+Integration branch: ralph/self-iteration-20260522-123354
 
-Archived prior all-passing state:
-- scripts/ralph/archive/self-iteration-20260521-183842/prd.json
-- scripts/ralph/archive/self-iteration-20260521-183842/progress.txt
+## Stream A: ralph/self-iteration-20260522-123354-A
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-123354-A
+HEAD: 826072a447b2
 
-## Baseline Inspection
-- Verified branch with `git branch --show-current`: ralph/self-iteration-20260521-171221.
-- Existing PRD belonged to this branch, but all stories had `passes: true`.
-- A new `LLM review auto-fix context` was appended to the live progress file, so this run created a focused review-repair PRD and preserved the review evidence below.
-- GitHub Actions current PR CI checked with `gh run list --branch ralph/self-iteration-20260521-171221 --limit 5`: latest visible run 26220348402 completed successfully after the previous CI lint repair; earlier run 26218880007 failed on misspell and was repaired by RCI-001.
-- Scope is intentionally limited to the blocking LLM review finding in MCP resources/list pagination.
+# Ralph Progress Log - Parallel2 Stream A
+Started: 2026-05-22T12:40:21+08:00
+Integration branch: ralph/self-iteration-20260522-123354
+Stream branch: ralph/self-iteration-20260522-123354-A
+Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
 
-## LLM Review Auto-Fix Evidence
-- PR: https://github.com/AlbertLee1/Weave/pull/42
-- Branch: ralph/self-iteration-20260521-171221
-- Reviewed HEAD: 6f11ec181858
-- Review status: request_changes
-- Summary: Request changes: the new resources/list cursor path has an overflow-triggered panic/DoS risk. Local verifier evidence was provided, but GitHub checks snapshot reports no checks.
-- Blocking finding: `pkg/mcp/resources.go:201` uses `start+params.PageSize` without bounding PageSize or doing overflow-safe arithmetic. Because cursors are base64 JSON and only require `afterUri` to start with `weave://`, a client can craft a valid-looking cursor plus `pageSize=MaxInt`. When `start` is non-zero, `start+pageSize` overflows, the comparison is bypassed, and `resources[start:end]` / `resources[end-1]` can panic on the public `/mcp` endpoint instead of returning a JSON-RPC error.
-- Required focus: validate or cap pageSize from params and decoded cursors, compute pagination against remaining resources instead of `start+pageSize`, add regression coverage for crafted cursor plus huge pageSize returning a JSON-RPC error or safe final page without panic.
+## Baseline Evidence
+- Branch verified: `ralph/self-iteration-20260522-123354-A`.
+- Prior PRD/progress had no stories and was archived under `scripts/ralph/archive/self-iteration-20260522-124021/`.
+- Root symlinks verified before archive: `prd.json -> scripts/ralph/prd.json`, `progress.txt -> scripts/ralph/progress.txt`.
+- `cmd/server/embed.go` already avoids direct `web/dist` embedding and `cmd/server/embed_ci_bdd_test.go` covers fresh checkout builds.
+- `go test $(./scripts/ci/go-packages.sh)` failed in `pkg/security`:
+  - `TestRLSEvaluator_PerformanceGate`
+  - profile `standard`, iterations `1000000`
+  - cold `84.515375ms`, warm `87.866459ms`
+  - decision cache stats `{Hits:1999950 Misses:50 Size:50}`
+  - compile stats `compileHits=10 compileMisses=10`
+  - failure: warm pass exceeded 50ms budget.
+- Targeted reproduction checks:
+  - `go test ./pkg/security -run TestRLSEvaluator_PerformanceGate -count=3 -v` passed; warm durations `40.437417ms`, `35.409709ms`, `48.33225ms`.
+  - `go test ./pkg/security -run '^TestRLSEvaluator_PerformanceGate$' -count=20 -v` passed; warm durations generally `35ms-42ms`, one cold run at `55.643041ms`.
+  - `go test -cover ./pkg/security -run '^TestRLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` passed using profile `instrumented`.
+  - `go test -race ./pkg/security -run '^TestRLSPerfProfile|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` passed using profile `instrumented`.
+  - `go test ./pkg/security -run '^$' -bench '^BenchmarkRLSEvaluator_Warm$' -benchmem -count=5` reported `36.68ns/op` to `41.98ns/op`, `0 B/op`, `0 allocs/op`.
 
 ## Current Story
-- Selected RLLM-001 - Harden MCP Resource List Pagination because the LLM review blocking finding is the highest-priority gate.
+- P2A-001 Repair RLS Performance Gate Flake: completed.
 
-## RLLM-001 - Harden MCP Resource List Pagination
-Status: PASS
-
-### Root Cause
-- Investigation target: `pkg/mcp/resources.go` currently accepts any non-negative `pageSize` from request params or decoded cursors.
-- Failure path: with a valid cursor whose `afterUri` sorts before a real resource, `start` becomes non-zero; then `start + params.PageSize` can overflow for `math.MaxInt`, leading to unsafe slice bounds.
-
-### Red
-- Added `TestBDD_HTTPTransportResourcesListRejectsUnsafePageSizeCursor_RLLM001` for the public MCP HTTP transport with a valid-looking cursor and `pageSize=MaxInt`.
-- Added `TestResourcesList_GivenCursorWithUnsafeDecodedPageSize_WhenListThenInvalidParams_RLLM001` for decoded cursor page-size validation.
-- Command: `go test ./pkg/mcp -run 'TestBDD_HTTPTransportResourcesListRejectsUnsafePageSizeCursor_RLLM001|TestResourcesList_GivenCursorWithUnsafeDecodedPageSize_WhenListThenInvalidParams_RLLM001' -count=1 -v`
-- Result: failed as expected with `panic: runtime error: index out of range [9223372036854775807] with length 1` from `pkg/mcp/resources.go:205`.
-
-### Green
-- Added `maxResourcePageSize = 500` and reject request `pageSize` values above that cap with JSON-RPC `CodeInvalidParams`.
-- Applied the same cap to decoded cursor `pageSize` values so tampered opaque cursors cannot carry unsafe pagination state.
-- Replaced `start + params.PageSize >= len(resources)` with `remaining := len(resources) - start` and `params.PageSize >= remaining`, so safe page sizes larger than the remaining catalog return the final page without overflow-prone arithmetic.
-- Added `TestResourcesList_GivenCursorNearEndAndSafeLargePageSize_WhenListThenReturnsFinalPage_RLLM001` to lock the safe final-page behavior.
-
-### Verification
-- `go test ./pkg/mcp -run 'RLLM001' -count=1 -v` -> pass for all three RLLM-001 tests.
-- `go test ./pkg/mcp -count=1` -> pass.
-- `go test ./cmd/server -run TestMCP -count=1` -> pass.
-- `git diff --check` -> pass.
-- `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --new-from-rev d4877d2056503b6cecf5f3afbac49c1f00abf8c3 --timeout=5m` -> pass, `0 issues`.
-- `go test ./... -count=1` -> pass.
-
-### Files Changed
-- `pkg/mcp/resources.go`
-- `pkg/mcp/http_transport_test.go`
-- `pkg/mcp/resources_list_cursor_p2a002_test.go`
-- `scripts/ralph/prd.json`
-- `scripts/ralph/progress.txt`
-- `scripts/ralph/archive/self-iteration-20260521-183842/prd.json`
-- `scripts/ralph/archive/self-iteration-20260521-183842/progress.txt`
-
-### Reusable Learning
-- MCP resource-list cursors are opaque to clients but still attacker-controlled at the protocol boundary; validate decoded cursor fields with the same policy as request params.
-- Pagination arithmetic should compare requested size against `remaining := len(items) - start` before computing `end`, not add untrusted size to `start` inside the bounds check.
+## Implementation Evidence - P2A-001
+- RED: `go test $(./scripts/ci/go-packages.sh)` failed before changes in `pkg/security` with `TestRLSEvaluator_PerformanceGate`; warm pass `87.866459ms` exceeded the `50ms` standard budget while decision cache stats showed `{Hits:1999950 Misses:50 Size:50}`.
+- Root cause: the evaluator cache semantics were correct, but the warm-cache hot path had little margin under package-suite CPU contention. Targeted repetitions passed, and benchmark output before the change was `36.68ns/op` to `41.98ns/op`, `0 B/op`, `0 allocs/op`.
+- Change: replaced the `decisionKey` hot path's per-call `fnv.New64a` hasher with direct FNV-1a byte mixing, preserving the canonical byte order for `(userID, rowKey, ruleSetSig)`.
+- Regression guard: added `TestCELEvaluator_DecisionKeyMatchesCanonicalFNV` to assert the direct mixer matches the canonical FNV-1a implementation.
+- Verification:
+  - `go test ./pkg/security -run '^TestCELEvaluator_DecisionKeyMatchesCanonicalFNV$|^TestRLSEvaluator_PerformanceGate$' -count=1 -v` passed; perf gate logged warm `33.804375ms`.
+  - `go test ./pkg/security` passed.
+  - `go test ./pkg/security -run '^$' -bench '^BenchmarkRLSEvaluator_Warm$' -benchmem -count=5` passed; after change `34.02ns/op` to `38.18ns/op`, `0 B/op`, `0 allocs/op`.
+  - `go test $(./scripts/ci/go-packages.sh)` passed after the change.
+  - `go test -race -coverprofile=/tmp/weave-security-coverage.out -covermode=atomic ./pkg/security` passed with `73.9%` statement coverage.
+- Files changed:
+  - `pkg/security/cel_evaluator.go`
+  - `pkg/security/cel_evaluator_test.go`
 
 ## Codebase Patterns
-- MCP server dispatch lives in `pkg/mcp/server.go`; method-specific resource behavior lives in `pkg/mcp/resources.go`.
-- MCP initialize capabilities are locked by both package tests and `scripts/ci/ci_workflow_bdd_test.go` string checks, so docs/status tests must be updated with server changes.
-- MCP resource subscription should validate subscribes against the live resource catalog, but unsubscribe should remain idempotent so clients can clean up after resource deletion.
-- MCP `resources/list` accepts optional `pageSize` and opaque `cursor`; cursors resume after the previous page's last URI, so the resource catalog must stay URI-sorted before pagination.
-- `cmd/weave-mcp` bridge options live in `http_bridge.go`; env-to-option wiring lives in `main.go`, and `scripts/ci/ci_workflow_bdd_test.go` has string guards that must follow new bridge env contracts.
-- Frontend component tests use Vitest + React Testing Library under `web/src/components/**/__tests__`.
-- React i18n uses a singleton initialized at `web/src/i18n/index.ts`; component copy should prefer `useTranslation()`.
-- Count-summary UI copy in admin pages should format `0` with plural nouns and reserve singular nouns for exactly `1`.
+- `internal/testprofile.Instrumented(testing.CoverMode())` selects wider test profiles when race or coverage instrumentation distorts wall-clock performance gates.
+- `pkg/security` keeps CEL RLS performance coverage in normal Go tests and exposes focused benchmarks for raw hot-path timing.
+- Hot-path hash changes should preserve canonical FNV byte order with explicit tests when cache keys may already be materialized or compared indirectly.
+
+
+---
+
+## Stream B: ralph/self-iteration-20260522-123354-B
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-123354-B
+HEAD: 75c1568d59f3
+
+# Ralph Progress Log - Parallel2 Stream B
+Started: 2026-05-22T12:39:24+08:00
+Integration branch: ralph/self-iteration-20260522-123354
+Stream branch: ralph/self-iteration-20260522-123354-B
+Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
+
+Archived previous empty stream state:
+- scripts/ralph/archive/self-iteration-20260522-123924/prd.json
+- scripts/ralph/archive/self-iteration-20260522-123924/progress.txt
+
+Context inspection:
+- Branch confirmed: ralph/self-iteration-20260522-123354-B.
+- Root symlinks confirmed: prd.json -> scripts/ralph/prd.json, progress.txt -> scripts/ralph/progress.txt.
+- Known fresh-CI web/dist issue already has cmd/server/embed_ci_bdd_test.go coverage and cmd/server/embed.go embeds tracked cmd/server/web placeholder parent.
+- Known US-453 compliance download suite passes locally after installing web dependencies: 8/8 tests in ComplianceReportsPage.test.tsx.
+- Full frontend Vitest suite passes locally before changes: 283 test files, 2906 tests.
+- DOG-002, DOG-004, and DOG-005 from dogfood output already have source fixes and BDD coverage.
+
+Selected story:
+- P2B-001 Admin Performance Route Alias.
+
+Codebase Patterns:
+- Browser dogfood route aliases live in web/src/App.tsx as Navigate routes and are regression-tested under web/src/components/__tests__/route-aliases*. The existing pattern maps label-derived legacy slugs to canonical routes instead of letting React Router fall through to NotFoundPage.
+
+P2B-001 implementation evidence:
+- RED: `npm test -- src/components/__tests__/route-aliases.performance.bdd.test.tsx` failed before implementation. Failure reason: unable to find heading `/performance dashboard/i` at `/admin/performance`, confirming the SPA did not route the label-derived alias.
+- Change: added `web/src/components/__tests__/route-aliases.performance.bdd.test.tsx`, rendering the real `App` router at `/admin/performance` with an authenticated admin and asserting redirect to `/admin/perf`, Performance Dashboard heading, and no NotFound page.
+- Change: added `web/src/App.tsx` route alias `admin/performance -> /admin/perf`.
+- GREEN targeted: `npm test -- src/components/__tests__/route-aliases.performance.bdd.test.tsx` passed (1 test).
+- Related regression set: `npm test -- src/components/__tests__/route-aliases.test.tsx src/components/__tests__/route-aliases.performance.bdd.test.tsx src/components/admin/__tests__/PerformanceDashboardPage.test.tsx` passed (3 files, 19 tests).
+- Build gate: `npm run build` passed (`tsc -b`, Vite production build, bundle budget).
+- Full frontend gate: `npm test` passed after the change (284 test files, 2907 tests).
+
+
+---
