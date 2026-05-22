@@ -15,7 +15,6 @@ package security
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -421,15 +420,33 @@ func ruleSetSignature(rules []CELRule) uint64 {
 // decisionKey hashes (userID, rowKey, ruleSetSig) into a single uint64
 // suitable for the DecisionCache.
 func decisionKey(userID, rowKey string, sig uint64) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(userID))
-	_, _ = h.Write([]byte{0})
-	_, _ = h.Write([]byte(rowKey))
-	_, _ = h.Write([]byte{0})
-	var sigBytes [8]byte
-	binary.BigEndian.PutUint64(sigBytes[:], sig)
-	_, _ = h.Write(sigBytes[:])
-	return h.Sum64()
+	h := fnv64aOffset
+	h = fnv64aString(h, userID)
+	h = fnv64aByte(h, 0)
+	h = fnv64aString(h, rowKey)
+	h = fnv64aByte(h, 0)
+	for shift := 56; shift >= 0; shift -= 8 {
+		h = fnv64aByte(h, byte(sig>>shift))
+	}
+	return h
+}
+
+const (
+	fnv64aOffset uint64 = 14695981039346656037
+	fnv64aPrime  uint64 = 1099511628211
+)
+
+func fnv64aString(h uint64, s string) uint64 {
+	for i := 0; i < len(s); i++ {
+		h = fnv64aByte(h, s[i])
+	}
+	return h
+}
+
+func fnv64aByte(h uint64, b byte) uint64 {
+	h ^= uint64(b)
+	h *= fnv64aPrime
+	return h
 }
 
 // HashRowProperties returns a stable rowKey suitable for the decision

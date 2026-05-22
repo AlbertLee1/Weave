@@ -2,6 +2,8 @@ package security
 
 import (
 	"context"
+	"encoding/binary"
+	"hash/fnv"
 	"strings"
 	"testing"
 	"time"
@@ -199,6 +201,36 @@ func TestCELEvaluator_DecisionCache_RuleSetOrderIndependent(t *testing.T) {
 	st := eval.DecisionCache().Stats()
 	if st.Hits != 1 || st.Misses != 1 {
 		t.Fatalf("expected order-independent decision cache: %+v", st)
+	}
+}
+
+func TestCELEvaluator_DecisionKeyMatchesCanonicalFNV(t *testing.T) {
+	tests := []struct {
+		name   string
+		userID string
+		rowKey string
+		sig    uint64
+	}{
+		{name: "all fields", userID: "u-001", rowKey: "row-hash", sig: 0x1020304050607080},
+		{name: "empty user", userID: "", rowKey: "row-hash", sig: 7},
+		{name: "empty row", userID: "u-002", rowKey: "", sig: 99},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := fnv.New64a()
+			_, _ = h.Write([]byte(tt.userID))
+			_, _ = h.Write([]byte{0})
+			_, _ = h.Write([]byte(tt.rowKey))
+			_, _ = h.Write([]byte{0})
+			var sigBytes [8]byte
+			binary.BigEndian.PutUint64(sigBytes[:], tt.sig)
+			_, _ = h.Write(sigBytes[:])
+
+			if got, want := decisionKey(tt.userID, tt.rowKey, tt.sig), h.Sum64(); got != want {
+				t.Fatalf("decisionKey = %d, want canonical FNV %d", got, want)
+			}
+		})
 	}
 }
 
