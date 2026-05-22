@@ -1,144 +1,57 @@
 {
-  "project": "Weave parallel2 self-iteration",
+  "project": "Weave self-iteration",
   "branchName": "ralph/self-iteration-20260522-233015",
-  "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
+  "description": "Small post-parallel2 Ralph loop focused on current CI health and narrow OSv2 service hardening gaps. Current branch has no PR CI or LLM review auto-fix context; known embed and US-453 web risks were checked locally before story selection.",
   "userStories": [
     {
-      "id": "P2A-001",
-      "title": "Permission request writes reject ambiguous JSON bodies",
+      "id": "RSI-001",
+      "title": "Security policy writes reject ambiguous JSON bodies",
       "priority": 1,
-      "description": "As an operator approving access requests, I want permission request write APIs to reject bodies containing multiple JSON values so that malformed or smuggled payloads cannot create or decide a request from only the first object.",
+      "description": "As a security administrator managing row policies, column masks, and cell masks, I want write APIs to reject request bodies containing multiple JSON values so malformed or smuggled policy payloads cannot create or mutate access controls from only the first object.",
       "acceptanceCriteria": [
-        "Given an authenticated requester posts a valid permission request JSON object followed by another JSON value, when the request reaches POST /api/v2/permission-requests, then the API returns 400 InvalidRequestBody and no permission request is created.",
-        "Given an authenticated approver posts a valid decision note followed by another JSON value, when the request reaches POST /api/v2/permission-requests/{id}/approve, then the API returns 400 InvalidRequestBody and the permission request remains PENDING.",
-        "The BDD coverage uses the chi HTTP router and in-memory permission request store so the behavior is observable at the API boundary.",
-        "Targeted Go tests for pkg/permissionrequests pass."
+        "Given an authenticated admin posts a valid row policy create body followed by another JSON value, when the request reaches POST /api/admin/row-policies, then the API returns 400 InvalidRowPolicyRequest and no row policy is created.",
+        "Given an authenticated admin patches an existing row policy with a valid update followed by another JSON value, when the request reaches PATCH /api/admin/row-policies/{rid}, then the API returns 400 InvalidRowPolicyUpdate and the original policy remains unchanged.",
+        "Given an authenticated admin posts or patches column mask and cell mask JSON bodies followed by another JSON value, when the requests reach their admin APIs, then each API returns the existing 400 invalid-request error and does not create or mutate policy state.",
+        "The BDD coverage uses chi HTTP routers and in-memory stores so the behavior is observable at the API boundary.",
+        "Targeted Go tests for pkg/rls, pkg/masking, pkg/cellsec, and pkg/httputil pass."
       ],
       "dependencies": [
-        "pkg/httputil.ReadJSON already enforces a single JSON value and request body size cap."
+        "pkg/httputil.ReadJSON already enforces a single JSON value and request body size cap.",
+        "Existing security policy handler tests mount chi routers with in-memory stores and authenticated admin contexts."
       ],
-      "passes": true,
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-233015-A"
+      "passes": true
     },
     {
-      "id": "P2A-002",
-      "title": "Tenant admin writes reject ambiguous JSON bodies",
+      "id": "RSI-002",
+      "title": "Saved search writes reject ambiguous JSON bodies",
       "priority": 2,
-      "description": "As a tenant administrator, I want tenant management write APIs to reject concatenated JSON bodies so that tenant state changes are parsed deterministically.",
+      "description": "As an operator saving browser workspaces, I want saved-search create/update APIs to reject concatenated JSON bodies so saved view definitions cannot be silently truncated or smuggled.",
       "acceptanceCriteria": [
-        "Given a tenant create or update request with a valid JSON object followed by another JSON value, when posted to the tenant admin API, then the API returns 400 InvalidRequestBody.",
-        "The handler does not create or mutate tenant state after rejecting the ambiguous body.",
-        "Targeted Go tests for pkg/tenants pass."
+        "Given an authenticated requester posts a valid saved search create body followed by another JSON value, when the request reaches the saved searches API, then the API returns 400 and no saved search is created.",
+        "Given an authenticated requester patches an existing saved search with a valid update followed by another JSON value, when the request reaches the saved searches API, then the API returns 400 and the saved definition remains unchanged.",
+        "The coverage exercises the HTTP handler boundary with an in-memory store.",
+        "Targeted Go tests for pkg/savedsearches and pkg/httputil pass."
       ],
       "dependencies": [
-        "P2A-001 establishes the narrow httputil.ReadJSON adoption pattern on one access-control write surface."
+        "RSI-001 establishes the strict JSON adoption pattern for OSv2 admin write surfaces."
       ],
-      "passes": true,
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-233015-A"
+      "passes": false
     },
     {
-      "id": "P2A-003",
-      "title": "MCP HTTP transport rejects oversized JSON-RPC bodies",
+      "id": "RSI-003",
+      "title": "Collaboration writes reject ambiguous JSON bodies",
       "priority": 3,
-      "description": "As an MCP client operator, I want the HTTP JSON-RPC transport to fail oversized request bodies predictably so that malformed clients cannot consume unbounded server memory.",
+      "description": "As an operator using comments, reactions, and watches around ontology objects, I want collaboration write APIs to reject concatenated JSON bodies so upper-layer collaboration state is parsed deterministically.",
       "acceptanceCriteria": [
-        "Given an MCP HTTP request body larger than the configured server cap, when posted to the transport, then the response is a JSON-RPC error instead of attempting to decode the full body.",
-        "Normal-sized JSON-RPC requests continue to pass existing MCP transport tests.",
-        "Targeted Go tests for pkg/mcp pass."
+        "Given a valid comments/reactions/watches write request followed by another JSON value, when posted to the relevant API, then the API returns 400 and does not create or mutate collaboration state.",
+        "Existing valid collaboration write requests continue to pass.",
+        "The coverage uses package-local handler tests with in-memory stores where available.",
+        "Targeted Go tests for the touched collaboration packages and pkg/httputil pass."
       ],
       "dependencies": [
-        "Existing MCP JSON-RPC error envelope tests in pkg/mcp."
+        "RSI-001 and RSI-002 narrow strict JSON handling across higher-risk write surfaces first."
       ],
-      "passes": true,
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-233015-A"
-    },
-    {
-      "id": "P2B-001",
-      "title": "Browser Search Renders API Highlight Snippets",
-      "priority": "high",
-      "description": "As a Weave operator browsing objects, I want full-text search results to show backend highlight snippets so I can understand why each row matched without opening every object.",
-      "acceptanceCriteria": [
-        {
-          "given": "an object type with a title property and the operator submits full-text search",
-          "when": "BrowserPage sends POST /api/v2/ontologies/{ontology}/objects/{objectType}/search",
-          "then": "the request includes SearchObjectsRequest.highlight.fields for the searched title property, matching the OpenAPI US-235 highlight contract"
-        },
-        {
-          "given": "the search response row contains _highlights.title snippets with <mark>...</mark>",
-          "when": "the object table renders the result row",
-          "then": "the matching title cell renders an actual mark element while preserving non-highlight text as text"
-        },
-        {
-          "given": "a response row has no highlight snippets for a field",
-          "when": "the table renders",
-          "then": "the field falls back to the existing truncated value rendering"
-        },
-        {
-          "given": "the change is complete",
-          "when": "targeted BrowserPage BDD, web typecheck, web Vitest coverage, and web build run",
-          "then": "all pass"
-        }
-      ],
-      "dependencies": [
-        "OpenAPI SearchObjectsRequest.highlight and WireObject _highlights contract",
-        "Existing BrowserPage search BDD test harness"
-      ],
-      "passes": true,
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-233015-B"
-    },
-    {
-      "id": "P2B-002",
-      "title": "Browser Facets Prefer Detailed Searchable Metadata",
-      "priority": "medium",
-      "description": "As a Weave operator filtering object search results, I want facet requests to prefer properties marked searchable in detailed metadata so empty, non-indexed facet groups do not distract from useful filters.",
-      "acceptanceCriteria": [
-        {
-          "given": "detailed property metadata is loaded",
-          "when": "BrowserPage builds a search request with facets",
-          "then": "facet fields are selected from searchable string/boolean/date properties and still exclude the primary key"
-        },
-        {
-          "given": "detailed property metadata is still loading or unavailable",
-          "when": "BrowserPage builds a search request",
-          "then": "the current compact-property fallback behavior remains stable"
-        }
-      ],
-      "dependencies": [
-        "useProperties detailed metadata query",
-        "SearchObjectsRequest.facets OpenAPI contract"
-      ],
-      "passes": true,
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-233015-B"
-    },
-    {
-      "id": "P2B-003",
-      "title": "Saved Browser Views Restore Presentation Mode",
-      "priority": "medium",
-      "description": "As a Weave operator saving an object browser view, I want the saved definition to restore the selected table/map/gantt/sankey/pivot presentation mode along with filters and sort.",
-      "acceptanceCriteria": [
-        {
-          "given": "the operator saves a Browser view while a non-table mode is selected",
-          "when": "the saved view is loaded later",
-          "then": "BrowserPage restores that view mode and the existing filters, facets, and sort"
-        },
-        {
-          "given": "an older saved view has no viewMode field",
-          "when": "the saved view is loaded",
-          "then": "BrowserPage keeps the current table-mode fallback without errors"
-        }
-      ],
-      "dependencies": [
-        "SavedSearchDefinition browser payload",
-        "SavedSearchesPanel apply/save flow"
-      ],
-      "passes": true,
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-233015-B"
+      "passes": false
     }
   ]
 }
