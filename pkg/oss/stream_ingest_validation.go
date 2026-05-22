@@ -107,10 +107,11 @@ func validateIngestEditSchema(edits []funnel.Edit, declared map[string]struct{})
 	if violationCount == 0 {
 		return nil
 	}
-	return apierror.NewBadRequest("SchemaViolation", map[string]string{
+	return apierror.NewInvalidParameter("InvalidIngestEdit", map[string]string{
 		"objectType":     first.ObjectType,
 		"primaryKey":     first.PrimaryKey,
 		"property":       firstProperty,
+		"reason":         "property is not declared on ObjectType metadata",
 		"violationCount": fmt.Sprintf("%d", violationCount),
 	})
 }
@@ -133,7 +134,18 @@ func (v *streamIngestMetadataValidator) validateValueTypes(
 			}
 			vt, err := v.repo.GetValueTypeByAPIName(ctx, vtAPIName)
 			if err != nil || vt == nil {
-				continue
+				errorMessage := "value type not found"
+				if err != nil {
+					errorMessage = err.Error()
+				}
+				return apierror.NewInternal("IngestMetadataLookupFailed", map[string]string{
+					"ontology":   ontologyAPIName,
+					"objectType": objectType,
+					"primaryKey": edit.PrimaryKey,
+					"property":   property,
+					"valueType":  vtAPIName,
+					"error":      errorMessage,
+				})
 			}
 			value := edit.Properties[property]
 			if err := types.ValidateConstraints(value, vt.Constraints); err != nil {
