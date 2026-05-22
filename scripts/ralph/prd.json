@@ -1,96 +1,82 @@
 {
   "project": "Weave self-iteration",
   "branchName": "ralph/self-iteration-20260522-165538",
-  "description": "Small OSv2-focused follow-up PRD created after the previous integration PRD completed. Recent GitHub CI on this branch and main is green; no PR CI auto-fix context or LLM review auto-fix context is present. Scope is limited to three high-value, verifiable reliability/security gaps.",
-  "createdAt": "2026-05-22T17:42:40+08:00",
+  "description": "Focused LLM review repair PRD for PR #46. Scope is restricted to the blocking review findings appended to progress.txt: live Vertex graph share-link expiry/masking wiring and SimpleChart one-bucket pie rendering.",
+  "createdAt": "2026-05-22T18:15:17+08:00",
   "userStories": [
     {
-      "id": "SI-001",
-      "title": "Mask JSON-decoded Vertex share-link graph payloads",
+      "id": "LLM-001",
+      "title": "Wire live Vertex graph share-link expiry and masking",
       "priority": 1,
-      "area": "pkg/vertex/sharelinks",
-      "asA": "Vertex graph share-link viewer outside the owning organization",
-      "iWant": "shared graph payloads decoded from JSON to have node property values masked",
-      "soThat": "cross-org and unauthenticated views expose topology without leaking sensitive object data",
+      "area": "pkg/vertex/graphsvc",
+      "asA": "Vertex graph owner sharing a live graph link",
+      "iWant": "production share-link reads to enforce expiry boundaries and mask the live JSON-decoded payload shape",
+      "soThat": "reviewed security rules protect the actual HTTP share-link surface, not only the pure helper package",
       "acceptanceCriteria": [
         {
           "type": "BDD",
-          "given": "a Vertex graph payload decoded from JSON where nodes are []any values containing map[string]any node objects",
-          "when": "MaskGraphPayload is applied for a masked share-link response",
-          "then": "each node property value is replaced with the mask token while structural fields such as graph name and node id remain unchanged"
+          "given": "a live graph share link whose ExpiresAt equals the request time",
+          "when": "GET /api/vertex/v1/share-links/{token}/graph is called",
+          "then": "the response is HTTP 410 Gone and the graph payload is not returned"
         },
         {
           "type": "BDD",
-          "given": "the same decoded graph payload is retained by the caller",
-          "when": "MaskGraphPayload returns a masked payload",
-          "then": "the original decoded payload is not mutated"
+          "given": "a live graph share link for a graph payload decoded from JSON with node objects under nodes",
+          "when": "an outside viewer fetches the graph through the share-link endpoint",
+          "then": "node property values are masked while graph name, node ids, and other structural fields remain visible"
+        },
+        {
+          "type": "BDD",
+          "given": "the live share-link store is PostgreSQL-backed",
+          "when": "share links are created and loaded",
+          "then": "ExpiresAt is persisted and scanned without breaking existing revoked-link behavior"
         }
       ],
       "dependencies": [
-        "pkg/vertex/sharelinks/sharelinks.go",
-        "pkg/vertex/sharelinks/sharelinks_test.go"
+        "pkg/vertex/graphsvc/sharing.go",
+        "pkg/vertex/graphsvc/handler.go",
+        "pkg/vertex/graphsvc/pg_sharing.go",
+        "pkg/vertex/graphsvc/handler_acl_test.go",
+        "pkg/vertex/graphsvc/sharing_test.go",
+        "migrations"
       ],
       "verification": [
-        "Targeted Go regression test for JSON-decoded share-link graph masking.",
-        "Targeted pkg/vertex/sharelinks package test."
+        "Targeted graphsvc handler BDD tests for expired live links and JSON-decoded node masking.",
+        "Targeted graphsvc package tests."
       ],
       "passes": true
     },
     {
-      "id": "SI-002",
-      "title": "Reject whitespace-only Vertex Model Mesh IDs",
+      "id": "LLM-002",
+      "title": "Render one-bucket pie charts as a full circle",
       "priority": 2,
-      "area": "pkg/vertex/modelmesh",
-      "asA": "Vertex model mesh planner",
-      "iWant": "model IDs that are blank after trimming whitespace to be rejected",
-      "soThat": "planner output cannot contain invisible node identifiers that corrupt DAG debugging and UI rendering",
+      "area": "web/src/components/aggregation",
+      "asA": "aggregation dashboard viewer",
+      "iWant": "pie charts with exactly one positive bucket to render a visible full circle",
+      "soThat": "single-result aggregations do not appear blank when data exists",
       "acceptanceCriteria": [
         {
           "type": "BDD",
-          "given": "a model mesh request containing a model id made only of spaces or tabs",
-          "when": "the plan endpoint builds topological layers",
-          "then": "the response is HTTP 400 with InvalidParameter:id and the graph is not planned"
+          "given": "a SimpleChart pie chart with exactly one positive bucket",
+          "when": "the chart renders",
+          "then": "the SVG contains a visible full-circle mark for that bucket"
         },
         {
           "type": "BDD",
-          "given": "a model mesh request containing normal non-empty model IDs",
-          "when": "the planner runs",
-          "then": "existing layered topological behavior is unchanged"
+          "given": "a SimpleChart pie chart with multiple positive buckets",
+          "when": "the chart renders",
+          "then": "existing slice path rendering is preserved"
         }
       ],
       "dependencies": [
-        "pkg/vertex/modelmesh/dag.go",
-        "pkg/vertex/modelmesh/handler.go"
+        "web/src/components/aggregation/SimpleChart.tsx",
+        "web/src/components/aggregation/__tests__/SimpleChart.test.tsx"
       ],
-      "passes": true
-    },
-    {
-      "id": "SI-003",
-      "title": "Treat share-link expiry at the boundary as gone",
-      "priority": 3,
-      "area": "pkg/vertex/sharelinks",
-      "asA": "Vertex graph owner",
-      "iWant": "share links to stop working exactly at their expiry timestamp",
-      "soThat": "time-boxed access grants do not stay readable for the expiry instant",
-      "acceptanceCriteria": [
-        {
-          "type": "BDD",
-          "given": "a Vertex graph share link whose expiresAt equals the request time",
-          "when": "EvaluateAccess checks the link",
-          "then": "the decision is Gone"
-        },
-        {
-          "type": "BDD",
-          "given": "a Vertex graph share link whose expiresAt is after the request time",
-          "when": "EvaluateAccess checks the link",
-          "then": "same-org viewers still receive ReadOnly and other viewers receive Masked"
-        }
+      "verification": [
+        "Targeted Vitest regression for one-bucket pie charts.",
+        "Targeted aggregation component tests."
       ],
-      "dependencies": [
-        "pkg/vertex/sharelinks/sharelinks.go",
-        "pkg/vertex/sharelinks/sharelinks_test.go"
-      ],
-      "passes": true
+      "passes": false
     }
   ]
 }

@@ -1,77 +1,79 @@
 # Ralph Progress Log
-Started: 2026-05-22T17:42:40+08:00
+Started: 2026-05-22T18:15:17+08:00
 Branch: ralph/self-iteration-20260522-165538
 
 Archived completed prior Ralph state:
-- scripts/ralph/archive/self-iteration-20260522-174240/prd.json
-- scripts/ralph/archive/self-iteration-20260522-174240/progress.txt
+- scripts/ralph/archive/self-iteration-20260522-181517/prd.json
+- scripts/ralph/archive/self-iteration-20260522-181517/progress.txt
 
 Initial inspection:
 - Branch verified with `git branch --show-current`: ralph/self-iteration-20260522-165538.
-- Prior PRD matched this branch, but all stories had `passes: true`, so a fresh small PRD was created.
-- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the active progress file.
-- GitHub CI health checked with `gh run list --limit 8 --json ...`: latest run for ralph/self-iteration-20260522-165538 and latest main CI run both completed with conclusion success.
-- Known issues from the instructions appear already covered in this checkout: `cmd/server/embed.go` has CI placeholder/test coverage under `cmd/server/web` and `cmd/server/embed_ci_bdd_test.go`; `object.stream is not a function` is already covered by `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`.
-- Dogfood issues DOG-002 through DOG-005 have local regression files visible in the checkout; DOG-001 remains an E2E seed concern but is broader than this small cycle.
+- Prior PRD matched this branch, but all stories had `passes: true`.
+- `LLM review auto-fix context` was present in the active progress file and is the highest-priority target for this PRD.
+- Latest GitHub CI entries checked with `gh run list --limit 8 --json ...`: recent runs for this branch and main completed with conclusion success.
+- Code/docs/tests/dogfood-output inspected with `rg` / `rg --files`; the review findings map to `pkg/vertex/graphsvc` live share-link code and `web/src/components/aggregation/SimpleChart.tsx`.
+
+Preserved LLM review auto-fix context - 2026-05-22T18:13:20+08:00:
+- PR: https://github.com/AlbertLee1/Weave/pull/46
+- Branch: ralph/self-iteration-20260522-165538
+- Reviewed HEAD: 564a6d2e1dac
+- Review status: request_changes
+- Summary: Request changes: the share-link security stories are not wired into production behavior, and the new pie chart has a single-bucket rendering bug.
+- Blocking findings:
+```json
+[
+  {
+    "severity": "critical",
+    "file": "pkg/vertex/sharelinks/sharelinks.go",
+    "line": 67,
+    "issue": "The SI-001/SI-003 security fixes are implemented in pkg/vertex/sharelinks, but that package is not imported by the live share-link service. The production graph share-link path still uses pkg/vertex/graphsvc.ShareLink, has no ExpiresAt field/persistence, checks only Revoked in getViaShareLink, and masks through graphsvc.maskLayerPropertyValues instead of MaskGraphPayload. As written, the PR's expiry-boundary and JSON-decoded masking changes do not affect actual share-link responses.",
+    "suggestion": "Wire these rules into the graphsvc share-link path or move the fixes there: add/persist ExpiresAt, enforce !now.Before(expiresAt) in the HTTP handler, use the cloned masking helper on the live payload shape, and add handler-level BDD tests proving expired links return 410 and masked live responses do not leak properties."
+  },
+  {
+    "severity": "warning",
+    "file": "web/src/components/aggregation/SimpleChart.tsx",
+    "line": 252,
+    "issue": "Pie rendering builds every slice as a single SVG arc. When there is exactly one positive bucket, sweep is 360 degrees, so the arc start and end points are identical and SVG cannot render a full circle from that path. Selecting pie for a one-bucket aggregation can show a blank pie mark even though data exists.",
+    "suggestion": "Special-case full-circle slices, for example render a <circle> for a 360-degree single slice or split full slices into two 180-degree arcs, and add a test for one-bucket pie charts."
+  }
+]
+```
 
 Codebase Patterns:
 - Vertex pure rule packages such as `pkg/vertex/sharelinks` keep transport-agnostic behavior in package-level functions with focused Go tests.
 - For share-link masking, preserve structural graph fields while replacing node property values; callers may reuse the source graph, so masking helpers should return cloned structures.
+- JSON-decoded graph payloads expose arrays as `[]any`; masking helpers that operate on HTTP payloads should support that shape in addition to test-friendly typed slices.
+- Time-boxed authorization checks should use `!now.Before(expiry)` when the expiry instant itself must be closed.
+- Live Vertex graph share-link behavior is in `pkg/vertex/graphsvc`, wired through `Handler.SetShareLinkStore`, `getViaShareLink`, `MemShareLinkStore`, and `PGShareLinkStore`.
 
 Selected story:
-- SI-001 - Mask JSON-decoded Vertex share-link graph payloads
+- LLM-001 - Wire live Vertex graph share-link expiry and masking
 
-## 2026-05-22T17:46:10+08:00 - SI-001
-- Implemented JSON-decoded graph masking for Vertex share links: `MaskGraphPayload` now handles both in-memory `[]map[string]any` nodes and HTTP/JSON-style `[]any` nodes containing `map[string]any` node objects.
-- Preserved the existing clone-before-mask behavior so callers can reuse the original decoded graph without observing redacted values.
+## 2026-05-22T18:23:08+08:00 - LLM-001
+- Wired the reviewed share-link security rules into the live `pkg/vertex/graphsvc` HTTP path.
+- Added `ShareLink.ExpiresAt`, nullable PostgreSQL create/scan support, and migration `000212_graph_share_links_expires_at` so existing indefinite links remain compatible while time-boxed links can be enforced.
+- `getViaShareLink` now returns 410 `ShareLinkExpired` for non-zero `ExpiresAt` values where `now >= expiresAt`, before loading or returning the graph payload.
+- Extended the live graphsvc masking helper to mask root `nodes[*].properties` payloads in addition to existing `layers[*]...properties`, preserving graph name, node id, edges, positions, and other structural fields.
 - Files changed:
-  - `pkg/vertex/sharelinks/sharelinks.go`
-  - `pkg/vertex/sharelinks/sharelinks_test.go`
+  - `pkg/vertex/graphsvc/handler.go`
+  - `pkg/vertex/graphsvc/handler_acl_test.go`
+  - `pkg/vertex/graphsvc/pg_sharing.go`
+  - `pkg/vertex/graphsvc/sharing.go`
+  - `migrations/000212_graph_share_links_expires_at.up.sql`
+  - `migrations/000212_graph_share_links_expires_at.down.sql`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
 - TDD evidence:
-  - RED: `go test ./pkg/vertex/sharelinks -run TestMaskGraphPayload_Given_JSONDecodedGraph_When_Masked_Then_RedactsPropertiesAndDoesNotMutateInput -count=1 -v` failed because decoded node properties remained `100` and `JFK`.
-  - GREEN targeted: `go test ./pkg/vertex/sharelinks -run TestMaskGraphPayload_Given_JSONDecodedGraph_When_Masked_Then_RedactsPropertiesAndDoesNotMutateInput -count=1 -v` passed.
-  - Package gate: `go test ./pkg/vertex/sharelinks -count=1` passed.
+  - RED compile: `go test ./pkg/vertex/graphsvc -run 'TestGraphsACL_Given_(ShareLinkExpiresAtRequestBoundary_When_GET_Then_410Gone|NodePayloadShareLink_When_GET_Then_NodePropertiesMasked)' -count=1 -v` failed because `graphsvc.ShareLink` had no `ExpiresAt` field.
+  - RED behavior after adding the field only: same command failed because expired live links returned 200 and root node properties leaked `100` / `JFK`.
+  - GREEN targeted: same command passed.
+  - Package gate: `go test ./pkg/vertex/graphsvc -count=1` passed.
   - Relevant project gate: `go test ./pkg/vertex/... -count=1` passed.
+  - Migration/CI package gate: `go test ./scripts/ci -count=1` passed.
+  - Share-link OpenAPI contract smoke: `go test ./cmd/server -run TestBDD_VertexShareLinksAndWidgetOpenAPIContract -count=1` passed.
 - Codebase Patterns:
-  - JSON-decoded graph payloads expose arrays as `[]any`; masking helpers that operate on HTTP payloads should support that shape in addition to test-friendly typed slices.
+  - Keep graph share-link expiry nullable at the database boundary so existing links remain indefinite unless a caller/store explicitly sets `ExpiresAt`.
+  - Live graph share-link masking must cover both workspace `layers` and graph-shaped `nodes`; masking operates on JSON-decoded `map[string]any` / `[]any` payloads and re-marshals a cloned response payload.
 
-Selected story:
-- SI-002 - Reject whitespace-only Vertex Model Mesh IDs
-
-## 2026-05-22T17:48:35+08:00 - SI-002
-- Implemented whitespace-only model ID rejection for Vertex Model Mesh planning by treating `strings.TrimSpace(id) == ""` as `ErrEmptyModelID` in the shared dependency graph builder.
-- The HTTP plan endpoint now returns 400 `InvalidParameter:id` for IDs made only of spaces/tabs, and the graph is not planned.
-- Existing non-empty ID topological behavior remains covered by the package regression suite.
-- Files changed:
-  - `pkg/vertex/modelmesh/dag.go`
-  - `pkg/vertex/modelmesh/handler_test.go`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- TDD evidence:
-  - RED: `go test ./pkg/vertex/modelmesh -run TestHandler_Given_WhitespaceOnlyModelID_When_PostPlan_Then_400InvalidParameterID -count=1 -v` failed because the endpoint returned 200 with layers containing `" \t "`.
-  - GREEN targeted: `go test ./pkg/vertex/modelmesh -run TestHandler_Given_WhitespaceOnlyModelID_When_PostPlan_Then_400InvalidParameterID -count=1 -v` passed.
-  - Package gate: `go test ./pkg/vertex/modelmesh -count=1` passed.
-  - Relevant project gate: `go test ./pkg/vertex/... -count=1` passed.
-- Codebase Patterns:
-  - Model Mesh request validation that affects planning should live in `BuildDependencyGraph` so plan, run, runner, and direct planner callers share the same rejection semantics.
-
-Selected story:
-- SI-003 - Treat share-link expiry at the boundary as gone
-
-## 2026-05-22T17:52:23+08:00 - SI-003
-- Implemented boundary-inclusive expiry semantics for Vertex share-link access: non-zero `ExpiresAt` values now become `DecisionGone` when `req.Now` is equal to or after the expiry timestamp.
-- Preserved active future-expiry behavior for same-org viewers (`DecisionReadOnly`) and other/unauthenticated viewers (`DecisionMasked`) through the existing package tests.
-- Files changed:
-  - `pkg/vertex/sharelinks/sharelinks.go`
-  - `pkg/vertex/sharelinks/sharelinks_test.go`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- TDD evidence:
-  - RED: `go test ./pkg/vertex/sharelinks -run TestEvaluateAccess_Given_ExpiryEqualsRequestTime_Then_Gone -count=1 -v` failed because the decision was `1` (`DecisionReadOnly`) instead of `DecisionGone`.
-  - GREEN targeted: `go test ./pkg/vertex/sharelinks -run TestEvaluateAccess_Given_ExpiryEqualsRequestTime_Then_Gone -count=1 -v` passed.
-  - Package gate: `go test ./pkg/vertex/sharelinks -count=1` passed.
-  - Relevant project gate: `go test ./pkg/vertex/... -count=1` passed.
-- Codebase Patterns:
-  - Time-boxed authorization checks should use `!now.Before(expiry)` when the expiry instant itself must be closed, matching other boundary-inclusive expiry helpers in the codebase.
+Remaining story:
+- LLM-002 - Render one-bucket pie charts as a full circle

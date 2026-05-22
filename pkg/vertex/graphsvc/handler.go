@@ -649,6 +649,11 @@ func (h *Handler) getViaShareLink(w http.ResponseWriter, r *http.Request) {
 			map[string]string{"token": token, "reason": "share link has been revoked"}))
 		return
 	}
+	if shareLinkExpired(link, time.Now().UTC()) {
+		apierror.WriteJSON(w, apierror.NewGone("ShareLinkExpired",
+			map[string]string{"token": token, "reason": "share link has expired"}))
+		return
+	}
 	g, err := h.repo.Get(r.Context(), link.GraphRID)
 	if err != nil {
 		writeRepoError(w, err, link.GraphRID)
