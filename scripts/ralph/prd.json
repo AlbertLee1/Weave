@@ -1,95 +1,96 @@
 {
-  "project": "Weave parallel2 self-iteration",
+  "project": "Weave self-iteration",
   "branchName": "ralph/self-iteration-20260522-165538",
-  "description": "Combined PRD evidence from two isolated Codex/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
+  "description": "Small OSv2-focused follow-up PRD created after the previous integration PRD completed. Recent GitHub CI on this branch and main is green; no PR CI auto-fix context or LLM review auto-fix context is present. Scope is limited to three high-value, verifiable reliability/security gaps.",
+  "createdAt": "2026-05-22T17:42:40+08:00",
   "userStories": [
     {
-      "id": "P2A-001",
-      "title": "Reject invalid Vertex time-series windows",
+      "id": "SI-001",
+      "title": "Mask JSON-decoded Vertex share-link graph payloads",
       "priority": 1,
-      "area": "backend/api/vertex-timeseries",
-      "asA": "Vertex time-series API caller",
-      "iWant": "the window aggregation endpoint to reject zero-length or inverted time windows before querying storage",
-      "soThat": "bad OSv2-style time-series requests fail fast with a clear 400 instead of doing undefined or expensive backend work",
+      "area": "pkg/vertex/sharelinks",
+      "asA": "Vertex graph share-link viewer outside the owning organization",
+      "iWant": "shared graph payloads decoded from JSON to have node property values masked",
+      "soThat": "cross-org and unauthenticated views expose topology without leaking sensitive object data",
       "acceptanceCriteria": [
         {
           "type": "BDD",
-          "given": "a configured Vertex time-series HTTP handler",
-          "when": "GET /api/v2/ontologies/{ontology}/objects/{objectType}/{primaryKey}/timeseries/{property} is called with to equal to or before from",
-          "then": "the response is HTTP 400 with errorName InvalidTimeWindow and the querier is not invoked"
+          "given": "a Vertex graph payload decoded from JSON where nodes are []any values containing map[string]any node objects",
+          "when": "MaskGraphPayload is applied for a masked share-link response",
+          "then": "each node property value is replaced with the mask token while structural fields such as graph name and node id remain unchanged"
         },
         {
           "type": "BDD",
-          "given": "a configured Vertex time-series HTTP handler",
-          "when": "the request supplies a strictly forward from/to window",
-          "then": "the handler continues to call the querier and returns the existing bucketed series response"
+          "given": "the same decoded graph payload is retained by the caller",
+          "when": "MaskGraphPayload returns a masked payload",
+          "then": "the original decoded payload is not mutated"
         }
       ],
       "dependencies": [
-        "pkg/oss Vertex time-series handler tests",
-        "pkg/timeseries VertexQuery contract"
-      ],
-      "passes": true,
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260522-165538-A"
-    },
-    {
-      "id": "P2B-001",
-      "title": "Aggregation Results Export CSV",
-      "priority": "high",
-      "passes": true,
-      "description": "Operators using the browser aggregation page can download the current aggregation result buckets as CSV instead of manually copying table cells.",
-      "bddAcceptanceCriteria": [
-        "Given /aggregation/:ontology/:objectType has returned grouped aggregation buckets, when the operator clicks Export CSV, then a CSV download is created with group columns followed by metric columns.",
-        "Given CSV cells contain commas, quotes, nulls, or nested values, when the CSV is generated, then values are escaped using RFC4180-style quoting and stable stringification.",
-        "Given an aggregation response has no buckets, when the results panel renders, then the export affordance is not shown."
-      ],
-      "dependencies": [
-        "web/src/components/aggregation/AggregationPage.tsx",
-        "web/src/components/aggregation/ResultTable.tsx",
-        "web/src/api/aggregation.ts"
+        "pkg/vertex/sharelinks/sharelinks.go",
+        "pkg/vertex/sharelinks/sharelinks_test.go"
       ],
       "verification": [
-        "Frontend BDD regression test for the export button and generated CSV content.",
-        "Targeted Vitest for aggregation tests.",
-        "Web typecheck.",
-        "Worktree-local Playwright aggregation feature run."
+        "Targeted Go regression test for JSON-decoded share-link graph masking.",
+        "Targeted pkg/vertex/sharelinks package test."
       ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-165538-B"
+      "passes": true
     },
     {
-      "id": "P2B-002",
-      "title": "Aggregation Chart Type Switcher",
-      "priority": "medium",
-      "passes": true,
-      "description": "Operators can switch aggregation visualizations between bar, line, and pie modes rather than being locked to a bar chart.",
-      "bddAcceptanceCriteria": [
-        "Given grouped aggregation data exists, when the operator switches chart type, then the selected chart renderer updates without losing the result table.",
-        "Given no grouped data exists, when the results render, then chart controls remain hidden."
+      "id": "SI-002",
+      "title": "Reject whitespace-only Vertex Model Mesh IDs",
+      "priority": 2,
+      "area": "pkg/vertex/modelmesh",
+      "asA": "Vertex model mesh planner",
+      "iWant": "model IDs that are blank after trimming whitespace to be rejected",
+      "soThat": "planner output cannot contain invisible node identifiers that corrupt DAG debugging and UI rendering",
+      "acceptanceCriteria": [
+        {
+          "type": "BDD",
+          "given": "a model mesh request containing a model id made only of spaces or tabs",
+          "when": "the plan endpoint builds topological layers",
+          "then": "the response is HTTP 400 with InvalidParameter:id and the graph is not planned"
+        },
+        {
+          "type": "BDD",
+          "given": "a model mesh request containing normal non-empty model IDs",
+          "when": "the planner runs",
+          "then": "existing layered topological behavior is unchanged"
+        }
       ],
       "dependencies": [
-        "P2B-001 result handling conventions",
-        "web/src/components/aggregation/SimpleChart.tsx"
+        "pkg/vertex/modelmesh/dag.go",
+        "pkg/vertex/modelmesh/handler.go"
       ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-165538-B"
+      "passes": false
     },
     {
-      "id": "P2B-003",
-      "title": "ObjectSet Diff CSV Export",
-      "priority": "medium",
-      "passes": true,
-      "description": "Operators comparing saved ObjectSets can export the diff sections to CSV for review and handoff.",
-      "bddAcceptanceCriteria": [
-        "Given a computed ObjectSet diff with only-in-A, only-in-B, and changed rows, when the operator exports CSV, then the file contains section and row metadata.",
-        "Given no diff has been computed, when the page renders, then export remains disabled or hidden."
+      "id": "SI-003",
+      "title": "Treat share-link expiry at the boundary as gone",
+      "priority": 3,
+      "area": "pkg/vertex/sharelinks",
+      "asA": "Vertex graph owner",
+      "iWant": "share links to stop working exactly at their expiry timestamp",
+      "soThat": "time-boxed access grants do not stay readable for the expiry instant",
+      "acceptanceCriteria": [
+        {
+          "type": "BDD",
+          "given": "a Vertex graph share link whose expiresAt equals the request time",
+          "when": "EvaluateAccess checks the link",
+          "then": "the decision is Gone"
+        },
+        {
+          "type": "BDD",
+          "given": "a Vertex graph share link whose expiresAt is after the request time",
+          "when": "EvaluateAccess checks the link",
+          "then": "same-org viewers still receive ReadOnly and other viewers receive Masked"
+        }
       ],
       "dependencies": [
-        "web/src/components/objectsets/ObjectSetDiffPage.tsx"
+        "pkg/vertex/sharelinks/sharelinks.go",
+        "pkg/vertex/sharelinks/sharelinks_test.go"
       ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260522-165538-B"
+      "passes": false
     }
   ]
 }

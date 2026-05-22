@@ -1,153 +1,38 @@
-# Ralph Progress Log - Parallel2 Integration
-Integrated: 2026-05-22T17:29:19+08:00
-Integration branch: ralph/self-iteration-20260522-165538
+# Ralph Progress Log
+Started: 2026-05-22T17:42:40+08:00
+Branch: ralph/self-iteration-20260522-165538
 
-## Stream A: ralph/self-iteration-20260522-165538-A
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-165538-A
-HEAD: bac258c5637a
-
-# Ralph Progress Log - Parallel2 Stream A
-Started: 2026-05-22T16:58:44+08:00
-Integration branch: ralph/self-iteration-20260522-165538
-Stream branch: ralph/self-iteration-20260522-165538-A
-Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
-
-## Inspection Notes
-- Archived empty prior runtime state under scripts/ralph/archive/self-iteration-20260522-165844/.
-- Branch verified: ralph/self-iteration-20260522-165538-A.
-- No PR CI auto-fix context or LLM review auto-fix context was present in the prior progress log.
-- GitHub CI health checked with `gh run list --limit 8`: latest main CI and preceding integration PR CI were successful; only a Codespaces prebuild was still in progress.
-- Known fresh-CI issues from the instructions appear already covered in this checkout:
-  - `cmd/server/embed.go` has `cmd/server/embed_ci_bdd_test.go` and `cmd/server/web/embed-placeholder.txt`.
-  - DOG-003/DOG-004 have local regression tests and implementation comments in pkg/oss/pkg/oms/web.
----
-
-## 2026-05-22T17:02:20+08:00 - P2A-001
-- Implemented invalid-window validation for the Vertex time-series bucket endpoint: requests with `to <= from` now return `INVALID_ARGUMENT` / `InvalidTimeWindow` before invoking the querier.
-- Added BDD HTTP coverage for zero-length and inverted windows, including a no-query assertion.
-- Files changed:
-  - `pkg/oss/handlers_vertex_timeseries.go`
-  - `pkg/oss/handlers_vertex_timeseries_p2a001_bdd_test.go`
-- TDD evidence:
-  - RED: `go test ./pkg/oss -run TestBDD_VertexTimeSeries_GivenNonForwardWindow_WhenGetThen400AndNoQuery -count=1 -v` failed because invalid windows returned `200 {"points":null}`.
-  - GREEN targeted: `go test ./pkg/oss -run 'TestBDD_VertexTimeSeries_GivenNonForwardWindow_WhenGetThen400AndNoQuery|TestVertexTimeSeriesHandler' -count=1 -v` passed.
-  - Package gate: `go test ./pkg/oss -count=1` passed (`ok github.com/liyang/weave/pkg/oss 70.974s`).
-- **Learnings for future iterations:**
-  - Vertex time-series route tests can use `newVertexTSRouter` with a narrow `VertexTimeSeriesQuerier` fake; no full server wiring is needed for handler-level API contracts.
----
-
-
----
-
-## Stream B: ralph/self-iteration-20260522-165538-B
-Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260522-165538-B
-HEAD: ff45e303dc6a
-
-# Ralph Progress Log - Parallel2 Stream B
-Started: 2026-05-22T16:59:58+08:00
-Integration branch: ralph/self-iteration-20260522-165538
-Stream branch: ralph/self-iteration-20260522-165538-B
-Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
-
-Archived placeholder state:
-- scripts/ralph/archive/self-iteration-20260522-165958/prd.json
-- scripts/ralph/archive/self-iteration-20260522-165958/progress.txt
+Archived completed prior Ralph state:
+- scripts/ralph/archive/self-iteration-20260522-174240/prd.json
+- scripts/ralph/archive/self-iteration-20260522-174240/progress.txt
 
 Initial inspection:
-- Branch check: git branch --show-current -> ralph/self-iteration-20260522-165538-B.
-- Worktree status before PRD reset: clean.
-- GitHub main CI: gh run list --branch main --limit 5 showed latest CI run 26277830228 completed success at 2026-05-22T08:44:10Z.
-- Web BDD health: npm --prefix web test -- --run bdd -> 28 files / 77 tests passed.
-- Playwright discovery health: CI discovery command listed 271 tests in 76 files.
-- Web typecheck health: npx tsc --noEmit from web/ exited 0.
-- Known issues checked: fresh CI embed guard, US-453 object.stream guard, DOG-002 dashboard total, DOG-003 index bootstrap, DOG-004 browser search contract, DOG-005 explorer flags all already have durable code/tests.
-
-Selected story:
-- P2B-001 - Aggregation Results Export CSV
+- Branch verified with `git branch --show-current`: ralph/self-iteration-20260522-165538.
+- Prior PRD matched this branch, but all stories had `passes: true`, so a fresh small PRD was created.
+- No `PR CI auto-fix context` or `LLM review auto-fix context` was present in the active progress file.
+- GitHub CI health checked with `gh run list --limit 8 --json ...`: latest run for ralph/self-iteration-20260522-165538 and latest main CI run both completed with conclusion success.
+- Known issues from the instructions appear already covered in this checkout: `cmd/server/embed.go` has CI placeholder/test coverage under `cmd/server/web` and `cmd/server/embed_ci_bdd_test.go`; `object.stream is not a function` is already covered by `web/src/components/admin/__tests__/ComplianceReportsPage.test.tsx`.
+- Dogfood issues DOG-002 through DOG-005 have local regression files visible in the checkout; DOG-001 remains an E2E seed concern but is broader than this small cycle.
 
 Codebase Patterns:
-- Frontend BDD tests may live under web/src/components/**/__tests__/*.bdd.test.tsx with Vitest + React Testing Library + MSW.
-- Aggregation API normalizes wire metrics arrays into Record<string, number> in web/src/api/aggregation.ts, so UI export code should consume normalized AggregationBucket data.
-- Existing local Vite servers can make Playwright reuse a different checkout on :5173. For worktree-local browser verification, use an alternate-port config or otherwise prove the server cwd is this worktree.
-- On macOS/zsh, avoid using `status` as a shell variable in verification wrappers because it is read-only; use a neutral variable such as `cmd_exit`.
-- For temporary Playwright configs on macOS, create a temp directory first and write `playwright.config.cjs` inside it. A template like `/tmp/name-XXXXXX.cjs` can fail because the X suffix is not at the end.
-
-Story P2B-001 - Aggregation Results Export CSV:
-- Red test: npx vitest run src/components/aggregation/__tests__/AggregationPage.csvExport.bdd.test.tsx failed because no accessible button named /export csv/i existed after aggregation buckets rendered.
-- Implementation files:
-  - web/src/lib/aggregationCsv.ts
-  - web/src/components/aggregation/AggregationPage.tsx
-  - web/src/components/aggregation/__tests__/AggregationPage.csvExport.bdd.test.tsx
-  - web/tests/feature.aggregation.spec.ts
-  - web/tests/support/pageObjects/AggregationPage.ts
-- Behavior:
-  - Results with buckets render an Export CSV button.
-  - CSV columns preserve ResultTable ordering: group keys first, metric keys second.
-  - CSV cells stringify nested objects, blank null/undefined values, and quote cells containing commas, quotes, CR, or LF.
-  - Empty aggregation result sets keep the export affordance hidden.
-- Verification:
-  - npx vitest run src/components/aggregation/__tests__/AggregationPage.csvExport.bdd.test.tsx -> 1 file / 2 tests passed.
-  - npx vitest run src/components/aggregation src/lib/aggregationCsv.ts -> 4 files / 11 tests passed.
-  - npm test -- --run bdd -> 29 files / 79 tests passed.
-  - npx tsc --noEmit from web/ -> exit 0.
-  - npx playwright test tests/feature.aggregation.spec.ts --project=chromium --config=playwright.worktree.config.ts -> 7 tests passed against 127.0.0.1:5174 in this worktree. The first default Playwright run failed because it reused /Users/liyang/Documents/Community/Weave/web on :5173; lsof confirmed PID 65130 cwd outside this worktree.
-  - npx playwright test --list tests/feature.aggregation.spec.ts -> listed 7 tests.
-  - npm run build from web/ -> tsc -b + vite build + bundle budget passed.
-  - npm run lint from web/ -> failed on pre-existing repository-wide issues outside this patch, including e2e/phase6/interface-multitype-paging.spec.ts EXPECTED_PAGES unused, e2e/us444/20-subscribe.spec.ts prefer-const, multiple react-hooks/set-state-in-effect findings, and web/src/test/setup.ts unused stub parameters. No lint errors were reported for the P2B-001 files.
+- Vertex pure rule packages such as `pkg/vertex/sharelinks` keep transport-agnostic behavior in package-level functions with focused Go tests.
+- For share-link masking, preserve structural graph fields while replacing node property values; callers may reuse the source graph, so masking helpers should return cloned structures.
 
 Selected story:
-- P2B-002 - Aggregation Chart Type Switcher
+- SI-001 - Mask JSON-decoded Vertex share-link graph payloads
 
-Story P2B-002 - Aggregation Chart Type Switcher:
-- Red test: npx vitest run src/components/aggregation/__tests__/AggregationPage.chartSwitcher.bdd.test.tsx failed because no accessible tab named /bar/i existed after grouped aggregation buckets rendered.
-- Implementation files:
-  - web/src/components/aggregation/AggregationPage.tsx
-  - web/src/components/aggregation/SimpleChart.tsx
-  - web/src/components/aggregation/__tests__/AggregationPage.chartSwitcher.bdd.test.tsx
-  - web/tests/feature.aggregation.spec.ts
-  - web/tests/support/pageObjects/AggregationPage.ts
-- Behavior:
-  - Grouped aggregation results render a compact Chart type tablist with Bar, Line, and Pie options.
-  - Switching chart type updates `data-chart-type` and swaps SVG marks (`data-bar`, `data-line`, `data-pie-slice`) without unmounting the result table.
-  - Empty bucket results still hide the chart wrapper and chart controls.
-  - SimpleChart defaults to bar mode so existing ObjectSetResults callers keep their previous behavior.
-- Verification:
-  - npx vitest run src/components/aggregation/__tests__/AggregationPage.chartSwitcher.bdd.test.tsx -> 1 file / 2 tests passed.
-  - npx vitest run src/components/aggregation -> 5 files / 13 tests passed.
-  - npx tsc --noEmit from web/ -> exit 0.
-  - npx playwright test tests/feature.aggregation.spec.ts --project=chromium with a temp config on 127.0.0.1:5174 -> 7 tests passed. Two earlier Playwright attempts were invalid verification runs: the first referenced a missing `playwright.worktree.config.ts`; the second fell back to port 5173 after a bad mktemp template and hit another checkout.
-  - npm test -- --run bdd from web/ -> 30 files / 81 tests passed.
-  - npm run build from web/ -> tsc -b + vite build + bundle budget passed.
-  - npx eslint src/components/aggregation/AggregationPage.tsx src/components/aggregation/SimpleChart.tsx src/components/aggregation/__tests__/AggregationPage.chartSwitcher.bdd.test.tsx tests/feature.aggregation.spec.ts tests/support/pageObjects/AggregationPage.ts from web/ -> exit 0.
-
-Selected story:
-- P2B-003 - ObjectSet Diff CSV Export
-
-Story P2B-003 - ObjectSet Diff CSV Export:
-- Red test: npx vitest run src/components/objectsets/__tests__/ObjectSetDiffPage.csvExport.bdd.test.tsx failed because no accessible button named /export csv/i existed after the diff results rendered.
-- Implementation files:
-  - web/src/lib/objectSetDiffCsv.ts
-  - web/src/components/objectsets/ObjectSetDiffPage.tsx
-  - web/src/components/objectsets/__tests__/ObjectSetDiffPage.csvExport.bdd.test.tsx
-  - web/tests/feature.objectset-diff.spec.ts
-  - web/tests/support/pageObjects/ObjectSetDiffPage.ts
-- Behavior:
-  - Computed ObjectSet diffs render an Export CSV button above the three diff sections.
-  - CSV output uses columns section, primaryKey, field, valueA, valueB.
-  - Only-in-A and only-in-B rows emit one line per object field with the missing side blank; changed rows emit one line per field change.
-  - CSV values blank null/undefined cells, JSON-stringify nested values, and quote commas/quotes/newlines.
-  - Before any diff is computed, no export affordance is rendered.
-- Verification:
-  - npx vitest run src/components/objectsets/__tests__/ObjectSetDiffPage.csvExport.bdd.test.tsx -> 1 file / 2 tests passed.
-  - npx vitest run src/components/objectsets/__tests__/ObjectSetDiffPage.test.tsx src/components/objectsets/__tests__/ObjectSetDiffPage.csvExport.bdd.test.tsx -> 2 files / 7 tests passed.
-  - npx tsc --noEmit from web/ -> exit 0.
-  - npx eslint src/components/objectsets/ObjectSetDiffPage.tsx src/components/objectsets/__tests__/ObjectSetDiffPage.csvExport.bdd.test.tsx src/components/objectsets/__tests__/ObjectSetDiffPage.test.tsx src/lib/objectSetDiffCsv.ts tests/feature.objectset-diff.spec.ts tests/support/pageObjects/ObjectSetDiffPage.ts from web/ -> exit 0.
-  - npx playwright test tests/feature.objectset-diff.spec.ts --project=chromium --config=playwright.worktree.config.ts from web/ -> 5 tests passed against 127.0.0.1:5174 in this worktree. The temporary config was deleted after the run.
-  - npm test -- --run bdd from web/ -> 31 files / 83 tests passed.
-  - npm run build from web/ -> tsc -b + vite build + bundle budget passed.
+## 2026-05-22T17:46:10+08:00 - SI-001
+- Implemented JSON-decoded graph masking for Vertex share links: `MaskGraphPayload` now handles both in-memory `[]map[string]any` nodes and HTTP/JSON-style `[]any` nodes containing `map[string]any` node objects.
+- Preserved the existing clone-before-mask behavior so callers can reuse the original decoded graph without observing redacted values.
+- Files changed:
+  - `pkg/vertex/sharelinks/sharelinks.go`
+  - `pkg/vertex/sharelinks/sharelinks_test.go`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- TDD evidence:
+  - RED: `go test ./pkg/vertex/sharelinks -run TestMaskGraphPayload_Given_JSONDecodedGraph_When_Masked_Then_RedactsPropertiesAndDoesNotMutateInput -count=1 -v` failed because decoded node properties remained `100` and `JFK`.
+  - GREEN targeted: `go test ./pkg/vertex/sharelinks -run TestMaskGraphPayload_Given_JSONDecodedGraph_When_Masked_Then_RedactsPropertiesAndDoesNotMutateInput -count=1 -v` passed.
+  - Package gate: `go test ./pkg/vertex/sharelinks -count=1` passed.
+  - Relevant project gate: `go test ./pkg/vertex/... -count=1` passed.
 - Codebase Patterns:
-  - For ObjectSet diff exports, keep the UI section labels as CSV section values and include primaryKey/field metadata so only-in and changed rows share one schema.
-  - Worktree-local Playwright verification should continue avoiding existing :5173 servers; use an alternate strict port and delete any temporary config before committing.
-
-
----
+  - JSON-decoded graph payloads expose arrays as `[]any`; masking helpers that operate on HTTP payloads should support that shape in addition to test-friendly typed slices.
