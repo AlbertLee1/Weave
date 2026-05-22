@@ -1,7 +1,7 @@
 # Ralph Progress Log
-Started: 2026-05-23T00:17:33+08:00
+Started: 2026-05-23T00:48:44+08:00
 Integration branch: ralph/self-iteration-20260522-233015
-Archived previous completed state: scripts/ralph/archive/self-iteration-20260523-001733/
+Archived previous completed state: scripts/ralph/archive/self-iteration-20260523-004844/
 
 ## Codebase Patterns
 - Use `httputil.ReadJSON(r, &req)` for Go HTTP handlers that accept JSON request bodies and must reject concatenated/trailing JSON values at the API boundary.
@@ -12,85 +12,78 @@ Archived previous completed state: scripts/ralph/archive/self-iteration-20260523
 - Browser facet fields should prefer detailed `Property[]` metadata once available because it carries `isSearchable`, `isArray`, and `baseType`; compact `objectType.properties` remains the fallback while detailed metadata is loading or unavailable.
 - Saved Browser view definitions are frontend-owned opaque JSON; adding presentation state is a type-only frontend contract change and does not require a backend API change.
 - BrowserPage should validate saved presentation mode values before applying them and should treat missing `viewMode` as the table fallback for legacy saved definitions.
+- CI contract BDD tests live in `scripts/ci/ci_workflow_bdd_test.go` and should guard workflow/tooling expectations that are easy to miss in local verifier subsets.
+
+## Preserved LLM Review Auto-Fix Context
+- PR: https://github.com/AlbertLee1/Weave/pull/50
+- Branch: ralph/self-iteration-20260522-233015
+- Reviewed HEAD: 37dbbe9db3e8
+- Review status: blocked
+- Summary: Blocked on failing GitHub Go CI; no additional blocking code issue identified from the local diff review.
+- Blocking findings:
+```json
+[
+  {
+    "severity": "critical",
+    "file": ".github/workflows/ci.yml",
+    "line": 22,
+    "issue": "The GitHub Go CI job for this PR is red. The local verifier only ran gofmt, make test, make web-test, and make web-build, so it did not cover CI-only gates such as go vet, golangci-lint, race+coverage, covercheck, contract tests, and govulncheck.",
+    "suggestion": "Do not auto-merge until the Go workflow is green. Inspect the failed GitHub job log, fix the failing step, and rerun the PR workflow successfully."
+  }
+]
+```
+- Recommended fix prompt:
+```text
+Inspect the failed Go CI job for PR #50/run 26298559112, identify the failing step, fix the root cause, then rerun the full Go CI-equivalent gates including vet, golangci-lint, race+coverage/covercheck, contract tests, and govulncheck.
+```
 
 ## Initial Inspection
 - Branch verified: `ralph/self-iteration-20260522-233015`.
-- Prior PRD matched this branch and all stories had `passes: true`, so a new small PRD was created for this branch.
-- No `PR CI auto-fix context` or `LLM review auto-fix context` is present in the current progress file. The prior committed progress noted the same.
+- Prior PRD matched this branch and all stories had `passes: true`, so a new focused auto-fix PRD was created.
 - Root Ralph symlinks are intact: `prd.json -> scripts/ralph/prd.json`, `progress.txt -> scripts/ralph/progress.txt`.
-- Known fresh-CI embed risk checked with `go test ./cmd/server -run TestBDD_WebEmbedDoesNotRequireGeneratedDist -v`: passed.
-- Known US-453 compliance report web risk checked with `npx vitest run src/components/admin/__tests__/ComplianceReportsPage.test.tsx`: passed (8 tests).
-- Web typecheck checked with `npx tsc --noEmit`: passed.
-- Dogfood reports reviewed: DOG-001 through DOG-005 already have regression coverage/implementations in the current tree.
+- GitHub PR checks for PR #50 currently show Go CI failing and Web CI passing.
+- GitHub run 26298559112 failed only at `govulncheck` after build, vet, golangci-lint, race+coverage, covercheck, and contract tests passed.
+- Latest PR check run 26300065159 fails at the same `govulncheck` step.
+- Failure evidence: `GO-2026-5026` in `golang.org/x/net/idna`; module `golang.org/x/net@v0.54.0`; fixed in `golang.org/x/net@v0.55.0`; trace `internal/cliclient/client.go:996:24: cliclient.Client.PostJSONRaw calls http.Client.Do, which eventually calls idna.ToASCII`.
+- `go list -m -u -json golang.org/x/net` shows current `v0.54.0` and update `v0.55.0`.
+- `go mod why -m golang.org/x/net` shows the module is pulled through `github.com/liyang/weave/pkg/xlsxstream -> github.com/xuri/excelize/v2 -> golang.org/x/net/html/charset`.
+- Docs inspected: `docs/cli.md` confirms `internal/cliclient` powers the CLI's HTTP wrapper.
+- Tests inspected: `scripts/ci/ci_workflow_bdd_test.go` already guards govulncheck workflow wiring and package scope.
+- Dogfood output inspected: 2026-05-17 ontology/web UI dogfood reports contain previously tracked DOG findings; no higher-priority review auto-fix target than the CI failure.
 
 ## Selected Story
-- RSI-001 Security policy writes reject ambiguous JSON bodies.
-- Rationale: row policies, column masks, and cell masks are OSv2 security-control write surfaces. They still decode request bodies with raw `json.NewDecoder(r.Body).Decode`, so a concatenated JSON body can apply the first policy/update while silently ignoring trailing data. This is the same API-boundary class fixed in the previous Ralph cycle for permission requests and tenant quota writes.
+- RCI-001 Govulncheck uses fixed x/net release.
+- Rationale: this is the sole blocking LLM review finding and the current GitHub Go CI failure is a vulnerability-gate failure with a fixed dependency release available. Scope is limited to dependency/test/Ralph state needed to preserve the govulncheck gate and clear the reviewed failure.
 
 ---
 
-## 2026-05-23T00:23:30+08:00 - RSI-001
-- Implemented strict single-value JSON decoding for row policy, column mask, and cell mask create/update handlers.
-- Added BDD router coverage proving concatenated JSON returns the existing invalid-request 400 errors and does not create or mutate in-memory policy state.
+## 2026-05-23T00:59:33+08:00 - RCI-001
+- Implemented the focused CI review repair for the failing `govulncheck` gate.
+- Added a BDD guard in `scripts/ci/ci_workflow_bdd_test.go` requiring `golang.org/x/net >= v0.55.0`, the fixed version reported by GitHub CI for `GO-2026-5026`.
+- Updated `golang.org/x/net` from `v0.54.0` to `v0.55.0`; `go get` also advanced `golang.org/x/sys` from `v0.44.0` to `v0.45.0` as a transitive module update.
 - Files changed:
-  - `pkg/rls/handlers.go`
-  - `pkg/rls/handlers_test.go`
-  - `pkg/masking/handlers.go`
-  - `pkg/masking/handlers_test.go`
-  - `pkg/cellsec/handlers.go`
-  - `pkg/cellsec/handlers_test.go`
+  - `go.mod`
+  - `go.sum`
+  - `scripts/ci/ci_workflow_bdd_test.go`
   - `scripts/ralph/prd.json`
   - `scripts/ralph/progress.txt`
+  - `scripts/ralph/archive/self-iteration-20260523-004844/prd.json`
+  - `scripts/ralph/archive/self-iteration-20260523-004844/progress.txt`
 - TDD evidence:
-  - RED: `go test ./pkg/rls -run TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI001 -v` failed because create returned 201 and update returned 200 while applying the first JSON object.
-  - RED: `go test ./pkg/masking -run TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI001 -v` failed because create returned 201 and update returned 200 while applying the first JSON object.
-  - RED: `go test ./pkg/cellsec -run TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI001 -v` failed because create returned 201 and update returned 200 while applying the first JSON object.
-  - GREEN: all three commands passed after switching write decoders to `httputil.ReadJSON`.
+  - RED: `go test ./scripts/ci -run TestBDD_GovulncheckDependencyGraphUsesFixedXNetForGO20265026 -v` failed with `golang.org/x/net must be at or above v0.55.0 so govulncheck clears GO-2026-5026, got v0.54.0`.
+  - GREEN: the same command passed after `go get golang.org/x/net@v0.55.0`.
 - Verification:
-  - `go test ./pkg/rls ./pkg/masking ./pkg/cellsec ./pkg/httputil` passed.
-  - `go test $(./scripts/ci/go-packages.sh)` passed.
+  - `go test ./scripts/ci -v` passed.
+  - `make vulncheck` passed with `No vulnerabilities found` and `Your code is affected by 0 vulnerabilities`.
+  - `go build $(./scripts/ci/go-packages.sh --build)` passed.
+  - `go vet $(./scripts/ci/go-packages.sh)` passed.
+  - Raw `golangci-lint run --timeout=5m` through pinned v2.11.4 reported the repository's historical lint backlog, matching the existing workflow contract that CI runs with `only-new-issues: true`.
+  - CI-equivalent PR-diff lint passed: `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m --new-from-rev=b70f46686fb1ba6370baa8ecad012c62bed79072` returned `0 issues`.
+  - `go test -race -coverprofile=coverage.out -covermode=atomic $(./scripts/ci/go-packages.sh)` passed.
+  - `go tool cover -func=coverage.out` passed; total statement coverage was `64.8%`.
+  - `go run ./cmd/covercheck -profile coverage.out -thresholds coverage/thresholds.json -baseline coverage/baseline.json -md coverage/report.md -output coverage/report.json` passed with `Coverage gate: PASS`.
+  - `make test-contract` passed.
+  - `go list -m -json golang.org/x/net` reports `Version: v0.55.0`.
 - **Learnings for future iterations:**
-  - OSv2 security-control write handlers should preserve their surface-specific error names while using `httputil.ReadJSON` for deterministic single-value body parsing.
----
-
-## 2026-05-23T00:27:36+08:00 - RSI-002
-- Implemented strict single-value JSON decoding for saved-search create/update handlers.
-- Added BDD router coverage proving concatenated JSON returns the existing `InvalidRequestBody` 400 error and does not create or mutate in-memory saved-search state.
-- Files changed:
-  - `pkg/savedsearches/handlers.go`
-  - `pkg/savedsearches/handlers_test.go`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- TDD evidence:
-  - RED: `go test ./pkg/savedsearches -run TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI002 -v` failed because create returned 201 and update returned 200 while applying the first JSON object.
-  - GREEN: the same command passed after switching write decoders to `httputil.ReadJSON`.
-- Verification:
-  - `go test ./pkg/savedsearches ./pkg/httputil` passed.
-  - `go test $(./scripts/ci/go-packages.sh)` passed.
-- **Learnings for future iterations:**
-  - Saved-search definitions are intentionally opaque, but the write API boundary still needs deterministic single-value JSON parsing before storing the opaque envelope.
----
-
-## 2026-05-23T00:32:59+08:00 - RSI-003
-- Implemented strict single-value JSON decoding for comments, watches, and reactions write handlers.
-- Added BDD router coverage proving concatenated JSON returns the existing `InvalidRequestBody` 400 error and does not create or mutate in-memory collaboration state.
-- Files changed:
-  - `pkg/comments/handlers.go`
-  - `pkg/comments/handlers_test.go`
-  - `pkg/watches/handlers.go`
-  - `pkg/watches/handlers_test.go`
-  - `pkg/reactions/handlers.go`
-  - `pkg/reactions/handlers_test.go`
-  - `scripts/ralph/prd.json`
-  - `scripts/ralph/progress.txt`
-- TDD evidence:
-  - RED: `go test ./pkg/comments -run TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI003 -v` failed because create returned 201 and update returned 200 while applying the first JSON object.
-  - RED: `go test ./pkg/watches -run TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI003 -v` failed because create returned 201 while applying the first JSON object.
-  - RED: `go test ./pkg/reactions -run TestBDD_HandlerRejectsAmbiguousJSONBodies_RSI003 -v` failed because create returned 201 while applying the first JSON object.
-  - GREEN: all three commands passed after switching write decoders to `httputil.ReadJSON`.
-- Verification:
-  - `go test ./pkg/comments ./pkg/watches ./pkg/reactions ./pkg/httputil` passed.
-  - `go test $(./scripts/ci/go-packages.sh)` passed.
-- **Learnings for future iterations:**
-  - Collaboration write handlers share the same deterministic request-body parsing requirement as admin policy and saved-view writes; use `httputil.ReadJSON` when accepting JSON bodies at API boundaries.
----
+  - When GitHub CI uses `golangci-lint-action` with `only-new-issues: true`, the local equivalent should use the pinned linter with `--new-from-rev=<merge-base>` to avoid conflating story changes with historical lint debt.
+  - Security-gate dependency repairs should add a small CI BDD guard for the fixed module floor so the same vulnerability class does not silently regress.
