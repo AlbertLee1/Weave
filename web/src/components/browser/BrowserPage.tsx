@@ -342,11 +342,25 @@ function BrowserPageContent({
     onStatusChange: handleObjectSetStatusChange,
   });
 
-  // Compute the set of facet-able fields from the object type's properties.
-  // Picks string/boolean/date-typed fields, excludes the primary key, and caps
-  // at MAX_FACET_FIELDS so the response stays bounded.
+  // Compute the set of facet-able fields from property metadata. Detailed
+  // metadata is authoritative for searchability; compact object type metadata
+  // remains the fallback while the detailed query is loading or unavailable.
   const facetFields = useMemo<string[]>(() => {
-    if (!objectType?.properties) return [];
+    if (!objectType) return [];
+    if (detailedProperties) {
+      const out: string[] = [];
+      for (const prop of detailedProperties) {
+        if (prop.apiName === objectType.primaryKey) continue;
+        if (!prop.isSearchable || prop.isArray) continue;
+        const t = prop.baseType.toLowerCase();
+        if (FACETABLE_BASE_TYPES.has(t)) {
+          out.push(prop.apiName);
+          if (out.length >= MAX_FACET_FIELDS) break;
+        }
+      }
+      return out;
+    }
+    if (!objectType.properties) return [];
     const out: string[] = [];
     for (const [name, prop] of Object.entries(objectType.properties)) {
       if (name === objectType.primaryKey) continue;
@@ -357,7 +371,7 @@ function BrowserPageContent({
       }
     }
     return out;
-  }, [objectType]);
+  }, [detailedProperties, objectType]);
 
   const hasFacetSelection = useMemo(
     () => Object.values(selectedFacets).some((vs) => vs.length > 0),

@@ -593,8 +593,14 @@ describe('BrowserPage facets', () => {
     return renderBrowserPage();
   }
 
-  it('forwards facet field names from the object type properties to the search request body', async () => {
+  it('falls back to compact object type properties for facet fields when detailed metadata is unavailable', async () => {
     let capturedBody: unknown = null;
+    server.use(
+      http.get(
+        '/api/v2/ontologies/:ontology/objectTypes/byRid/:objectTypeRid/properties',
+        () => HttpResponse.json({ message: 'unavailable' }, { status: 500 }),
+      ),
+    );
     setup(async ({ request }) => {
       capturedBody = await request.json();
       return HttpResponse.json({
@@ -628,6 +634,91 @@ describe('BrowserPage facets', () => {
     expect(screen.getByLabelText('name: Alice')).toBeInTheDocument();
     expect(screen.getByText('Bob')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
+  });
+
+  it('prefers detailed searchable property metadata for facet fields', async () => {
+    let capturedBody: unknown = null;
+    let detailedPropertiesLoaded = false;
+    server.use(
+      http.get(
+        '/api/v2/ontologies/:ontology/objectTypes/byRid/:objectTypeRid/properties',
+        ({ params }) => {
+          if (params.objectTypeRid !== 'ri.ot.delivery') {
+            return HttpResponse.json({ data: [] });
+          }
+          detailedPropertiesLoaded = true;
+          return HttpResponse.json({
+            data: [
+              {
+                rid: 'ri.p.id',
+                apiName: 'id',
+                baseType: 'string',
+                isArray: false,
+                isNullable: false,
+                isSearchable: true,
+                isSortable: true,
+              },
+              {
+                rid: 'ri.p.summary',
+                apiName: 'summary',
+                baseType: 'string',
+                isArray: false,
+                isNullable: true,
+                isSearchable: false,
+                isSortable: false,
+              },
+              {
+                rid: 'ri.p.deliveredDate',
+                apiName: 'deliveredDate',
+                baseType: 'date',
+                isArray: false,
+                isNullable: true,
+                isSearchable: true,
+                isSortable: true,
+              },
+            ],
+          });
+        },
+      ),
+    );
+    server.use(
+      http.post(
+        '/api/v2/ontologies/:ontology/objects/:objectType/search',
+        async ({ request }) => {
+          capturedBody = await request.json();
+          return HttpResponse.json({
+            data: [
+              {
+                __primaryKey: 'delivery-1',
+                __apiName: 'Delivery',
+                id: 'delivery-1',
+                summary: 'Dock received',
+                deliveredDate: '2026-05-19',
+              },
+            ],
+            totalCount: '1',
+            facets: {
+              deliveredDate: [{ value: '2026-05-19', count: 1 }],
+            },
+          });
+        },
+      ),
+    );
+
+    renderBrowserPage('testOntology', 'Delivery');
+
+    await waitFor(() => {
+      expect(detailedPropertiesLoaded).toBe(true);
+    });
+    const input = await screen.findByTestId('search-input');
+    fireEvent.change(input, { target: { value: 'dock' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(capturedBody).not.toBeNull();
+    });
+
+    expect(capturedBody).toMatchObject({ facets: ['deliveredDate'] });
   });
 
   it('AND-merges a clicked facet into the where clause and re-fires search', async () => {
