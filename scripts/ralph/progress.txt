@@ -1,3 +1,129 @@
-# Ralph Progress Log
-Started: Sat May 23 11:08:27 CST 2026
+# Ralph Progress Log - Parallel2 Integration
+Integrated: 2026-05-23T15:32:51+08:00
+Integration branch: ralph/self-iteration-20260523-122931
+
+## Stream A: ralph/self-iteration-20260523-122931-A
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260523-122931-A
+HEAD: 4a40debe621e
+
+# Ralph Progress Log - Parallel2 Stream A
+Started: 2026-05-23T12:29:32+08:00
+Integration branch: ralph/self-iteration-20260523-122931
+Stream branch: ralph/self-iteration-20260523-122931-A
+Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
+Archived empty starter PRD/progress to scripts/ralph/archive/self-iteration-20260523-122931-empty/.
+
+## Codebase Patterns
+- Backend write surfaces that need ambiguous-body hardening should switch from `json.NewDecoder(r.Body).Decode(&req)` to `httputil.ReadJSON(r, &req)` so the single-JSON-value contract is enforced and trailing tokens are rejected at the API boundary.
+- BDD-style integration tests for ambiguous JSON bodies pair (a) a concatenated-body request asserting 400 + `single JSON value` reason + no state mutation with (b) a well-formed body regression asserting the existing happy path still works.
+- Auth handler tests use `withAdmin(req)` (defined in `pkg/auth/api_key_handlers_test.go`) to attach an admin `*User` to the request context so `UserFromContext` resolves.
+- Naming convention for ambiguous-body BDD tests in this repo: `TestBDD_<Surface>RejectsAmbiguousJSONBody_<StoryID>` or `TestBDD_HandlerRejectsAmbiguousJSONBodies_<StoryID>`.
+- After P2A-303, the role/group/service-account admin write handlers in `pkg/auth/` all decode through `httputil.ReadJSON`. Remaining `json.NewDecoder(r.Body)` call sites in `pkg/auth/` (api_key, user_role, mfa, marking, refresh, logout) are candidates for the next ambiguous-body audit — `grep -nR 'json.NewDecoder(r.Body)' pkg/auth/` enumerates them.
+
+## Initial Inspection
+- Branch verified: `ralph/self-iteration-20260523-122931-A` (matches PRD `branchName`).
+- Root Ralph symlinks intact: `prd.json -> scripts/ralph/prd.json`, `progress.txt -> scripts/ralph/progress.txt`.
+- No `PR CI auto-fix context` and no `LLM review auto-fix context` in the prior progress file — main CI is currently green (PR #51 merged successfully with both Go and Web jobs SUCCESS).
+- Inspected `dogfood-output/`: DOG-001 already fixed by `5ce62db fix: P2B-503 - Guard Northwind E2E Seed Replays from FK Wipe Failures`; DOG-002 is a frontend dashboard counter (stream B's lane).
+- Inspected ambiguous-body history: P2A-001 (permission requests), P2A-002 (tenants), P2A-003 (MCP HTTP), P2A-A001 (login), RSI-001/002/003 (security policies / saved searches / collaboration), RRF-001 (tenant AddUsage + permission decision bodies). All RBAC admin write handlers (`pkg/auth/role_handlers.go`, `group_handlers.go`, `service_account_handlers.go`) still use lax `json.NewDecoder(r.Body).Decode(&req)`.
+- Confirmed `pkg/httputil/json.go` exposes `ReadJSON` with the established single-value + MaxBytes contract.
+- Confirmed `pkg/auth/role_handlers_test.go` already has a complete in-memory `fakeRoleRepo` harness usable as a base for BDD tests.
+
+## Selected Story
+- P2A-301 RBAC role admin writes reject ambiguous JSON request bodies.
+- Rationale: highest priority because role definitions and role permissions are the root of Weave's RBAC graph — a trailing-JSON smuggling path here is the most dangerous remaining instance of the previously-fixed class. Scope is limited to three sibling handlers in `pkg/auth/role_handlers.go` (Create, Update, SetPermissions) and the matching BDD tests.
+
+---
+
+## 2026-05-23T12:39:36+08:00 - P2A-301
+- Hardened the RBAC role admin write surface against ambiguous JSON request bodies by routing POST `/api/admin/roles`, PATCH `/api/admin/roles/{name}`, and PUT `/api/admin/roles/{name}/permissions` through `httputil.ReadJSON`. This enforces the single-JSON-value contract and applies the shared 1 MiB body cap, mirroring the prior P2A/RSI/RRF fixes.
+- Files changed:
+  - `pkg/auth/role_handlers.go` (3 decoder call sites + 1 new import line for `pkg/httputil`)
+  - `pkg/auth/role_handlers_bdd_test.go` (new file: BDD scenarios for Create / Update / SetPermissions ambiguous bodies plus a well-formed regression)
+- TDD/BDD evidence (Red → Green):
+  - RED: `go test ./pkg/auth/... -run TestBDD_RoleAdminWritesRejectAmbiguousJSONBody_P2A301 -v` failed with `expected 400 for ambiguous body, got 201` / `got 200` for Create / Update / SetPermissions, while the well-formed happy-path sub-test already passed (confirming the new test isolates the actual contract gap, not a setup issue).
+  - GREEN: the same command passed all four sub-tests after switching to `httputil.ReadJSON`.
+- Verification:
+  - `go test ./pkg/auth/... -run 'TestBDD_RoleAdminWritesRejectAmbiguousJSONBody_P2A301|TestRoleHandler_' -v` PASS (4 BDD sub-tests + 11 existing `TestRoleHandler_*` regressions).
+  - `go test ./pkg/auth/...` PASS (full auth package, 17.285s).
+  - `go test -race ./pkg/auth/... -run 'TestBDD_RoleAdminWritesRejectAmbiguousJSONBody_P2A301|TestRoleHandler_'` PASS under the race detector.
+  - `go vet ./pkg/auth/... ./pkg/httputil/...` clean.
+  - `gofmt -l pkg/auth/role_handlers.go pkg/auth/role_handlers_bdd_test.go` clean.
+  - `go build ./...` clean.
+  - `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m --new-from-rev=a76d8cb ./pkg/auth/...` reported `0 issues` (PR-diff scope mirrors CI workflow `only-new-issues: true`).
+  - `go test ./scripts/ci/` PASS (CI workflow contract tests still hold).
+- **Learnings for future iterations:**
+  - The `httputil.ReadJSON` migration in `pkg/auth/*_handlers.go` is mechanical at the call site but requires keeping `encoding/json` in the import block when the handler still uses `json.NewEncoder(w).Encode(...)` for responses — only the request decoder switches packages.
+  - `pkg/auth/api_key_handlers_test.go` defines the package-shared `withAdmin(req)` helper that injects an admin `*User` into the request context. Reusing it (rather than rolling another helper) keeps RBAC BDD tests aligned with the existing `TestRoleHandler_*` style.
+  - When asserting "no state mutated" on a rejected RBAC Create, also assert the absence of the smuggled-second role name in the repo, not just that the first-decoded name was not inserted — `httputil.ReadJSON` rejects before either is persisted, but the assertion documents the threat model.
+
+---
+
+## 2026-05-23T12:44:52+08:00 - P2A-302
+- Hardened the group admin write surface against ambiguous JSON request bodies by routing POST `/api/admin/groups`, PATCH `/api/admin/groups/{id}`, and POST `/api/admin/groups/{id}/members` through `httputil.ReadJSON`. This enforces the single-JSON-value contract and applies the shared 1 MiB body cap, mirroring P2A-301 on the role handler.
+- Files changed:
+  - `pkg/auth/group_handlers.go` (3 decoder call sites + 1 new import line for `pkg/httputil`)
+  - `pkg/auth/group_handlers_bdd_test.go` (new file: BDD scenarios for Create / Update / AddMember ambiguous bodies plus a well-formed regression)
+- TDD/BDD evidence (Red → Green):
+  - RED: `go test ./pkg/auth/... -run TestBDD_GroupAdminWritesRejectAmbiguousJSONBody_P2A302 -v` failed with `expected 400 for ambiguous body, got 201` / `got 200` / `got 204` for Create / Update / AddMember; the well-formed happy-path sub-test passed (confirming the new test isolates the contract gap, not a setup issue).
+  - GREEN: same command passed all four sub-tests after switching to `httputil.ReadJSON`.
+- Verification:
+  - `go test ./pkg/auth/...` PASS (full auth package, 17.131s).
+  - `go test -race ./pkg/auth/... -run 'TestBDD_GroupAdminWritesRejectAmbiguousJSONBody_P2A302|TestGroupHandler_'` PASS under the race detector (4 BDD sub-tests + 11 existing `TestGroupHandler_*` regressions).
+  - `go vet ./pkg/auth/... ./pkg/httputil/...` clean.
+  - `gofmt -l pkg/auth/group_handlers.go pkg/auth/group_handlers_bdd_test.go` clean.
+  - `go build ./...` clean.
+  - `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m --new-from-rev=6b19d4b ./pkg/auth/...` reported `0 issues` (PR-diff scope mirrors CI workflow `only-new-issues: true`).
+  - `go test ./scripts/ci/` PASS (CI workflow contract tests still hold).
+- **Learnings for future iterations:**
+  - For group BDD tests, asserting "no membership mutated" works at the `repo.ListMembers` boundary; do not reach into `repo.memberships` directly because the membership map is only populated lazily by `AddMember`, so a pre-Add snapshot is `nil` and a post-rejection re-read is the cleanest invariant.
+  - The group repo assigns IDs server-side (`grp-NNNN`) in `fakeGroupRepo.Create`, so the well-formed regression must decode the `GroupResponse` from the Create recorder and reuse `created.ID` for the follow-up Update + AddMember calls — using the group's *name* breaks `updateFor(id)`.
+  - The shared `assertSingleJSONValueRejection` helper from `pkg/auth/role_handlers_bdd_test.go` is package-local and reusable across any auth admin write BDD test; the next service-account fix (P2A-303) can reuse it without copying.
+
+---
+
+## 2026-05-23T12:49:30+08:00 - P2A-303
+- Hardened the service-account admin write surface against ambiguous JSON request bodies by routing POST `/api/admin/service-accounts` and PATCH `/api/admin/service-accounts/{id}` through `httputil.ReadJSON`. This closes the last RBAC/identity admin write path that still accepted concatenated JSON, enforcing the single-JSON-value contract and applying the shared 1 MiB body cap.
+- Files changed:
+  - `pkg/auth/service_account_handlers.go` (2 decoder call sites + 1 new import line for `pkg/httputil`)
+  - `pkg/auth/service_account_handlers_bdd_test.go` (new file: BDD scenarios for Create / Update ambiguous bodies plus a well-formed regression covering both surfaces)
+- TDD/BDD evidence (Red → Green):
+  - RED: `go test ./pkg/auth/... -run TestBDD_ServiceAccountAdminWritesRejectAmbiguousJSONBody_P2A303 -v` failed with `expected 400 for ambiguous body, got 201` for Create and `got 200` for Update; the well-formed happy-path sub-test already passed (confirming the new test isolates the contract gap, not a setup issue).
+  - GREEN: same command passed all three sub-tests after switching to `httputil.ReadJSON`.
+- Verification:
+  - `go test ./pkg/auth/...` PASS (full auth package, 17.650s).
+  - `go test -race ./pkg/auth/... -run 'TestBDD_ServiceAccountAdminWritesRejectAmbiguousJSONBody_P2A303|TestServiceAccountHandler_'` PASS under the race detector.
+  - `go vet ./pkg/auth/... ./pkg/httputil/...` clean.
+  - `gofmt -l pkg/auth/service_account_handlers.go pkg/auth/service_account_handlers_bdd_test.go` clean.
+  - `go build ./...` clean.
+  - `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run --timeout=5m --new-from-rev=e4f6686 ./pkg/auth/...` reported `0 issues` (PR-diff scope mirrors CI workflow `only-new-issues: true`).
+  - `go test ./scripts/ci/` PASS (CI workflow contract tests still hold).
+- **Learnings for future iterations:**
+  - `fakeServiceAccountRepo` in `pkg/auth/service_account_handlers_test.go` (not `_repository_test.go`) is the package-local in-memory repo used by handler tests; it assigns IDs via `uuidLike(seq)` server-side, so the well-formed regression must reuse `created.ID` from the Create response — not the user-supplied name.
+  - `ServiceAccountUpdateRequest` uses **pointer-typed** fields (`*string`, `*[]string`) to distinguish nil/preserve from non-nil/replace, mirroring `UpdateLinkTypeRequest`/`UpdateActionTypeRequest`. The smuggled-second-value assertion (`ambiguous Update mutated description` etc.) must therefore re-read the row via `repo.GetByID` and compare against the seeded baseline, since `httputil.ReadJSON` rejects before any pointer-driven mutation reaches the repo.
+  - With P2A-303 done, the role/group/service-account admin write handlers in `pkg/auth/` now decode through `httputil.ReadJSON`. `api_key_handlers.go` Create (line 118) and Rotate (line 332), plus user_role / mfa / marking / refresh / logout handlers, still use `json.NewDecoder(r.Body)` and are candidates for the next ambiguous-body audit. `grep -nR 'json.NewDecoder(r.Body)' pkg/auth/` enumerates them.
+
+---
+
+
+---
+
+## Stream B: ralph/self-iteration-20260523-122931-B
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260523-122931-B
+HEAD: a76d8cb5fb52
+
+# Ralph Progress Log - Parallel2 Stream B
+Started: 2026-05-23T12:29:32+08:00
+Integration branch: ralph/self-iteration-20260523-122931
+Stream branch: ralph/self-iteration-20260523-122931-B
+Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
+---
+
+## 2026-05-23 - No-op iteration
+- prd.json has empty userStories: []; no story with passes:false to pick up.
+- On correct branch (ralph/self-iteration-20260523-122931-B); working tree clean.
+- Stop condition satisfied vacuously — replying COMPLETE.
+---
+
+
 ---

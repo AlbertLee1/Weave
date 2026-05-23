@@ -1,35 +1,51 @@
 {
   "project": "Weave parallel2 self-iteration",
-  "branchName": "ralph/self-iteration-20260523-102602",
+  "branchName": "ralph/self-iteration-20260523-122931",
   "description": "Combined PRD evidence from two isolated Claude Code/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
   "userStories": [
     {
-      "id": "P2A-A001",
-      "title": "Login endpoint rejects ambiguous JSON request bodies",
+      "id": "P2A-301",
+      "title": "RBAC role admin writes reject ambiguous JSON request bodies",
       "priority": 1,
       "passes": true,
-      "description": "POST /api/auth/login currently uses raw json.NewDecoder which silently accepts and ignores trailing JSON values after the first one and imposes no body-size cap. Harden it to use the shared httputil.ReadJSON helper so ambiguous or oversized request bodies are rejected with a clear validation error before any credential lookup happens.",
-      "acceptance": [
-        "Given a POST /api/auth/login whose body contains two concatenated JSON objects, when the handler decodes the request, then it responds 400 InvalidLoginRequest without performing a user lookup.",
-        "Given a POST /api/auth/login whose body is larger than httputil.MaxBodySize, when the handler decodes the request, then it responds 400 InvalidLoginRequest without performing a user lookup.",
-        "Given a well-formed POST /api/auth/login, when the handler decodes the request, then existing happy path and unauthorized paths continue to behave identically."
+      "description": "POST /api/admin/roles, PATCH /api/admin/roles/{name}, and PUT /api/admin/roles/{name}/permissions all currently call json.NewDecoder(r.Body).Decode(&req) directly. That accepts only the first JSON value and silently ignores trailing bytes, so a concatenated payload such as {\"name\":\"safe\"}{\"permissions\":[\"admin\"]} can hide intent from auditors, proxies, and operators. Route all three handlers through httputil.ReadJSON so the single-JSON-value contract holds for the RBAC root surface.",
+      "bddAcceptanceCriteria": [
+        "Given POST /api/admin/roles with a concatenated body of two JSON objects, when the handler decodes the request, then it returns 400 InvalidRoleRequest with a reason mentioning a single JSON value AND no role row is created.",
+        "Given PATCH /api/admin/roles/{name} for an existing custom role with a concatenated body, when the handler decodes the request, then it returns 400 InvalidRoleUpdate AND the stored description remains unchanged.",
+        "Given PUT /api/admin/roles/{name}/permissions for a custom role with a concatenated body, when the handler decodes the request, then it returns 400 InvalidPermissionsRequest AND the stored permissions remain unchanged.",
+        "Given a single well-formed JSON body for each of POST /api/admin/roles, PATCH, and PUT permissions, when the handler runs, then the existing 201/200 happy paths still succeed so the hardening does not regress legitimate clients."
       ],
+      "dependencies": [],
       "stream": "A",
-      "source_branch": "ralph/self-iteration-20260523-102602-A"
+      "source_branch": "ralph/self-iteration-20260523-122931-A"
     },
     {
-      "id": "P2B-S004",
-      "title": "Saved Browser Searches Show Active Indicator",
-      "priority": 1,
+      "id": "P2A-302",
+      "title": "Group admin writes reject ambiguous JSON request bodies",
+      "priority": 2,
       "passes": true,
-      "description": "After loading a saved Browser search the operator has no UI signal that says which entry was applied. As soon as the view drifts (search edit, filter change, facet toggle, sort, view-mode switch) there is also no way to learn that the current view no longer matches the saved definition. Surface an aria-current Active badge on the saved-searches row that maps to the most recently loaded definition, and clear that signal whenever the operator mutates any control that participates in the saved-search definition.",
-      "acceptance": [
-        "Given a saved search is loaded, when the operator inspects the SavedSearchesPanel, then exactly that row has aria-current=\"true\" and renders an operator-visible Active badge.",
-        "Given a saved search is active, when the operator clears the search input or types into it, then the active indicator is removed because the view has drifted from the saved definition.",
-        "Given a saved search is active, when the operator switches the Browser view mode via the toolbar, then the active indicator is removed because the view has drifted from the saved definition."
+      "description": "POST /api/admin/groups, PATCH /api/admin/groups/{name}, and the group-member assignment write at pkg/auth/group_handlers.go:340 still use json.NewDecoder(r.Body).Decode(&req). Convert them to httputil.ReadJSON to close the same trailing-JSON smuggling gap on group-level RBAC writes.",
+      "bddAcceptanceCriteria": [
+        "Given each group admin write surface with a concatenated body of two JSON objects, when the handler decodes the request, then it returns 400 with a reason mentioning a single JSON value AND no group/member state mutates.",
+        "Given a single well-formed JSON body for each surface, when the handler runs, then the existing happy paths still succeed."
       ],
-      "stream": "B",
-      "source_branch": "ralph/self-iteration-20260523-102602-B"
+      "dependencies": [],
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260523-122931-A"
+    },
+    {
+      "id": "P2A-303",
+      "title": "Service-account admin writes reject ambiguous JSON request bodies",
+      "priority": 3,
+      "passes": true,
+      "description": "POST /api/admin/service-accounts and PATCH /api/admin/service-accounts/{id} at pkg/auth/service_account_handlers.go:108 and :256 still use json.NewDecoder(r.Body).Decode(&req). Convert them to httputil.ReadJSON so trailing-JSON smuggling cannot bypass the single-value contract on service-account writes that mint long-lived identities.",
+      "bddAcceptanceCriteria": [
+        "Given each service-account admin write surface with a concatenated body of two JSON objects, when the handler decodes the request, then it returns 400 with a reason mentioning a single JSON value AND no service-account state mutates.",
+        "Given a single well-formed JSON body for each surface, when the handler runs, then the existing happy paths still succeed."
+      ],
+      "dependencies": [],
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260523-122931-A"
     }
   ]
 }
