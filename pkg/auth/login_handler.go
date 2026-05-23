@@ -13,6 +13,7 @@ import (
 
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/audit"
+	"github.com/liyang/weave/pkg/httputil"
 )
 
 // LoginRequest is the JSON request body for POST /api/auth/login.
@@ -120,7 +121,7 @@ func (h *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidLoginRequest", map[string]string{
 			"reason": err.Error(),
 		}))
