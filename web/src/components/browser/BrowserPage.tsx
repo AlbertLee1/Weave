@@ -33,6 +33,7 @@ import { useTimeTravelActive } from './useTimeTravel';
 import type { WhereClause, WireObject } from '../../api/types';
 import type {
   BrowserViewMode,
+  SavedSearch,
   SavedSearchDefinition,
 } from '../../api/savedSearches';
 import { ApiRequestError } from '../../api/client';
@@ -144,6 +145,14 @@ function BrowserPageContent({
 
   // View mode: table | map | gantt | sankey | pivot
   const [viewMode, setViewMode] = useState<BrowserViewMode>('table');
+
+  // P2B-S004: when the operator loads a saved search we mark that row as
+  // "currently applied" in the SavedSearchesPanel. The id is cleared as
+  // soon as any user-driven control mutates the view, so a drifted view
+  // is never falsely advertised as matching the saved definition.
+  const [activeSavedSearchId, setActiveSavedSearchId] = useState<
+    string | null
+  >(null);
 
   // Realtime mode state: 'off' | 'ws' (WebSocket) | 'sse' (SSE fallback)
   const [realtimeMode, setRealtimeMode] = useState<'off' | 'ws' | 'sse'>('off');
@@ -503,6 +512,7 @@ function BrowserPageContent({
     setSelectedRowMap(new Map());
     setPageTokens([]);
     setCurrentPage(1);
+    setActiveSavedSearchId(null);
   }, []);
 
   const handleFiltersChange = useCallback((newFilters: FilterCondition[]) => {
@@ -510,6 +520,7 @@ function BrowserPageContent({
     setSelectedRowMap(new Map());
     setPageTokens([]);
     setCurrentPage(1);
+    setActiveSavedSearchId(null);
   }, []);
 
   const handleToggleFacet = useCallback((field: string, value: string) => {
@@ -525,6 +536,7 @@ function BrowserPageContent({
     });
     setPageTokens([]);
     setCurrentPage(1);
+    setActiveSavedSearchId(null);
   }, []);
 
   const handleClearFacets = useCallback(() => {
@@ -532,6 +544,7 @@ function BrowserPageContent({
     setSelectedRowMap(new Map());
     setPageTokens([]);
     setCurrentPage(1);
+    setActiveSavedSearchId(null);
   }, []);
 
   const handleSort = useCallback(
@@ -540,9 +553,19 @@ function BrowserPageContent({
       setSortDirection(direction);
       setPageTokens([]);
       setCurrentPage(1);
+      setActiveSavedSearchId(null);
     },
     [objectType],
   );
+
+  // P2B-S004: view-mode is a user-driven control, so clear the active
+  // saved-search indicator whenever the operator switches modes. The
+  // saved-search loader bypasses this by setting `viewMode` directly
+  // alongside `activeSavedSearchId`.
+  const handleViewModeChange = useCallback((mode: BrowserViewMode) => {
+    setViewMode(mode);
+    setActiveSavedSearchId(null);
+  }, []);
 
   // Saved-searches integration: serialise the current view into a
   // round-trippable definition, and accept a loaded definition by
@@ -569,7 +592,8 @@ function BrowserPageContent({
   ]);
 
   const handleApplySavedSearch = useCallback(
-    (def: SavedSearchDefinition) => {
+    (row: SavedSearch) => {
+      const def = row.definition ?? {};
       const savedViewMode = BROWSER_VIEW_MODES.has(def.viewMode ?? 'table')
         ? def.viewMode ?? 'table'
         : 'table';
@@ -588,6 +612,7 @@ function BrowserPageContent({
       setShowFilters((def.filters ?? []).length > 0);
       setPageTokens([]);
       setCurrentPage(1);
+      setActiveSavedSearchId(row.id);
     },
     [],
   );
@@ -724,7 +749,7 @@ function BrowserPageContent({
           >
             <button
               type="button"
-              onClick={() => setViewMode('table')}
+              onClick={() => handleViewModeChange('table')}
               aria-pressed={viewMode === 'table'}
               data-testid="view-mode-table"
               className={[
@@ -738,7 +763,7 @@ function BrowserPageContent({
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('map')}
+              onClick={() => handleViewModeChange('map')}
               aria-pressed={viewMode === 'map'}
               data-testid="view-mode-map"
               className={[
@@ -752,7 +777,7 @@ function BrowserPageContent({
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('gantt')}
+              onClick={() => handleViewModeChange('gantt')}
               aria-pressed={viewMode === 'gantt'}
               data-testid="view-mode-gantt"
               className={[
@@ -766,7 +791,7 @@ function BrowserPageContent({
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('sankey')}
+              onClick={() => handleViewModeChange('sankey')}
               aria-pressed={viewMode === 'sankey'}
               data-testid="view-mode-sankey"
               className={[
@@ -780,7 +805,7 @@ function BrowserPageContent({
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('pivot')}
+              onClick={() => handleViewModeChange('pivot')}
               aria-pressed={viewMode === 'pivot'}
               data-testid="view-mode-pivot"
               className={[
@@ -912,6 +937,7 @@ function BrowserPageContent({
               currentDefinition={currentDefinition}
               hasCurrentState={hasActiveSearch || viewMode !== 'table'}
               onLoad={handleApplySavedSearch}
+              activeId={activeSavedSearchId}
             />
             {hasActiveSearch && facetFields.length > 0 && (
               <FacetsPanel
