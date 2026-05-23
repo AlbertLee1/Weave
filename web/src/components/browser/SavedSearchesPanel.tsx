@@ -16,8 +16,14 @@ interface SavedSearchesPanelProps {
   // When false the "Save current" button is disabled with a tooltip.
   hasCurrentState: boolean;
   // Fired when the user picks one of the saved entries — the consumer
-  // is expected to apply the definition to its own state.
-  onLoad: (definition: SavedSearchDefinition) => void;
+  // is expected to apply the definition to its own state. The full row is
+  // forwarded so the consumer can track which saved search is currently
+  // applied (active-indicator UX); see BrowserPage.handleApplySavedSearch.
+  onLoad: (row: SavedSearch) => void;
+  // ID of the saved search the consumer considers "currently applied".
+  // When set, the matching row renders with `aria-current="true"` and an
+  // operator-visible Active badge so audit/Drift state is obvious.
+  activeId?: string | null;
 }
 
 export function SavedSearchesPanel({
@@ -26,6 +32,7 @@ export function SavedSearchesPanel({
   currentDefinition,
   hasCurrentState,
   onLoad,
+  activeId = null,
 }: SavedSearchesPanelProps) {
   const { data: rows = [], isLoading } = useSavedSearches({ ontology, objectType });
   const createMutation = useCreateSavedSearch();
@@ -72,7 +79,7 @@ export function SavedSearchesPanel({
 
   const handleLoad = useCallback(
     (row: SavedSearch) => {
-      onLoad(row.definition ?? {});
+      onLoad(row);
     },
     [onLoad],
   );
@@ -126,33 +133,55 @@ export function SavedSearchesPanel({
         </p>
       ) : (
         <ul className="flex flex-col gap-1">
-          {rows.map((row) => (
-            <li
-              key={row.id}
-              data-testid={`saved-search-${row.id}`}
-              className="group flex items-center gap-1 px-1 py-0.5 rounded hover:bg-bg-secondary"
-            >
-              <button
-                type="button"
-                onClick={() => handleLoad(row)}
-                data-testid={`saved-search-load-${row.id}`}
-                className="flex-1 truncate text-left text-xs font-mono text-text-primary hover:text-accent-cyan"
-                title={row.name}
+          {rows.map((row) => {
+            const isActive = activeId === row.id;
+            return (
+              <li
+                key={row.id}
+                data-testid={`saved-search-${row.id}`}
+                aria-current={isActive ? 'true' : undefined}
+                className={[
+                  'group flex items-center gap-1 px-1 py-0.5 rounded',
+                  isActive
+                    ? 'bg-accent-cyan/10'
+                    : 'hover:bg-bg-secondary',
+                ].join(' ')}
               >
-                {row.name}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDelete(row)}
-                aria-label={`Delete saved search ${row.name}`}
-                data-testid={`saved-search-delete-${row.id}`}
-                className="opacity-0 group-hover:opacity-100 text-xs font-mono text-text-muted hover:text-accent-error"
-                title="Delete"
-              >
-                ×
-              </button>
-            </li>
-          ))}
+                <button
+                  type="button"
+                  onClick={() => handleLoad(row)}
+                  data-testid={`saved-search-load-${row.id}`}
+                  className={[
+                    'flex-1 truncate text-left text-xs font-mono hover:text-accent-cyan',
+                    isActive ? 'text-accent-cyan' : 'text-text-primary',
+                  ].join(' ')}
+                  title={row.name}
+                >
+                  {row.name}
+                </button>
+                {isActive && (
+                  <span
+                    data-testid={`saved-search-active-badge-${row.id}`}
+                    aria-label="Currently applied"
+                    title="This saved search matches the current view"
+                    className="text-[9px] font-mono uppercase tracking-wider px-1 py-0.5 rounded bg-accent-cyan/15 text-accent-cyan"
+                  >
+                    Active
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleDelete(row)}
+                  aria-label={`Delete saved search ${row.name}`}
+                  data-testid={`saved-search-delete-${row.id}`}
+                  className="opacity-0 group-hover:opacity-100 text-xs font-mono text-text-muted hover:text-accent-error"
+                  title="Delete"
+                >
+                  ×
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
 

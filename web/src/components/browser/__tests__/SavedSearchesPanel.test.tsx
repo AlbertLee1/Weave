@@ -84,7 +84,29 @@ describe('SavedSearchesPanel', () => {
 
     const loadBtn = await screen.findByTestId(`saved-search-load-${ROW.id}`);
     fireEvent.click(loadBtn);
-    expect(onLoad).toHaveBeenCalledWith(ROW.definition);
+    expect(onLoad).toHaveBeenCalledWith(ROW);
+  });
+
+  it('marks the activeId row aria-current and renders the active badge', async () => {
+    vi.spyOn(api, 'listSavedSearches').mockResolvedValue({
+      savedSearches: [ROW],
+    });
+    renderWithProviders(
+      <SavedSearchesPanel
+        ontology="main"
+        objectType="produce"
+        currentDefinition={{}}
+        hasCurrentState={false}
+        onLoad={() => {}}
+        activeId={ROW.id}
+      />,
+    );
+
+    const row = await screen.findByTestId(`saved-search-${ROW.id}`);
+    expect(row).toHaveAttribute('aria-current', 'true');
+    expect(
+      screen.getByTestId(`saved-search-active-badge-${ROW.id}`),
+    ).toBeInTheDocument();
   });
 
   it('save button is disabled when there is no current state', async () => {
