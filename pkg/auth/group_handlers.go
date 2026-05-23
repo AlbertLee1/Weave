@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/audit"
+	"github.com/liyang/weave/pkg/httputil"
 )
 
 // GroupRequest is the POST /api/admin/groups body.
@@ -94,7 +95,7 @@ func (h *GroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req GroupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidGroupRequest", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -203,7 +204,7 @@ func (h *GroupHandler) updateFor(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 	var req GroupUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidGroupUpdate", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -337,7 +338,7 @@ func (h *GroupHandler) addMemberFor(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	var req GroupMemberRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidMemberRequest", map[string]string{
 			"reason": err.Error(),
 		}))

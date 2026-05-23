@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/audit"
+	"github.com/liyang/weave/pkg/httputil"
 )
 
 // RoleRequest is the POST /api/admin/roles body.
@@ -101,7 +102,7 @@ func (h *RoleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req RoleRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRoleRequest", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -219,7 +220,7 @@ func (h *RoleHandler) updateFor(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 	var req RoleUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRoleUpdate", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -366,7 +367,7 @@ func (h *RoleHandler) setPermissionsFor(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	var req RolePermissionsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidPermissionsRequest", map[string]string{
 			"reason": err.Error(),
 		}))
