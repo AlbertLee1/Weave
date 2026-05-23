@@ -1,51 +1,32 @@
 {
   "project": "Weave parallel2 self-iteration",
-  "branchName": "ralph/self-iteration-20260523-122931",
+  "branchName": "ralph/self-iteration-20260523-161451",
   "description": "Combined PRD evidence from two isolated Claude Code/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
   "userStories": [
     {
-      "id": "P2A-301",
-      "title": "RBAC role admin writes reject ambiguous JSON request bodies",
+      "id": "P2A-304",
+      "title": "API-key admin writes reject ambiguous JSON request bodies",
       "priority": 1,
       "passes": true,
-      "description": "POST /api/admin/roles, PATCH /api/admin/roles/{name}, and PUT /api/admin/roles/{name}/permissions all currently call json.NewDecoder(r.Body).Decode(&req) directly. That accepts only the first JSON value and silently ignores trailing bytes, so a concatenated payload such as {\"name\":\"safe\"}{\"permissions\":[\"admin\"]} can hide intent from auditors, proxies, and operators. Route all three handlers through httputil.ReadJSON so the single-JSON-value contract holds for the RBAC root surface.",
-      "bddAcceptanceCriteria": [
-        "Given POST /api/admin/roles with a concatenated body of two JSON objects, when the handler decodes the request, then it returns 400 InvalidRoleRequest with a reason mentioning a single JSON value AND no role row is created.",
-        "Given PATCH /api/admin/roles/{name} for an existing custom role with a concatenated body, when the handler decodes the request, then it returns 400 InvalidRoleUpdate AND the stored description remains unchanged.",
-        "Given PUT /api/admin/roles/{name}/permissions for a custom role with a concatenated body, when the handler decodes the request, then it returns 400 InvalidPermissionsRequest AND the stored permissions remain unchanged.",
-        "Given a single well-formed JSON body for each of POST /api/admin/roles, PATCH, and PUT permissions, when the handler runs, then the existing 201/200 happy paths still succeed so the hardening does not regress legitimate clients."
+      "description": "POST /api/admin/api-keys (Create) and POST /api/admin/api-keys/{id}/rotate (Rotate) now decode through httputil.ReadJSON so concatenated bodies are rejected with 400 InvalidAPIKeyRequest + a 'single JSON value' reason instead of silently dropping the trailing bytes. Extends the P2A-301/302/303 hardening to the API-key surface that mints long-lived bearer credentials.",
+      "acceptanceCriteria": [
+        "POST /api/admin/api-keys with a body composed of two concatenated JSON objects returns 400 InvalidAPIKeyRequest with reason mentioning 'single JSON value' and persists no APIKey row.",
+        "POST /api/admin/api-keys/{id}/rotate with a concatenated body returns 400 InvalidAPIKeyRequest and leaves the predecessor's rotates_at and successor_id untouched (no rotation occurs).",
+        "Well-formed Create and Rotate requests continue to succeed end-to-end (201 Created with rawKey returned exactly once; predecessor stamped with rotates_at + successor_id on Rotate).",
+        "Rotate with an empty body still uses DefaultAPIKeyRotationGrace (preserves the existing 'no body = 7-day grace' contract).",
+        "A BDD integration test TestBDD_APIKeyAdminWritesRejectAmbiguousJSONBody_P2A304 lives in pkg/auth/api_key_handlers_bdd_test.go and covers all four cases above."
       ],
-      "dependencies": [],
       "stream": "A",
-      "source_branch": "ralph/self-iteration-20260523-122931-A"
+      "source_branch": "ralph/self-iteration-20260523-161451-A"
     },
     {
-      "id": "P2A-302",
-      "title": "Group admin writes reject ambiguous JSON request bodies",
-      "priority": 2,
+      "id": "P2B-S005",
+      "title": "Active Saved Search Supports In-Place Update",
+      "priority": "P1",
       "passes": true,
-      "description": "POST /api/admin/groups, PATCH /api/admin/groups/{name}, and the group-member assignment write at pkg/auth/group_handlers.go:340 still use json.NewDecoder(r.Body).Decode(&req). Convert them to httputil.ReadJSON to close the same trailing-JSON smuggling gap on group-level RBAC writes.",
-      "bddAcceptanceCriteria": [
-        "Given each group admin write surface with a concatenated body of two JSON objects, when the handler decodes the request, then it returns 400 with a reason mentioning a single JSON value AND no group/member state mutates.",
-        "Given a single well-formed JSON body for each surface, when the handler runs, then the existing happy paths still succeed."
-      ],
-      "dependencies": [],
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260523-122931-A"
-    },
-    {
-      "id": "P2A-303",
-      "title": "Service-account admin writes reject ambiguous JSON request bodies",
-      "priority": 3,
-      "passes": true,
-      "description": "POST /api/admin/service-accounts and PATCH /api/admin/service-accounts/{id} at pkg/auth/service_account_handlers.go:108 and :256 still use json.NewDecoder(r.Body).Decode(&req). Convert them to httputil.ReadJSON so trailing-JSON smuggling cannot bypass the single-value contract on service-account writes that mint long-lived identities.",
-      "bddAcceptanceCriteria": [
-        "Given each service-account admin write surface with a concatenated body of two JSON objects, when the handler decodes the request, then it returns 400 with a reason mentioning a single JSON value AND no service-account state mutates.",
-        "Given a single well-formed JSON body for each surface, when the handler runs, then the existing happy paths still succeed."
-      ],
-      "dependencies": [],
-      "stream": "A",
-      "source_branch": "ralph/self-iteration-20260523-122931-A"
+      "scenario": "Given an operator has loaded a saved search and drifted the view (search-text/filter/facet/sort/viewMode change), When they click the Update affordance on the originating row, Then the saved search is PUT with the current definition and the Active indicator returns; failed updates surface an inline error without clobbering local edits.",
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260523-161451-B"
     }
   ]
 }
