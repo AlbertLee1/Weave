@@ -3,7 +3,6 @@ package auth
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/audit"
+	"github.com/liyang/weave/pkg/httputil"
 )
 
 // APIKeyCreateRequest is the JSON body of POST /api/admin/api-keys.
@@ -115,7 +115,7 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req APIKeyCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidAPIKeyRequest", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -329,7 +329,7 @@ func (h *APIKeyHandler) RotateFor(w http.ResponseWriter, r *http.Request, id str
 
 	var req APIKeyRotateRequest
 	if r.Body != nil && r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		if err := httputil.ReadJSON(r, &req); err != nil {
 			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidAPIKeyRequest", map[string]string{
 				"reason": err.Error(),
 			}))

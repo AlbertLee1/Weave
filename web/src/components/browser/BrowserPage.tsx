@@ -154,6 +154,15 @@ function BrowserPageContent({
     string | null
   >(null);
 
+  // P2B-S005: separate from `activeSavedSearchId`, this tracks the row
+  // the operator last loaded — it deliberately survives drift so the
+  // panel can offer an "Update" affordance that PUTs the current view
+  // back onto the originating saved search. Only re-loading another
+  // saved search (or a successful update) replaces it.
+  const [lastLoadedSavedSearchId, setLastLoadedSavedSearchId] = useState<
+    string | null
+  >(null);
+
   // Realtime mode state: 'off' | 'ws' (WebSocket) | 'sse' (SSE fallback)
   const [realtimeMode, setRealtimeMode] = useState<'off' | 'ws' | 'sse'>('off');
   const [objectSetRid, setObjectSetRid] = useState<string | null>(null);
@@ -613,9 +622,18 @@ function BrowserPageContent({
       setPageTokens([]);
       setCurrentPage(1);
       setActiveSavedSearchId(row.id);
+      setLastLoadedSavedSearchId(row.id);
     },
     [],
   );
+
+  // P2B-S005: after a successful in-place update the panel hands the
+  // refreshed row back so we can re-mark the active indicator. The new
+  // definition now matches the current view by construction.
+  const handleSavedSearchUpdated = useCallback((row: SavedSearch) => {
+    setActiveSavedSearchId(row.id);
+    setLastLoadedSavedSearchId(row.id);
+  }, []);
 
   const handleNextPage = useCallback(() => {
     if (page?.nextPageToken) {
@@ -938,6 +956,8 @@ function BrowserPageContent({
               hasCurrentState={hasActiveSearch || viewMode !== 'table'}
               onLoad={handleApplySavedSearch}
               activeId={activeSavedSearchId}
+              lastLoadedId={lastLoadedSavedSearchId}
+              onUpdated={handleSavedSearchUpdated}
             />
             {hasActiveSearch && facetFields.length > 0 && (
               <FacetsPanel

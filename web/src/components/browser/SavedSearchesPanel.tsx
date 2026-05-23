@@ -3,6 +3,7 @@ import {
   useCreateSavedSearch,
   useDeleteSavedSearch,
   useSavedSearches,
+  useUpdateSavedSearch,
 } from '../../hooks/useSavedSearches';
 import type { SavedSearch, SavedSearchDefinition } from '../../api/savedSearches';
 import { Modal } from '../common/Modal';
@@ -24,6 +25,15 @@ interface SavedSearchesPanelProps {
   // When set, the matching row renders with `aria-current="true"` and an
   // operator-visible Active badge so audit/Drift state is obvious.
   activeId?: string | null;
+  // ID of the saved search the operator most recently loaded — separate
+  // from `activeId` so it survives drift. When this row is present but
+  // `activeId` no longer matches it, the panel exposes an "Update"
+  // affordance that PUTs the current view back onto the saved search.
+  lastLoadedId?: string | null;
+  // Fired after a successful in-place update so the consumer can re-mark
+  // the row as active (the operator's intent is "this is still my saved
+  // view, now with the latest tweaks").
+  onUpdated?: (row: SavedSearch) => void;
 }
 
 export function SavedSearchesPanel({
@@ -33,14 +43,19 @@ export function SavedSearchesPanel({
   hasCurrentState,
   onLoad,
   activeId = null,
+  lastLoadedId = null,
+  onUpdated,
 }: SavedSearchesPanelProps) {
   const { data: rows = [], isLoading } = useSavedSearches({ ontology, objectType });
   const createMutation = useCreateSavedSearch();
+  const updateMutation = useUpdateSavedSearch();
   const deleteMutation = useDeleteSavedSearch();
 
   const [saveOpen, setSaveOpen] = useState(false);
   const [name, setName] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [updateErrorId, setUpdateErrorId] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   const openSaveDialog = useCallback(() => {
     setName('');
@@ -96,6 +111,28 @@ export function SavedSearchesPanel({
     [deleteMutation],
   );
 
+  const handleUpdate = useCallback(
+    async (row: SavedSearch) => {
+      setUpdateErrorId(null);
+      setUpdatingId(row.id);
+      try {
+        const saved = await updateMutation.mutateAsync({
+          id: row.id,
+          definition: currentDefinition,
+        });
+        onUpdated?.(saved);
+      } catch {
+        // We surface a per-row inline error rather than a modal — the
+        // operator's next action is usually "tweak the view and retry",
+        // and a modal would steal focus from the SearchBar/FilterBuilder.
+        setUpdateErrorId(row.id);
+      } finally {
+        setUpdatingId(null);
+      }
+    },
+    [currentDefinition, onUpdated, updateMutation],
+  );
+
   return (
     <aside
       data-testid="saved-searches-panel"
@@ -135,50 +172,81 @@ export function SavedSearchesPanel({
         <ul className="flex flex-col gap-1">
           {rows.map((row) => {
             const isActive = activeId === row.id;
+            // "Drifted" = the operator loaded this row but has since
+            // changed the view. We only ever offer Update for the row
+            // they originated from to avoid clobbering an unrelated
+            // saved search with the current ad-hoc view.
+            const isDrifted = !isActive && lastLoadedId === row.id;
+            const isUpdating = updatingId === row.id;
+            const showUpdateError = updateErrorId === row.id;
             return (
               <li
                 key={row.id}
                 data-testid={`saved-search-${row.id}`}
                 aria-current={isActive ? 'true' : undefined}
                 className={[
-                  'group flex items-center gap-1 px-1 py-0.5 rounded',
+                  'group flex flex-col gap-0.5 px-1 py-0.5 rounded',
                   isActive
                     ? 'bg-accent-cyan/10'
                     : 'hover:bg-bg-secondary',
                 ].join(' ')}
               >
-                <button
-                  type="button"
-                  onClick={() => handleLoad(row)}
-                  data-testid={`saved-search-load-${row.id}`}
-                  className={[
-                    'flex-1 truncate text-left text-xs font-mono hover:text-accent-cyan',
-                    isActive ? 'text-accent-cyan' : 'text-text-primary',
-                  ].join(' ')}
-                  title={row.name}
-                >
-                  {row.name}
-                </button>
-                {isActive && (
-                  <span
-                    data-testid={`saved-search-active-badge-${row.id}`}
-                    aria-label="Currently applied"
-                    title="This saved search matches the current view"
-                    className="text-[9px] font-mono uppercase tracking-wider px-1 py-0.5 rounded bg-accent-cyan/15 text-accent-cyan"
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleLoad(row)}
+                    data-testid={`saved-search-load-${row.id}`}
+                    className={[
+                      'flex-1 truncate text-left text-xs font-mono hover:text-accent-cyan',
+                      isActive ? 'text-accent-cyan' : 'text-text-primary',
+                    ].join(' ')}
+                    title={row.name}
                   >
-                    Active
-                  </span>
+                    {row.name}
+                  </button>
+                  {isActive && (
+                    <span
+                      data-testid={`saved-search-active-badge-${row.id}`}
+                      aria-label="Currently applied"
+                      title="This saved search matches the current view"
+                      className="text-[9px] font-mono uppercase tracking-wider px-1 py-0.5 rounded bg-accent-cyan/15 text-accent-cyan"
+                    >
+                      Active
+                    </span>
+                  )}
+                  {isDrifted && (
+                    <button
+                      type="button"
+                      onClick={() => handleUpdate(row)}
+                      disabled={isUpdating}
+                      data-testid={`saved-search-update-${row.id}`}
+                      aria-label={`Update saved search ${row.name} with the current view`}
+                      title="Save current view into this saved search"
+                      className="text-[9px] font-mono uppercase tracking-wider px-1 py-0.5 rounded border border-accent-cyan/40 text-accent-cyan hover:bg-accent-cyan/10 disabled:opacity-50"
+                    >
+                      {isUpdating ? 'Saving…' : 'Update'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(row)}
+                    aria-label={`Delete saved search ${row.name}`}
+                    data-testid={`saved-search-delete-${row.id}`}
+                    className="opacity-0 group-hover:opacity-100 text-xs font-mono text-text-muted hover:text-accent-error"
+                    title="Delete"
+                  >
+                    ×
+                  </button>
+                </div>
+                {showUpdateError && (
+                  <p
+                    role="alert"
+                    data-testid={`saved-search-update-error-${row.id}`}
+                    className="text-[10px] font-mono text-accent-error pl-1"
+                  >
+                    Failed to update — retry or reload the saved view.
+                  </p>
                 )}
-                <button
-                  type="button"
-                  onClick={() => handleDelete(row)}
-                  aria-label={`Delete saved search ${row.name}`}
-                  data-testid={`saved-search-delete-${row.id}`}
-                  className="opacity-0 group-hover:opacity-100 text-xs font-mono text-text-muted hover:text-accent-error"
-                  title="Delete"
-                >
-                  ×
-                </button>
               </li>
             );
           })}

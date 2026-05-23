@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,9 +17,9 @@ func newTestSigner(t *testing.T) *JWTSigner {
 		t.Fatalf("rsa key gen: %v", err)
 	}
 	s, err := NewJWTSigner(priv, &priv.PublicKey, JWTSignerOptions{
-		Issuer:          "weave-test",
-		Audience:        "weave-api",
-		AccessTokenTTL:  15 * time.Minute,
+		Issuer:         "weave-test",
+		Audience:       "weave-api",
+		AccessTokenTTL: 15 * time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("NewJWTSigner: %v", err)
@@ -97,10 +98,21 @@ func TestJWTSigner_TamperedTokenRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Tamper: flip a character in the middle of the token.
-	bs := []byte(tok)
-	bs[len(bs)/2] = 'A'
-	tampered := string(bs)
+	// Tamper the signature portion explicitly — flipping a byte in the
+	// middle of the Base64 token is unreliable because it may land in the
+	// payload where some JWT implementations or parse modes can still
+	// extract claims without re-validating the signature.
+	parts := strings.SplitN(tok, ".", 3)
+	if len(parts) != 3 {
+		t.Fatalf("unexpected token format: want 3 parts, got %d", len(parts))
+	}
+	sig := []byte(parts[2])
+	if len(sig) == 0 {
+		t.Fatal("empty signature in token")
+	}
+	sig[len(sig)-1] ^= 0xFF // flip last byte of signature
+	parts[2] = string(sig)
+	tampered := strings.Join(parts, ".")
 
 	if _, err := s.Verify(tampered); err == nil {
 		t.Error("expected verify to fail on tampered token")
