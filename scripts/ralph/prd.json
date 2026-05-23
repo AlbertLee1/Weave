@@ -1,25 +1,19 @@
 {
-  "project": "Weave self-iteration",
-  "branchName": "ralph/self-iteration-20260522-233015",
-  "description": "Focused LLM review auto-fix PRD for the remaining ambiguous JSON body gaps on the tenant usage write and permission request decision endpoints. Scope is limited to the two blocking findings from the PR review.",
+  "project": "Weave parallel2 stream A",
+  "branchName": "ralph/self-iteration-20260523-102602-A",
+  "description": "Parallel2 stream A for integration branch ralph/self-iteration-20260523-102602. Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests",
   "userStories": [
     {
-      "id": "RRF-001",
-      "title": "Review-blocked JSON body writes reject trailing values",
+      "id": "P2A-A001",
+      "title": "Login endpoint rejects ambiguous JSON request bodies",
       "priority": 1,
-      "description": "As an operator using Weave's tenant usage and permission request workflows, I want admin writes and decision writes to reject ambiguous or concatenated JSON bodies so clients cannot commit state by hiding extra JSON values behind the accepted payload.",
-      "acceptanceCriteria": [
-        "Given POST /api/admin/tenant-usage/{tenant}/{metric} receives a concatenated JSON body, when the handler processes the request, then it returns 400 InvalidRequestBody and does not mutate tenant usage.",
-        "Given POST /api/v2/permission-requests/{id}/approve or /reject receives a chunked request body with ContentLength = -1 and concatenated JSON, when the handler processes the decision, then it returns 400 InvalidRequestBody and leaves the request pending.",
-        "Given POST /api/v2/permission-requests/{id}/approve or /reject receives a truly empty body, when the caller is authorized, then the handler still commits the decision with an empty note.",
-        "The fix changes only the focused handler/test/Ralph state needed for the LLM review blocking findings."
-      ],
-      "dependencies": [
-        "LLM review auto-fix context in scripts/ralph/progress.txt reported PR #50 review request_changes at HEAD b0e1356a54dd.",
-        "Existing strict JSON helpers live in pkg/httputil.ReadJSON and reject multiple JSON values.",
-        "Existing BDD tests cover tenant quota and permission request ambiguous-body behavior but missed tenant usage AddUsage and chunked permission decision bodies."
-      ],
-      "passes": true
+      "passes": true,
+      "description": "POST /api/auth/login currently uses raw json.NewDecoder which silently accepts and ignores trailing JSON values after the first one and imposes no body-size cap. Harden it to use the shared httputil.ReadJSON helper so ambiguous or oversized request bodies are rejected with a clear validation error before any credential lookup happens.",
+      "acceptance": [
+        "Given a POST /api/auth/login whose body contains two concatenated JSON objects, when the handler decodes the request, then it responds 400 InvalidLoginRequest without performing a user lookup.",
+        "Given a POST /api/auth/login whose body is larger than httputil.MaxBodySize, when the handler decodes the request, then it responds 400 InvalidLoginRequest without performing a user lookup.",
+        "Given a well-formed POST /api/auth/login, when the handler decodes the request, then existing happy path and unauthorized paths continue to behave identically."
+      ]
     }
   ]
 }
