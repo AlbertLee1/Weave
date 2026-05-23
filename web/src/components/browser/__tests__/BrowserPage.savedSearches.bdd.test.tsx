@@ -267,6 +267,83 @@ describe('BDD: BrowserPage saved-view presentation mode hydration (P2B-003)', ()
     });
   });
 
+  it('Given a saved search is loaded, When the operator reviews the panel, Then the matching row is marked aria-current and tagged "Active"', async () => {
+    const user = userEvent.setup();
+    renderBrowserPage();
+
+    expect(await screen.findByText('Unfiltered list row')).toBeInTheDocument();
+
+    const row = await screen.findByTestId('saved-search-saved-openai');
+    expect(row).not.toHaveAttribute('aria-current', 'true');
+    expect(
+      screen.queryByTestId('saved-search-active-badge-saved-openai'),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId('saved-search-load-saved-openai'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('saved-search-saved-openai')).toHaveAttribute(
+        'aria-current',
+        'true',
+      );
+      expect(
+        screen.getByTestId('saved-search-active-badge-saved-openai'),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it('Given a saved search is active, When the operator edits the search input, Then the active indicator is cleared', async () => {
+    const user = userEvent.setup();
+    renderBrowserPage();
+
+    expect(await screen.findByText('Unfiltered list row')).toBeInTheDocument();
+
+    await user.click(await screen.findByTestId('saved-search-load-saved-openai'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('saved-search-saved-openai')).toHaveAttribute(
+        'aria-current',
+        'true',
+      );
+    });
+
+    const searchInput = screen.getByTestId('search-input');
+    await user.clear(searchInput);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('saved-search-saved-openai'),
+      ).not.toHaveAttribute('aria-current', 'true');
+      expect(
+        screen.queryByTestId('saved-search-active-badge-saved-openai'),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it('Given a saved search is active, When the operator switches the view mode, Then the active indicator is cleared', async () => {
+    const user = userEvent.setup();
+    renderBrowserPage();
+
+    expect(await screen.findByText('Unfiltered list row')).toBeInTheDocument();
+
+    await user.click(await screen.findByTestId('saved-search-load-saved-openai'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('saved-search-saved-openai')).toHaveAttribute(
+        'aria-current',
+        'true',
+      );
+    });
+
+    await user.click(screen.getByTestId('view-mode-map'));
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('saved-search-saved-openai'),
+      ).not.toHaveAttribute('aria-current', 'true');
+    });
+  });
+
   it('Given an older saved view has no viewMode, When loaded from another mode, Then BrowserPage falls back to table mode', async () => {
     const user = userEvent.setup();
     server.use(
