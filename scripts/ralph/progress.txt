@@ -1,3 +1,11 @@
+# Ralph Progress Log - Parallel2 Integration
+Integrated: 2026-05-23T10:45:48+08:00
+Integration branch: ralph/self-iteration-20260523-102602
+
+## Stream A: ralph/self-iteration-20260523-102602-A
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260523-102602-A
+HEAD: 07fe6886e151
+
 # Ralph Progress Log - Parallel2 Stream A
 Started: 2026-05-23T10:26:03+08:00
 Integration branch: ralph/self-iteration-20260523-102602
@@ -25,4 +33,41 @@ Focus: backend/API/MCP/ontology services, server-side reliability, migrations, G
   - The login handler previously accepted a 2 MiB+ JSON body and issued tokens — the absence of `http.MaxBytesReader` on the body was a genuine reliability gap, not just a hypothetical. Whenever a write surface still uses raw `json.NewDecoder(r.Body)`, assume both the trailing-value AND oversized-body issues exist and cover both in the BDD test.
   - `pkg/auth/role_resolver_test.go` defines the shared `fakeUserRepo` used by every auth handler test; it does NOT count `GetUserByEmail` invocations. For "rejection runs before credential lookup" assertions, prefer asserting the response `errorName` (e.g. `InvalidLoginRequest` vs `InvalidCredentials`) over instrumenting the repo — the error-name distinction is enough because each path emits a different `errorName`.
   - `pkg/apierror.NewInvalidParameter(name, params)` writes 400s with `errorCode: "INVALID_ARGUMENT"` and the provided `errorName`. Assert on `errorName` to pin the exact surface failure, not `errorCode` (multiple paths share the latter).
+---
+
+
+---
+
+## Stream B: ralph/self-iteration-20260523-102602-B
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260523-102602-B
+HEAD: c7a3b0a7d43f
+
+# Ralph Progress Log - Parallel2 Stream B
+Started: 2026-05-23T10:26:03+08:00
+Integration branch: ralph/self-iteration-20260523-102602
+Stream branch: ralph/self-iteration-20260523-102602-B
+Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
+---
+
+## Codebase Patterns
+- Saved Browser views are owned by `web/src/components/browser/SavedSearchesPanel.tsx`. The `onLoad` callback receives the whole `SavedSearch` row (not just the definition) so the parent BrowserPage can track which saved entry is currently applied. When you mutate any saved-definition input (searchText, filters, facets, sort, viewMode) you MUST also clear `activeSavedSearchId` in BrowserPage so the Active indicator stays truthful.
+- The BrowserPage view-mode toolbar must call `handleViewModeChange(mode)` (not `setViewMode(mode)` directly) so user-driven mode switches clear the active-saved-search indicator. The saved-search loader sets `setViewMode` directly so the indicator survives the load.
+- BDD tests for the Browser saved-search active indicator live in `web/src/components/browser/__tests__/BrowserPage.savedSearches.bdd.test.tsx` and rely on `aria-current="true"` + `saved-search-active-badge-{id}` test ids.
+
+## 2026-05-23T10:35:00+08:00 - P2B-S004
+- Added an Active indicator to the Browser saved-searches panel: the row matching the most recently loaded definition is marked `aria-current="true"` and renders an operator-visible "Active" badge so it's clear which saved view is currently applied.
+- The indicator is automatically cleared whenever the operator mutates any input that participates in the saved-search definition (search text, filters, facets, sort, view mode), so a drifted view cannot falsely advertise itself as the saved one.
+- Files changed:
+  - `web/src/components/browser/SavedSearchesPanel.tsx` — new `activeId` prop, `onLoad` now forwards the whole `SavedSearch` row, active row renders aria-current + badge, with a highlight class.
+  - `web/src/components/browser/BrowserPage.tsx` — new `activeSavedSearchId` state, `handleApplySavedSearch` sets it from `row.id`, all user-driven mutation handlers clear it (including new `handleViewModeChange`), view-mode buttons re-wired to the new handler.
+  - `web/src/components/browser/__tests__/BrowserPage.savedSearches.bdd.test.tsx` — three new BDD scenarios covering load/clear-on-search/clear-on-view-mode.
+  - `web/src/components/browser/__tests__/SavedSearchesPanel.test.tsx` — updated `onLoad` signature expectation, added an `activeId` unit test.
+- Quality: web/typecheck clean; full vitest suite passes (294 files, 2937 tests).
+- **Learnings for future iterations:**
+  - `SavedSearchesPanel.onLoad` now forwards the whole `SavedSearch` row, not the bare definition. If you add another consumer, dereference `row.definition` yourself (kept untouched JSONB on the server).
+  - Lefthook only runs gofmt / govet / `web typecheck`; eslint is *not* enforced on commit. A pre-existing `react-hooks/set-state-in-effect` violation on `BrowserPage.tsx` line 246 (the WebSocket → SSE fallback transition) remains. Don't try to "fix" it as part of unrelated work — it has user-visible behaviour the tests already cover, and the rule is purely advisory in this repo.
+  - The repo uses lefthook-only pre-commit gating; CI gates separately. Always run `npx vitest run` over the changed scope before commit since pre-commit won't catch test regressions.
+---
+
+
 ---

@@ -1,7 +1,7 @@
 {
-  "project": "Weave parallel2 stream A",
-  "branchName": "ralph/self-iteration-20260523-102602-A",
-  "description": "Parallel2 stream A for integration branch ralph/self-iteration-20260523-102602. Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests",
+  "project": "Weave parallel2 self-iteration",
+  "branchName": "ralph/self-iteration-20260523-102602",
+  "description": "Combined PRD evidence from two isolated Claude Code/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
   "userStories": [
     {
       "id": "P2A-A001",
@@ -13,7 +13,23 @@
         "Given a POST /api/auth/login whose body contains two concatenated JSON objects, when the handler decodes the request, then it responds 400 InvalidLoginRequest without performing a user lookup.",
         "Given a POST /api/auth/login whose body is larger than httputil.MaxBodySize, when the handler decodes the request, then it responds 400 InvalidLoginRequest without performing a user lookup.",
         "Given a well-formed POST /api/auth/login, when the handler decodes the request, then existing happy path and unauthorized paths continue to behave identically."
-      ]
+      ],
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260523-102602-A"
+    },
+    {
+      "id": "P2B-S004",
+      "title": "Saved Browser Searches Show Active Indicator",
+      "priority": 1,
+      "passes": true,
+      "description": "After loading a saved Browser search the operator has no UI signal that says which entry was applied. As soon as the view drifts (search edit, filter change, facet toggle, sort, view-mode switch) there is also no way to learn that the current view no longer matches the saved definition. Surface an aria-current Active badge on the saved-searches row that maps to the most recently loaded definition, and clear that signal whenever the operator mutates any control that participates in the saved-search definition.",
+      "acceptance": [
+        "Given a saved search is loaded, when the operator inspects the SavedSearchesPanel, then exactly that row has aria-current=\"true\" and renders an operator-visible Active badge.",
+        "Given a saved search is active, when the operator clears the search input or types into it, then the active indicator is removed because the view has drifted from the saved definition.",
+        "Given a saved search is active, when the operator switches the Browser view mode via the toolbar, then the active indicator is removed because the view has drifted from the saved definition."
+      ],
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260523-102602-B"
     }
   ]
 }
