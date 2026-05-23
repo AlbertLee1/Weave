@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/audit"
+	"github.com/liyang/weave/pkg/httputil"
 )
 
 // ServiceAccountRequest is the POST /api/admin/service-accounts body.
@@ -105,7 +106,7 @@ func (h *ServiceAccountHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ServiceAccountRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidServiceAccountRequest", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -253,7 +254,7 @@ func (h *ServiceAccountHandler) updateFor(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req ServiceAccountUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidServiceAccountUpdate", map[string]string{
 			"reason": err.Error(),
 		}))
