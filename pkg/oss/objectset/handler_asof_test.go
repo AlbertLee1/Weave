@@ -324,6 +324,10 @@ func TestLoadObjects_AsOf_RejectsCompositeObjectSet(t *testing.T) {
 }
 
 func TestLoadObjects_AsOf_PropagatesProviderError(t *testing.T) {
+	// Wire-shape contract: a downstream HistorySnapshotProvider failure
+	// is server-side, NOT bad user input. It surfaces as HTTP 500
+	// INTERNAL with the TimeTravelFailed envelope so SDK callers route
+	// to retry / oncall rather than "fix your request".
 	prov := newFakeSnapshotProvider()
 	prov.err = errors.New("backend unreachable")
 	store := objectset.NewStore(0)
@@ -338,8 +342,8 @@ func TestLoadObjects_AsOf_PropagatesProviderError(t *testing.T) {
 	rr := httptest.NewRecorder()
 	newAsOfRouter(t, h).ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", rr.Code, rr.Body.String())
 	}
 	apiErr := decodeJSON[struct {
 		ErrorName  string            `json:"errorName"`

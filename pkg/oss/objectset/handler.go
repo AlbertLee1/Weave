@@ -373,7 +373,7 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 	// when no PROPERTY-scope policy is attached to result.ObjectType.
 	data, err = h.applyPropertyVisibility(ctx, result.ObjectType, data)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("PropertyFilterFailed", map[string]string{"error": err.Error()}))
+		apierror.WriteJSON(w, apierror.NewInternal("PropertyFilterFailed", map[string]string{"error": err.Error()}))
 		return
 	}
 
@@ -442,7 +442,7 @@ func branchScopeError(branch string, err error) *apierror.APIError {
 			"reason": "no ontology branch with this name",
 		})
 	}
-	return apierror.NewInvalidParameter("BranchScopeFailed", map[string]string{
+	return apierror.NewInternal("BranchScopeFailed", map[string]string{
 		"branch": branch,
 		"error":  err.Error(),
 	})
@@ -478,7 +478,7 @@ func (h *Handler) resolveAsOf(ctx context.Context, asOfRaw string) (time.Time, *
 					"reason": "no dataset transaction with this id",
 				})
 			}
-			return time.Time{}, apierror.NewInvalidParameter("TimeTravelFailed", map[string]string{
+			return time.Time{}, apierror.NewInternal("TimeTravelFailed", map[string]string{
 				"asOf":  asOfRaw,
 				"error": err.Error(),
 			})
@@ -524,7 +524,7 @@ func (h *Handler) loadObjectsAsOf(w http.ResponseWriter, r *http.Request, ctx co
 
 	snapshots, err := h.historySnapshots.SnapshotObjectsAt(ctx, ontologyAPIName, req.ObjectSet.ObjectType, asOf)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeTravelFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("TimeTravelFailed", map[string]string{
 			"asOf":  asOf.Format(time.RFC3339),
 			"error": err.Error(),
 		}))
@@ -612,7 +612,7 @@ func (h *Handler) loadObjectsAsOf(w http.ResponseWriter, r *http.Request, ctx co
 
 	data, err = h.applyPropertyVisibility(ctx, req.ObjectSet.ObjectType, data)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("PropertyFilterFailed", map[string]string{"error": err.Error()}))
+		apierror.WriteJSON(w, apierror.NewInternal("PropertyFilterFailed", map[string]string{"error": err.Error()}))
 		return
 	}
 
@@ -684,7 +684,7 @@ func (h *Handler) Aggregate(w http.ResponseWriter, r *http.Request) {
 	if aggregationNeedsDerivedPath(req.Aggregation, result.DerivedValues) {
 		aggResult, err := h.aggregateWithDerived(ctx, result, &req)
 		if err != nil {
-			apierror.WriteJSON(w, apierror.NewInvalidParameter("AggregationFailed", map[string]string{"error": err.Error()}))
+			apierror.WriteJSON(w, apierror.NewInternal("AggregationFailed", map[string]string{"error": err.Error()}))
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, aggResult)
@@ -718,7 +718,7 @@ func (h *Handler) Aggregate(w http.ResponseWriter, r *http.Request) {
 
 	aggResult, err := h.aggEngine.AggregateWithQuery(idx, baseQuery, aggReq)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("AggregationFailed", map[string]string{"error": err.Error()}))
+		apierror.WriteJSON(w, apierror.NewInternal("AggregationFailed", map[string]string{"error": err.Error()}))
 		return
 	}
 

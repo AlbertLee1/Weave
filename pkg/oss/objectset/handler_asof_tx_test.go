@@ -157,8 +157,12 @@ func TestLoadObjects_AsOfTx_UnknownTxReturnsTransactionNotFound(t *testing.T) {
 
 // TestLoadObjects_AsOfTx_PropagatesResolverError forces the resolver to
 // return an unrecognised error (not ErrTransactionNotFound). The handler
-// should map it to the generic TimeTravelFailed envelope so configuration
-// mistakes stay visible without exposing the specific 404 code.
+// surfaces it as the generic TimeTravelFailed envelope at HTTP 500
+// INTERNAL — a downstream TransactionResolver failure is server-side,
+// NOT bad user input. The sentinel ErrTransactionNotFound case keeps
+// its dedicated 400 TransactionNotFound envelope so callers can still
+// distinguish "you asked for a tx id that does not exist" from "the
+// server can't reach its tx store".
 func TestLoadObjects_AsOfTx_PropagatesResolverError(t *testing.T) {
 	prov := newFakeSnapshotProvider()
 	tx := newFakeTxResolver()
@@ -176,8 +180,8 @@ func TestLoadObjects_AsOfTx_PropagatesResolverError(t *testing.T) {
 	rr := httptest.NewRecorder()
 	newAsOfRouter(t, h).ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", rr.Code, rr.Body.String())
 	}
 	apiErr := decodeJSON[struct {
 		ErrorName  string            `json:"errorName"`
