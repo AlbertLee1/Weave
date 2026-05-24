@@ -81,6 +81,7 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/actionTypes/getByRidBatch", omsHandler.GetActionTypesByRidBatchV2)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/linkTypes/getByRidBatch", omsHandler.GetLinkTypesByRidBatchV2)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/getByRidBatch", omsHandler.GetInterfaceTypesByRidBatchV2)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/valueTypes/getByRidBatch", omsHandler.GetValueTypesByRidBatchV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}", omsHandler.GetActionType)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}/fullMetadata", omsHandler.GetActionTypeFullMetadataV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypesFullMetadata", omsHandler.ListActionTypesFullMetadataV2)

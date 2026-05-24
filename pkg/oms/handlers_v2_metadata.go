@@ -272,6 +272,36 @@ func (h *OMSHandler) GetActionTypesByRidBatchV2(w http.ResponseWriter, r *http.R
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
 }
 
+// GetValueTypesByRidBatchV2 handles POST /api/v2/ontologies/{ontologyApiName}/valueTypes/getByRidBatch.
+// Round 83 closes the batch-get symmetry across all five metadata
+// kinds (objectTypes + actionTypes + linkTypes round-79 +
+// interfaceTypes round-81 + this). Property-editor dropdowns and
+// unit-suggestion panels rendering many value-type metadatas no
+// longer need N round-trips to label N RIDs. Reuses shared
+// getByRidBatchRequest. Missing RIDs silently skipped (convention
+// across all five surfaces). ValueType serialises directly via
+// the JSON encoder — no ToWireJSON helper.
+func (h *OMSHandler) GetValueTypesByRidBatchV2(w http.ResponseWriter, r *http.Request) {
+	var req getByRidBatchRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	out := make([]*ValueType, 0, len(req.RIDs))
+	for _, rid := range req.RIDs {
+		vt, err := h.repo.GetValueType(r.Context(), rid)
+		if err != nil {
+			continue
+		}
+		out = append(out, vt)
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": out})
+}
+
 // GetInterfaceTypesByRidBatchV2 handles POST /api/v2/ontologies/{ontologyApiName}/interfaceTypes/getByRidBatch.
 // Round 81 closes the batch-get symmetry across all four metadata
 // kinds (objectTypes + actionTypes + linkTypes round-79 + this).

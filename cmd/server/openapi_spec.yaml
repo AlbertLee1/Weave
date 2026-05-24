@@ -5720,6 +5720,50 @@ paths:
                       $ref: "#/components/schemas/Interface"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/valueTypes/getByRidBatch:
+    post:
+      operationId: getValueTypesByRidBatch
+      summary: Batch lookup value types by RIDs (round 83)
+      description: |
+        Closes the batch-get-by-RID symmetry across all five
+        OMS metadata kinds (objectTypes + actionTypes + linkTypes
+        round-79 + interfaceTypes round-81 + this). Property-editor
+        dropdowns and unit-suggestion panels rendering many
+        value-type metadatas no longer need N round-trips to
+        label N RIDs. Missing RIDs are silently skipped — matches
+        the established convention so partial-render logic stays
+        portable across all five batch surfaces.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of ValueType RIDs to look up.
+      responses:
+        "200":
+          description: Batch value type list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ValueType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}:
     get:
       operationId: getActionType
