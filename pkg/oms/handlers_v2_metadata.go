@@ -248,9 +248,9 @@ type getByRidBatchRequest struct {
 // Batch lookup of ActionTypes by their RIDs.
 func (h *OMSHandler) GetActionTypesByRidBatchV2(w http.ResponseWriter, r *http.Request) {
 	var req getByRidBatchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
-			"reason": "Failed to parse request body",
+			"reason": err.Error(),
 		}))
 		return
 	}
