@@ -17,6 +17,13 @@ type Repo interface {
 	CreateRun(ctx context.Context, r Run) error
 	GetRun(ctx context.Context, rid string) (Run, error)
 	ListResumable(ctx context.Context) ([]Run, error)
+	// ListRunsForScenario returns every run whose ScenarioRID
+	// matches, sorted by StartedAt DESC (newest first to match the
+	// Foundry "Recent runs" panel ordering). Returns an empty slice
+	// (non-nil) when the scenario has no runs — the wire layer
+	// guarantees [] not null. Round 68 added it to back the GET
+	// /api/vertex/v1/scenarios/{scenarioRid}/runs endpoint.
+	ListRunsForScenario(ctx context.Context, scenarioRID string) ([]Run, error)
 }
 
 // ScenarioReader resolves a Scenario into the ordered list of

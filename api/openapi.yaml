@@ -12428,6 +12428,41 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "500":
           $ref: "#/components/responses/InternalError"
+    get:
+      operationId: listVertexScenarioRuns
+      summary: List runs for a Vertex scenario
+      description: |
+        Round 68. Returns every run belonging to the given scenarioRid
+        sorted newest-first (StartedAt DESC) — matches the Foundry
+        "Recent runs" panel ordering. Response is wrapped in `{runs:
+        [...]}` so future pagination fields (nextPageToken, totalCount)
+        can be added without breaking the wire contract. An unknown
+        scenarioRid returns 200 + empty list rather than 404 because
+        scenarioRid is a filter here, not a lookup key — the SPA's
+        "Recent runs" panel renders cleanly against brand-new scenarios.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: scenarioRid
+          required: true
+          description: Vertex scenario RID whose runs to list.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Run list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runs]
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      type: object
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}:
     get:
       operationId: getVertexScenarioRun
