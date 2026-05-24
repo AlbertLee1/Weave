@@ -2501,6 +2501,59 @@ components:
         result:
           type: string
           enum: [VALID, INVALID]
+    ValidateActionResponse:
+      type: object
+      description: |
+        Foundry OSv2 response envelope for the dedicated
+        POST /api/v2/ontologies/{ontologyApiName}/actions/{action}/validate
+        endpoint. The wire shape is a validation report — submissionCriteria
+        and parameters are ALWAYS non-null arrays/objects so SDKs can iterate
+        without nil-guarding even on a VALID response.
+      required: [result, submissionCriteria, parameters]
+      properties:
+        result:
+          type: string
+          enum: [VALID, INVALID]
+        submissionCriteria:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubmissionCriterionResult"
+        parameters:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ParameterValidationResult"
+    SubmissionCriterionResult:
+      type: object
+      required: [result]
+      properties:
+        result:
+          type: string
+          enum: [VALID, INVALID]
+        configuredFailureMessage:
+          type: string
+    ParameterValidationResult:
+      type: object
+      required: [result, required, evaluatedConstraints]
+      properties:
+        result:
+          type: string
+          enum: [VALID, INVALID]
+        required:
+          type: boolean
+        evaluatedConstraints:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvaluatedConstraint"
+    EvaluatedConstraint:
+      type: object
+      required: [type, result]
+      properties:
+        type:
+          type: string
+          description: Constraint kind (e.g. "required", "range", "oneOf").
+        result:
+          type: string
+          enum: [VALID, INVALID]
     ApplyActionRequest:
       type: object
       description: |
@@ -8979,6 +9032,51 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/AsyncApplyActionResponse"
                   - $ref: "#/components/schemas/PendingApprovalResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/{action}/validate:
+    post:
+      operationId: validateAction
+      summary: Validate an action without executing it (Foundry OSv2)
+      description: |
+        Dedicated validation surface SDKs hit on every form-field change.
+        The wire envelope is a validation REPORT — the response is always
+        HTTP 200 when the path is well-formed, even when result=INVALID.
+        Unknown action types surface as INVALID with a submissionCriterion
+        message rather than a 404, so a stale actionType slug renders as a
+        regular form validation error instead of an HTTP exception that
+        breaks the form. A missing {action} path segment IS rejected with
+        400 MissingActionType because that is a malformed URL, not a
+        validation outcome. Validate MUST NOT publish to NATS or fire
+        side effects.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: action
+          required: true
+          description: Action API name.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyActionRequest"
+      responses:
+        "200":
+          description: |
+            Validation report. result is VALID or INVALID. parameters is
+            keyed by parameter id; each entry carries result, required,
+            and evaluatedConstraints. submissionCriteria is non-empty on
+            INVALID with at least one entry carrying configuredFailureMessage.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidateActionResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":

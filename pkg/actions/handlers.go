@@ -187,6 +187,103 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
+// Validate handles POST /api/v2/ontologies/{ontologyApiName}/actions/{action}/validate.
+//
+// This is the Foundry-1:1 dedicated validate surface (see
+// pkg/actions/handler_validate_bdd_test.go for the wire contract). SDKs
+// hit it on every form-field change to drive client-side validation
+// without ever publishing to NATS. The endpoint is a pure report:
+//
+//   - HTTP 200 ALWAYS when the path is well-formed, even if the
+//     ValidateActionResponse.Result is INVALID — the wire envelope is
+//     a validation report, not an HTTP error.
+//   - Unknown action types surface as INVALID with a submissionCriterion
+//     carrying the lookup error message; they are NOT 404s, because
+//     "the form's actionType slug is stale" is a validation outcome
+//     the SDK should render as a regular validation error rather than
+//     surface as an HTTP exception that breaks the form.
+//   - Missing path segment ({action} empty) IS a 400 MissingActionType:
+//     a malformed URL is a programmer error, not a validation outcome.
+//
+// Validate MUST NOT publish to NATS or fire side effects — it runs
+// Executor.Prepare only and discards the prepared edits.
+func (h *Handler) Validate(w http.ResponseWriter, r *http.Request) {
+	r = withBranchScope(r)
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	action := chi.URLParam(r, "action")
+
+	if action == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingActionType", nil))
+		return
+	}
+
+	var req ApplyRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	req.ActionType = action
+
+	// Resolve action type for per-parameter metadata (Required flags).
+	// A failure here is itself a validation outcome (stale slug), not
+	// an HTTP error — fall through with empty paramDefs and let the
+	// Prepare error bubble up into the submissionCriteria summary.
+	var paramDefs []ParameterDef
+	if at, resolveErr := h.executor.ResolveActionType(r.Context(), ontologyRID, action); resolveErr == nil && at != nil {
+		if defs, err := ParseParameterDefs(at.Parameters); err == nil {
+			paramDefs = defs
+		}
+	}
+
+	paramMap := make(map[string]ParameterValidationResult, len(paramDefs))
+	for _, def := range paramDefs {
+		paramMap[def.ID] = ParameterValidationResult{
+			Result:               "VALID",
+			Required:             def.Required,
+			EvaluatedConstraints: []EvaluatedConstraint{},
+		}
+	}
+
+	_, prepareErr := h.executor.Prepare(r.Context(), ontologyRID, &req)
+	if prepareErr != nil {
+		// Per-parameter attribution: if the Prepare error mentions a
+		// known parameter id, mark that parameter INVALID so the SDK
+		// can red-line a specific form field. Otherwise leave all
+		// parameters VALID and rely on submissionCriteria to surface
+		// the failure at form-level (e.g. unknown action, rule
+		// execution error). The id-match uses both quoted and bare
+		// forms because Prepare's wrapped errors quote ("name") but
+		// rule-engine errors may not.
+		msg := prepareErr.Error()
+		for id, pr := range paramMap {
+			if strings.Contains(msg, `"`+id+`"`) || strings.Contains(msg, " "+id+" ") {
+				pr.Result = "INVALID"
+				pr.EvaluatedConstraints = []EvaluatedConstraint{{
+					Type:   "required",
+					Result: "INVALID",
+				}}
+				paramMap[id] = pr
+			}
+		}
+		httputil.WriteJSON(w, http.StatusOK, &ValidateActionResponse{
+			Result: "INVALID",
+			SubmissionCriteria: []SubmissionCriterionResult{{
+				Result:                   "INVALID",
+				ConfiguredFailureMessage: prepareErr.Error(),
+			}},
+			Parameters: paramMap,
+		})
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, &ValidateActionResponse{
+		Result:             "VALID",
+		SubmissionCriteria: []SubmissionCriterionResult{},
+		Parameters:         paramMap,
+	})
+}
+
 // serveAsyncApply persists a PENDING ActionJob, kicks off a detached goroutine
 // that runs the sync Apply path and updates the job row, and returns a 202
 // Accepted envelope carrying {jobId}. The goroutine uses a fresh

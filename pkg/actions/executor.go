@@ -155,6 +155,59 @@ type ValidateOnlyResponse struct {
 	Validation *ValidationResult `json:"validation"`
 }
 
+// ValidateActionResponse is the Foundry OSv2 response envelope for the
+// dedicated POST /api/v2/ontologies/{ontology}/actions/{action}/validate
+// endpoint (see pkg/actions/handler_validate_bdd_test.go and
+// docs/PRD-Weave-OSv2-深度复刻-V2.md). The shape intentionally mirrors
+// what Foundry SDKs (TypeScript / Python OSDK) consume on every form-field
+// change: a single overall result, a list of submissionCriteria each
+// carrying their configured failure message, and a per-parameter map
+// keyed by parameter id so a form can red-line exactly the field that
+// failed.
+//
+// SubmissionCriteria and Parameters MUST be non-nil so the JSON wire
+// shape is `[]`/`{}` rather than `null`. SDKs that did length checks
+// without first nil-guarding would otherwise NPE on a VALID response.
+type ValidateActionResponse struct {
+	Result             string                               `json:"result"` // VALID | INVALID
+	SubmissionCriteria []SubmissionCriterionResult          `json:"submissionCriteria"`
+	Parameters         map[string]ParameterValidationResult `json:"parameters"`
+}
+
+// SubmissionCriterionResult is one entry in ValidateActionResponse.SubmissionCriteria.
+// Foundry's submission-criteria pipeline emits one envelope per declared
+// criterion; Weave's MVP synthesises a single entry on INVALID that
+// carries the underlying validation error verbatim into
+// configuredFailureMessage so the SDK has something to render in the
+// form-level summary banner.
+type SubmissionCriterionResult struct {
+	Result                   string `json:"result"` // VALID | INVALID
+	ConfiguredFailureMessage string `json:"configuredFailureMessage,omitempty"`
+}
+
+// ParameterValidationResult is one entry in ValidateActionResponse.Parameters.
+// EvaluatedConstraints is non-nil so SDKs can iterate without a nil
+// check; Weave's MVP populates a single {type:"required",
+// result:"INVALID"} entry when a required parameter is missing and
+// leaves the slice empty for VALID rows. The Required field is sourced
+// from the ActionType.Parameters definition.
+type ParameterValidationResult struct {
+	Result               string                `json:"result"` // VALID | INVALID
+	Required             bool                  `json:"required"`
+	EvaluatedConstraints []EvaluatedConstraint `json:"evaluatedConstraints"`
+}
+
+// EvaluatedConstraint is one entry in
+// ParameterValidationResult.EvaluatedConstraints. Foundry surfaces a
+// richer taxonomy (range, oneOf, objectQuery, …); Weave starts with the
+// "required" / "type" pair so the per-parameter wire shape is forwards-
+// compatible and SDKs can switch on Type without breaking when richer
+// constraint kinds land.
+type EvaluatedConstraint struct {
+	Type   string `json:"type"`
+	Result string `json:"result"` // VALID | INVALID
+}
+
 // Publisher is the minimal contract the Executor needs from the funnel
 // publisher. Defined here (rather than depending on the concrete
 // *funnel.Publisher) so tests can inject fakes and detect whether a publish

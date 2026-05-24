@@ -1034,6 +1034,11 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides", actionHandler.ApplyWithOverrides)
+			// Foundry OSv2 dedicated validate surface. SDKs (TypeScript/Python
+			// OSDK) hit this on every form-field change to drive client-side
+			// validation without ever publishing to NATS — see
+			// pkg/actions/handler_validate_bdd_test.go for the wire contract.
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/validate", actionHandler.Validate)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/revert", actionHandler.Revert)
 			// US-369: multi-step saga with idempotency + DLQ.
 			//   POST /api/v2/ontologies/{ontology}/actions/applySaga
