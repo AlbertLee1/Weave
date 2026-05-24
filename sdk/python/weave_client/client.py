@@ -46,6 +46,7 @@ class Client:
         # Lazy import to avoid circular references at module-import time.
         from .actions import ActionsAPI
         from .attachments import AttachmentsAPI
+        from .dashboards import DashboardsAPI
         from .functions import FunctionsAPI
         from .objects import ObjectsAPI
         from .objectsets import ObjectSetsAPI
@@ -66,6 +67,7 @@ class Client:
         self.transactions = TransactionsAPI(self)
         self.reactions = ReactionsAPI(self)
         self.notifications = NotificationsAPI(self)
+        self.dashboards = DashboardsAPI(self)
         self.vertex = VertexAPI(self)
 
     @property

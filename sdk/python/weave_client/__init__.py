@@ -61,6 +61,10 @@ from .subscriptions import (
     WebSocketTransport,
     WebsocketsTransport,
 )
+from .dashboards import (
+    Dashboard,
+    DashboardsAPI,
+)
 from .notifications import (
     Notification,
     NotificationsAPI,
@@ -154,6 +158,8 @@ __all__ = [
     "ReactionsAPI",
     "Notification",
     "NotificationsAPI",
+    "Dashboard",
+    "DashboardsAPI",
 ]
 
 __version__ = "0.1.0"
