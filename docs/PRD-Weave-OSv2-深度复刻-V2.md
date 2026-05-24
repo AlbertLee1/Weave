@@ -135,7 +135,7 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 | 上层体验 | Dashboards / notifications / reactions / permission requests | 🟢 | 🟢 PG | 🟡 | **68%** | `pkg/dashboards` 提供 `/api/v2/dashboards`；`pkg/notifications` + OMS `/api/v2/notifications` 支持通知中心与 fan-out；`pkg/reactions` 提供 `/api/v2/reactions` 给 ObjectDetail ReactionBar；`pkg/permissionrequests` 提供 `/api/v2/permission-requests` request-access workflow；remaining depth gaps 是审计串联、批量治理体验与通知渠道生产化 |
 | SDK (Python) | 核心 CRUD + Action | 🟢 | n/a | 🟢 | **80%** | 核心齐全、iter_all 支持 |
 | SDK (Python) | ObjectSet 组合 DSL | 🟡 | n/a | 🔴 | **40%** | 仅 raw dict，无 Pythonic builder |
-| SDK (Python) | Aggregation | 🔴 | n/a | 🔴 | **10%** | 未暴露 |
+| SDK (Python) | Aggregation | 🟢 | n/a | 🟢 | **80%** | builders.py 暴露完整 metric (count/sum/avg/min/max/approxDistinct/exactDistinct/stddev/variance/collectList/approxPercentile)+ groupBy (exact/fixedWidth/range/duration) helpers + `parse_aggregation_response` 拆出 accuracy / data / sub-aggs；剩余 topValues/geohash groupBy 与 having clause 仍是 raw dict |
 | CLI | auth / ontology / object | 🟢 | n/a | 🟢 | **80%** | 基础齐全、JSON/表格输出 |
 | CLI | action / aggregate / objectset | 🟢 | n/a | 🟡 | **65%** | `cmd/weave-cli/cmd_action.go` 暴露 `weave action apply`；`cmd_aggregate.go` 暴露 `weave aggregate`；`cmd_objectset.go` 暴露 `weave objectset load` / `weave objectset create-temporary`；`cmd/weave-cli/cli_us304_test.go` 覆盖命令契约；remaining depth gaps 是更高阶 helper、别名、发现文档和输出 polish |
 | MCP | 7 基础 + 4 AI 工具 | 🟢 | n/a | 🟢 | **84%** | `docs/mcp.md` 记录 HTTP `/mcp`、`prompts/list` / `prompts/get`、`resources/list` / `resources/read` / `resources/subscribe` / `resources/unsubscribe`；实现位于 `pkg/mcp/prompts.go` 与 `pkg/mcp/resources.go`，资源 URI 包含 `weave://objecttype/<ontology>/<objectType>`；剩余是 sampling 与部署认证 polish |
