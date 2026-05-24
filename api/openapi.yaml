@@ -487,6 +487,26 @@ components:
           type: string
         editOnly:
           type: boolean
+    TypeGroup:
+      type: object
+      description: |
+        A user-defined grouping of ObjectTypes (e.g. "People",
+        "Finance"). Used by SDKs and the SPA to drive
+        category-aware navigation in ontology explorers. The
+        wire shape matches the in-process pkg/oms.TypeGroup
+        struct used by the OMS repo.
+      required: [rid, apiName, displayName]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        color:
+          type: string
     SharedProperty:
       type: object
       description: |
@@ -4812,6 +4832,70 @@ paths:
       responses:
         "204":
           description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/typeGroups:
+    get:
+      operationId: listTypeGroups
+      summary: List type groups (Foundry OSv2)
+      description: |
+        Foundry 1:1 — returns every TypeGroup registered in the
+        ontology. TypeGroups organise ObjectTypes into categories
+        (e.g. "People", "Finance") and SDKs/UIs use the list to drive
+        category-aware navigation. The envelope is {"data": [...]} and
+        is NEVER null; an ontology with zero TypeGroups returns
+        {"data": []} so SDK iterators don't NPE. Prior to this
+        endpoint TypeGroups were only visible by parsing the bulky
+        /fullMetadata response.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: TypeGroup list envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TypeGroup"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/typeGroups/{typeGroup}:
+    get:
+      operationId: getTypeGroupByApiName
+      summary: Get a single TypeGroup by API name (Foundry OSv2)
+      description: |
+        Foundry-1:1 sibling of listTypeGroups — keyed by API name
+        (not RID). The current implementation scans the
+        ontology-scoped list and filters; sets are small in practice
+        and SDK caches absorb repeat calls.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: typeGroup
+          required: true
+          description: TypeGroup API name (not the RID).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: TypeGroup wire object.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypeGroup"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

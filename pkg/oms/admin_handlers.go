@@ -1597,6 +1597,73 @@ func (h *OMSHandler) GetSharedPropertyTypeByAPIName(w http.ResponseWriter, r *ht
 	}))
 }
 
+// ListTypeGroupsV2 handles
+// GET /api/v2/ontologies/{ontologyApiName}/typeGroups.
+//
+// Foundry OSv2 1:1 alignment: TypeGroup repo CRUD has been wired for
+// many rounds but the V2 read API exposed NONE of it — TypeGroups
+// were visible only by parsing /fullMetadata. Restores the canonical
+// Foundry path with the {"data":[...]} envelope used by sibling list
+// endpoints. Empty ontology returns `[]` rather than `null` so SDK
+// iterators don't NPE.
+func (h *OMSHandler) ListTypeGroupsV2(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyApiName := chi.URLParam(r, "ontologyApiName")
+	list, err := repo.ListTypeGroups(r.Context(), ontologyApiName)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListTypeGroupsFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	if list == nil {
+		list = []TypeGroup{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": list})
+}
+
+// GetTypeGroupByAPIName handles
+// GET /api/v2/ontologies/{ontologyApiName}/typeGroups/{typeGroup}.
+//
+// Foundry-1:1 sibling of ListTypeGroupsV2 — keyed by API name. As
+// with round-8's sharedPropertyTypes handler, the repo has no native
+// GetTypeGroupByAPIName helper, so this scans ListTypeGroups and
+// filters; ontology-scoped sets are small in practice.
+func (h *OMSHandler) GetTypeGroupByAPIName(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyApiName := chi.URLParam(r, "ontologyApiName")
+	apiName := chi.URLParam(r, "typeGroup")
+	if apiName == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingTypeGroup", map[string]string{
+			"reason": "typeGroup path parameter is required",
+		}))
+		return
+	}
+	list, err := repo.ListTypeGroups(r.Context(), ontologyApiName)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("GetTypeGroupFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	for i := range list {
+		if list[i].APIName == apiName {
+			httputil.WriteJSON(w, http.StatusOK, list[i])
+			return
+		}
+	}
+	apierror.WriteJSON(w, apierror.NewNotFound("TypeGroupNotFound", map[string]string{
+		"ontology":  ontologyApiName,
+		"typeGroup": apiName,
+	}))
+}
+
 // GetLinkTypeByAPIName handles
 // GET /api/v2/ontologies/{ontologyApiName}/linkTypes/{linkType}.
 //

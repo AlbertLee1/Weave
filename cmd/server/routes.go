@@ -49,6 +49,12 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	// the linkTypes pattern above.
 	r.Get("/api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes", omsHandler.ListSharedPropertyTypesV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/{sharedPropertyType}", omsHandler.GetSharedPropertyTypeByAPIName)
+	// TypeGroup V2 read surface (Foundry-1:1). Same shape as
+	// sharedPropertyTypes above — repo CRUD has been wired for many
+	// rounds, but until now the only path to a TypeGroup was through
+	// /fullMetadata. This restores the canonical Foundry endpoints.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/typeGroups", omsHandler.ListTypeGroupsV2)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/typeGroups/{typeGroup}", omsHandler.GetTypeGroupByAPIName)
 	// LinkProperty admin CRUD (US-210): schema lives per LinkType; edge values
 	// ride on link_edges.edge_properties JSONB and are written via the edges
 	// PUT endpoint below.
