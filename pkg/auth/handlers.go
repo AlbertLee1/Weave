@@ -69,6 +69,8 @@ func MeHandler() http.Handler {
 
 		resp := MeResponse{
 			ID:            u.ID,
+			Email:         u.Email,
+			Name:          u.Name,
 			Roles:         roles,
 			OntologyRoles: ontologyRoles,
 			Permissions:   perms,
