@@ -5639,6 +5639,44 @@ paths:
                 $ref: "#/components/schemas/ActionTypeListResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/linkTypes/getByRidBatch:
+    post:
+      operationId: getLinkTypesByRidBatch
+      summary: Batch lookup link types by RIDs (round 79)
+      description: |
+        Symmetry with the objectTypes/actionTypes getByRidBatch surfaces.
+        SDK callers rendering many link metadatas (Foundry ObjectList
+        link columns, scenario diff badges) previously needed N
+        round-trips to GET /linkTypes/{rid}; one batch call collapses
+        them. Missing RIDs are silently skipped — the response carries
+        only resolvable rows, matching the existing batch convention so
+        partial-render logic stays portable across object/action/link
+        batch surfaces.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of LinkType RIDs to look up.
+      responses:
+        "200":
+          description: Batch link type list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}:
     get:
       operationId: getActionType

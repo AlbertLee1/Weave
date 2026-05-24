@@ -272,6 +272,42 @@ func (h *OMSHandler) GetActionTypesByRidBatchV2(w http.ResponseWriter, r *http.R
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
 }
 
+// GetLinkTypesByRidBatchV2 handles POST /api/v2/ontologies/{ontologyApiName}/linkTypes/getByRidBatch.
+// Batch lookup of LinkTypes by their RIDs. Round 79 closes the
+// symmetry gap with GetObjectTypesByRidBatchV2 + GetActionTypesByRid
+// BatchV2 — SDK callers rendering many link metadatas (ObjectList
+// link columns, scenario diff badges) had to issue N round-trips.
+// Reuses the shared getByRidBatchRequest type. Missing RIDs are
+// silently skipped so the response carries only resolvable rows
+// (matches the existing batch convention so partial-render logic
+// stays portable across object/action/link batch surfaces).
+func (h *OMSHandler) GetLinkTypesByRidBatchV2(w http.ResponseWriter, r *http.Request) {
+	var req getByRidBatchRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	wireList := make([]json.RawMessage, 0, len(req.RIDs))
+	for _, rid := range req.RIDs {
+		lt, err := h.repo.GetLinkType(r.Context(), rid)
+		if err != nil {
+			// Skip missing entries silently — matches existing
+			// objectTypes / actionTypes batch behaviour.
+			continue
+		}
+		data, err := lt.ToWireJSON()
+		if err != nil {
+			continue
+		}
+		wireList = append(wireList, json.RawMessage(data))
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
+}
+
 // GetActionTypeFullMetadataV2 handles GET /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}/fullMetadata.
 // Returns the ActionType with all metadata fields.
 func (h *OMSHandler) GetActionTypeFullMetadataV2(w http.ResponseWriter, r *http.Request) {
