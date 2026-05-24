@@ -11292,6 +11292,84 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/transactions/{transactionId}:
+    get:
+      operationId: getOntologyTransaction
+      summary: Read the current edit buffer for an OntologyTransaction (experimental)
+      description: |
+        **Experimental** — this endpoint requires `?preview=true` and is
+        subject to change. Returns the full append-ordered list of edits
+        buffered on `{transactionId}`. Unknown transaction IDs return
+        `{totalEdits: 0, edits: []}` rather than 404, matching the POST
+        endpoint's "auto-created on first use" semantic.
+      tags: [OntologyTransaction]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: transactionId
+          required: true
+          schema:
+            type: string
+          description: Opaque client-supplied identifier for the open transaction.
+        - in: query
+          name: preview
+          required: true
+          schema:
+            type: string
+            enum: ["true"]
+          description: Must be `true`; the endpoint is experimental and gated.
+      responses:
+        "200":
+          description: Current edit buffer for the transaction.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [transactionId, totalEdits, edits]
+                properties:
+                  transactionId:
+                    type: string
+                  totalEdits:
+                    type: integer
+                  edits:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TransactionEdit"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+    delete:
+      operationId: abortOntologyTransaction
+      summary: Discard an OntologyTransaction edit buffer (experimental)
+      description: |
+        **Experimental** — this endpoint requires `?preview=true` and is
+        subject to change. Removes any buffered edits for
+        `{transactionId}`. Idempotent: deleting an unknown transaction
+        returns 204 so retries are safe.
+      tags: [OntologyTransaction]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: transactionId
+          required: true
+          schema:
+            type: string
+          description: Opaque client-supplied identifier for the open transaction.
+        - in: query
+          name: preview
+          required: true
+          schema:
+            type: string
+            enum: ["true"]
+          description: Must be `true`; the endpoint is experimental and gated.
+      responses:
+        "204":
+          description: Transaction discarded (or did not exist).
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/sqlQueries/execute:
     post:
       operationId: executeSqlQuery

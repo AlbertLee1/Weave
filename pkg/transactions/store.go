@@ -33,6 +33,11 @@ type Store interface {
 	// ListEdits returns all edits buffered on the transaction, in the
 	// order they were appended. Returns an empty slice for unknown keys.
 	ListEdits(ctx context.Context, key Key) ([]funnel.Edit, error)
+	// DeleteTransaction removes any buffered edits for the given key.
+	// Idempotent: deleting an unknown key is not an error so retries are
+	// safe. Round 59 added it to back the DELETE
+	// .../transactions/{id} abort endpoint.
+	DeleteTransaction(ctx context.Context, key Key) error
 }
 
 // MemoryStore is the default single-machine Store backed by a map guarded
@@ -63,4 +68,13 @@ func (s *MemoryStore) ListEdits(_ context.Context, key Key) ([]funnel.Edit, erro
 	out := make([]funnel.Edit, len(src))
 	copy(out, src)
 	return out, nil
+}
+
+// DeleteTransaction implements Store. Idempotent: the absence of the
+// key in the map is not an error.
+func (s *MemoryStore) DeleteTransaction(_ context.Context, key Key) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.data, key)
+	return nil
 }
