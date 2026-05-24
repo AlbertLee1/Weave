@@ -238,6 +238,12 @@ func (s *stubRehydrateRepo) UpdateActionLogStatus(context.Context, int64, string
 func (s *stubRehydrateRepo) UpdateActionLogSideEffectStatus(context.Context, int64, json.RawMessage) error {
 	return nil
 }
+func (s *stubRehydrateRepo) InsertSideEffectDLQRow(context.Context, *oms.SideEffectDLQRow) error {
+	return nil
+}
+func (s *stubRehydrateRepo) ListSideEffectDLQByActionLog(context.Context, int64) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
 func (s *stubRehydrateRepo) SearchOntologyResources(context.Context, string, string) ([]oms.SearchResult, error) {
 	return nil, nil
 }

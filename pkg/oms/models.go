@@ -624,6 +624,39 @@ type ActionLog struct {
 	SideEffectStatus json.RawMessage `json:"sideEffectStatus,omitempty"`
 }
 
+// SideEffectDLQRow is one entry in the action-side-effect dead-letter
+// queue (PRD-V2 Gap-A4 round 33). Inserted by the executor after a
+// SideEffectOutcome surfaces with Status="failed" — i.e. the round-30
+// retry loop exhausted its budget on a transient failure. Operators
+// can list pending rows via the admin API (round 34) to inspect and
+// replay.
+//
+// EffectConfig snapshots the original SideEffect.Config blob so a
+// future replay can dispatch without re-reading the ActionType (which
+// may have been edited between the failure and the replay attempt).
+// Outcome carries the full SideEffectOutcome JSON for diagnostic
+// rendering.
+type SideEffectDLQRow struct {
+	ID            int64           `json:"id"`
+	ActionLogID   int64           `json:"actionLogId"`
+	EffectIndex   int             `json:"effectIndex"`
+	EffectType    string          `json:"effectType"`
+	EffectConfig  json.RawMessage `json:"effectConfig,omitempty"`
+	Outcome       json.RawMessage `json:"outcome"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	ReplayStatus  string          `json:"replayStatus"`
+	ReplayedAt    *time.Time      `json:"replayedAt,omitempty"`
+	ReplayCount   int             `json:"replayCount"`
+}
+
+// Side-effect DLQ replay-status taxonomy. Stable strings so admin UI
+// and replay handler (round 34) can route on the value directly.
+const (
+	SideEffectDLQStatusPending   = "pending"
+	SideEffectDLQStatusReplayed  = "replayed"
+	SideEffectDLQStatusAbandoned = "abandoned"
+)
+
 // DatasourceBinding connects an ObjectType to its underlying data source.
 type DatasourceBinding struct {
 	RID           string          `json:"rid"`

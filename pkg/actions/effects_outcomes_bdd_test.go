@@ -86,7 +86,7 @@ import (
 func TestBDD_ExecuteSideEffectsWithOutcomes_DispatcherContract(t *testing.T) {
 	t.Run("empty effects returns nil outcomes and nil error", func(t *testing.T) {
 		for _, in := range []json.RawMessage{nil, json.RawMessage(""), json.RawMessage("null"), json.RawMessage("[]")} {
-			outs, err := ExecuteSideEffectsWithOutcomes(in, ActionResult{})
+			outs, _, err := ExecuteSideEffectsWithOutcomes(in, ActionResult{})
 			if err != nil {
 				t.Errorf("empty input %q: err = %v, want nil", string(in), err)
 			}
@@ -106,7 +106,7 @@ func TestBDD_ExecuteSideEffectsWithOutcomes_DispatcherContract(t *testing.T) {
 			Type:   "webhook",
 			Config: mustWebhookConfig(t, webhookConfig{URL: srv.URL, RetryBackoffMilliseconds: 1}),
 		}})
-		outs, err := ExecuteSideEffectsWithOutcomes(effects, ActionResult{ActionRID: "rid-ok"})
+		outs, _, err := ExecuteSideEffectsWithOutcomes(effects, ActionResult{ActionRID: "rid-ok"})
 		if err != nil {
 			t.Fatalf("err = %v, want nil", err)
 		}
@@ -139,7 +139,7 @@ func TestBDD_ExecuteSideEffectsWithOutcomes_DispatcherContract(t *testing.T) {
 				URL: srv.URL, MaxRetries: 2, RetryBackoffMilliseconds: 1,
 			}),
 		}})
-		outs, _ := ExecuteSideEffectsWithOutcomes(effects, ActionResult{})
+		outs, _, _ := ExecuteSideEffectsWithOutcomes(effects, ActionResult{})
 		if len(outs) != 1 {
 			t.Fatalf("len(outcomes) = %d, want 1", len(outs))
 		}
@@ -160,7 +160,7 @@ func TestBDD_ExecuteSideEffectsWithOutcomes_DispatcherContract(t *testing.T) {
 				URL: srv.URL, MaxRetries: 2, RetryBackoffMilliseconds: 1,
 			}),
 		}})
-		outs, _ := ExecuteSideEffectsWithOutcomes(effects, ActionResult{})
+		outs, _, _ := ExecuteSideEffectsWithOutcomes(effects, ActionResult{})
 		got := outs[0]
 		if got.Status != SideEffectStatusFailed {
 			t.Errorf("status = %q, want failed", got.Status)
@@ -185,7 +185,7 @@ func TestBDD_ExecuteSideEffectsWithOutcomes_DispatcherContract(t *testing.T) {
 				URL: srv.URL, MaxRetries: 5, RetryBackoffMilliseconds: 1,
 			}),
 		}})
-		outs, _ := ExecuteSideEffectsWithOutcomes(effects, ActionResult{})
+		outs, _, _ := ExecuteSideEffectsWithOutcomes(effects, ActionResult{})
 		got := outs[0]
 		if got.Status != SideEffectStatusNonRetryable {
 			t.Errorf("status = %q, want non_retryable", got.Status)
@@ -197,7 +197,7 @@ func TestBDD_ExecuteSideEffectsWithOutcomes_DispatcherContract(t *testing.T) {
 
 	t.Run("log effect: status=success, attempts=1", func(t *testing.T) {
 		effects := mustEffectsJSON(t, []SideEffect{{Type: "log"}})
-		outs, _ := ExecuteSideEffectsWithOutcomes(effects, ActionResult{ActionRID: "rid-log"})
+		outs, _, _ := ExecuteSideEffectsWithOutcomes(effects, ActionResult{ActionRID: "rid-log"})
 		got := outs[0]
 		if got.Type != "log" || got.Status != SideEffectStatusSuccess || got.Attempts != 1 {
 			t.Errorf("outcome = %+v, want {type=log status=success attempts=1}", got)
@@ -206,7 +206,7 @@ func TestBDD_ExecuteSideEffectsWithOutcomes_DispatcherContract(t *testing.T) {
 
 	t.Run("unknown effect type: status=unknown_type, attempts=0, error mentions type", func(t *testing.T) {
 		effects := mustEffectsJSON(t, []SideEffect{{Type: "carrier-pigeon"}})
-		outs, _ := ExecuteSideEffectsWithOutcomes(effects, ActionResult{})
+		outs, _, _ := ExecuteSideEffectsWithOutcomes(effects, ActionResult{})
 		got := outs[0]
 		if got.Type != "carrier-pigeon" {
 			t.Errorf("type = %q, want it echoed back as carrier-pigeon", got.Type)
@@ -237,7 +237,7 @@ func TestBDD_ExecuteSideEffectsWithOutcomes_DispatcherContract(t *testing.T) {
 			{Type: "webhook", Config: mustWebhookConfig(t, webhookConfig{URL: fail.URL, MaxRetries: 1, RetryBackoffMilliseconds: 1})},
 			{Type: "log"},
 		})
-		outs, err := ExecuteSideEffectsWithOutcomes(effects, ActionResult{})
+		outs, _, err := ExecuteSideEffectsWithOutcomes(effects, ActionResult{})
 		if err != nil {
 			t.Fatalf("err = %v, want nil (per-effect failures don't surface as top-level err)", err)
 		}
@@ -260,7 +260,7 @@ func TestBDD_ExecuteSideEffectsWithOutcomes_DispatcherContract(t *testing.T) {
 	})
 
 	t.Run("malformed effects JSON: returns (nil, parse error)", func(t *testing.T) {
-		outs, err := ExecuteSideEffectsWithOutcomes(json.RawMessage(`{not valid json`), ActionResult{})
+		outs, _, err := ExecuteSideEffectsWithOutcomes(json.RawMessage(`{not valid json`), ActionResult{})
 		if err == nil {
 			t.Fatal("err = nil, want a parse error")
 		}

@@ -100,37 +100,42 @@ const (
 // persistence, DLQ routing, or per-effect SLO tracking) should use
 // `ExecuteSideEffectsWithOutcomes` instead.
 func ExecuteSideEffects(effectsJSON json.RawMessage, result ActionResult) error {
-	_, err := ExecuteSideEffectsWithOutcomes(effectsJSON, result)
+	_, _, err := ExecuteSideEffectsWithOutcomes(effectsJSON, result)
 	return err
 }
 
 // ExecuteSideEffectsWithOutcomes is the structured-outcome variant of
 // ExecuteSideEffects. It returns one SideEffectOutcome per declared
-// effect so callers can persist the outcomes into
+// effect AND the parsed []SideEffect slice (so callers that need the
+// original effect config — e.g. the round-33 DLQ writer — don't have
+// to re-parse effectsJSON). Callers should persist the outcomes into
 // action_logs.side_effect_status, route failed-after-retries effects
 // to a DLQ, or surface per-effect status on a Foundry-style action
 // detail page.
 //
-// Returns (nil, nil) when effectsJSON is empty / null / [].
-// Returns (nil, error) only when the effects JSON itself is malformed
-// (parse failure) — per-effect dispatch failures are recorded in the
-// outcomes and DO NOT propagate as an error, so a single bad effect
-// never aborts the rest of the array.
-func ExecuteSideEffectsWithOutcomes(effectsJSON json.RawMessage, result ActionResult) ([]SideEffectOutcome, error) {
+// Returns (nil, nil, nil) when effectsJSON is empty / null / [].
+// Returns (nil, nil, error) only when the effects JSON itself is
+// malformed (parse failure) — per-effect dispatch failures are
+// recorded in the outcomes and DO NOT propagate as an error, so a
+// single bad effect never aborts the rest of the array.
+//
+// effects[i] and outcomes[i] are index-aligned: callers can use the
+// same index to attribute an outcome back to its source SideEffect.
+func ExecuteSideEffectsWithOutcomes(effectsJSON json.RawMessage, result ActionResult) ([]SideEffectOutcome, []SideEffect, error) {
 	if len(effectsJSON) == 0 || string(effectsJSON) == "null" || string(effectsJSON) == "[]" {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Support either a single effect object or an array of effects.
 	var effects []SideEffect
 	if effectsJSON[0] == '[' {
 		if err := json.Unmarshal(effectsJSON, &effects); err != nil {
-			return nil, fmt.Errorf("parse side effects: %w", err)
+			return nil, nil, fmt.Errorf("parse side effects: %w", err)
 		}
 	} else {
 		var single SideEffect
 		if err := json.Unmarshal(effectsJSON, &single); err != nil {
-			return nil, fmt.Errorf("parse side effects: %w", err)
+			return nil, nil, fmt.Errorf("parse side effects: %w", err)
 		}
 		effects = []SideEffect{single}
 	}
@@ -144,7 +149,7 @@ func ExecuteSideEffectsWithOutcomes(effectsJSON json.RawMessage, result ActionRe
 				outcome.Type, outcome.Status, outcome.Attempts, outcome.Error)
 		}
 	}
-	return outcomes, nil
+	return outcomes, effects, nil
 }
 
 // dispatchSingleEffect runs a single effect and returns its outcome.

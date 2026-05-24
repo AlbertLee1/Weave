@@ -340,6 +340,12 @@ func (m *mockOmsRepo) UpdateActionLogStatus(_ context.Context, _ int64, _ string
 func (m *mockOmsRepo) UpdateActionLogSideEffectStatus(_ context.Context, _ int64, _ json.RawMessage) error {
 	return nil
 }
+func (m *mockOmsRepo) InsertSideEffectDLQRow(_ context.Context, _ *oms.SideEffectDLQRow) error {
+	return nil
+}
+func (m *mockOmsRepo) ListSideEffectDLQByActionLog(_ context.Context, _ int64) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
 
 // ObjectHistory stubs (Tier 2.3)
 func (m *mockOmsRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {

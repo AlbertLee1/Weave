@@ -34,6 +34,8 @@ type mockOmsRepo struct {
 	objectVersionCounts  map[string]int64
 	// US-105: action log lookup for revert tests.
 	actionLogByID map[int64]*oms.ActionLog
+	// Round-33 side-effect DLQ rows captured by InsertSideEffectDLQRow.
+	dlqRows []*oms.SideEffectDLQRow
 }
 
 func (m *mockOmsRepo) CreateOntology(_ context.Context, _ *oms.Ontology) error { return nil }
@@ -246,6 +248,23 @@ func (m *mockOmsRepo) UpdateActionLogSideEffectStatus(_ context.Context, id int6
 		}
 	}
 	return oms.ErrNotFound
+}
+
+// Side-effect DLQ stubs (PRD-V2 Gap-A4 round 33). The mock records
+// inserted DLQ rows in dlqRows so the round-33 executor BDD can assert
+// the wiring fires for failed outcomes.
+func (m *mockOmsRepo) InsertSideEffectDLQRow(_ context.Context, row *oms.SideEffectDLQRow) error {
+	m.dlqRows = append(m.dlqRows, row)
+	return nil
+}
+func (m *mockOmsRepo) ListSideEffectDLQByActionLog(_ context.Context, actionLogID int64) ([]oms.SideEffectDLQRow, error) {
+	out := []oms.SideEffectDLQRow{}
+	for _, r := range m.dlqRows {
+		if r != nil && r.ActionLogID == actionLogID {
+			out = append(out, *r)
+		}
+	}
+	return out, nil
 }
 
 // ObjectHistory stubs (Tier 2.3)

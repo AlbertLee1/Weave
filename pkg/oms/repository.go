@@ -140,6 +140,21 @@ type Repository interface {
 	// this to clear the column or skip the update entirely.
 	UpdateActionLogSideEffectStatus(ctx context.Context, id int64, status json.RawMessage) error
 
+	// InsertSideEffectDLQRow appends one entry to the side-effect dead
+	// letter queue (PRD-V2 Gap-A4 round 33). Called by the executor
+	// after a SideEffectOutcome surfaces Status=failed (round-30 retry
+	// loop exhausted). The (action_log_id, effect_index) pair is
+	// uniquely-keyed so a second commit of the same row (extremely
+	// unlikely; would indicate a duplicate executor run) is rejected
+	// with ErrDuplicate rather than silently double-queued.
+	InsertSideEffectDLQRow(ctx context.Context, row *SideEffectDLQRow) error
+
+	// ListSideEffectDLQByActionLog returns the DLQ rows associated with
+	// the given action_log id, ordered by effect_index ascending. Empty
+	// slice when the action had no failed side effects. Used by the
+	// admin / debug surface to render "what failed for this action".
+	ListSideEffectDLQByActionLog(ctx context.Context, actionLogID int64) ([]SideEffectDLQRow, error)
+
 	// ObjectHistory (Tier 2.3)
 	InsertObjectHistory(ctx context.Context, h *ObjectHistory) error
 	ListObjectHistory(ctx context.Context, objectTypeRID, primaryKey string, limit int) ([]ObjectHistory, error)

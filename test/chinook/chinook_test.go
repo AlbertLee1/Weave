@@ -588,6 +588,12 @@ func (r *inMemoryOmsRepo) UpdateActionLogStatus(_ context.Context, _ int64, _ st
 func (r *inMemoryOmsRepo) UpdateActionLogSideEffectStatus(_ context.Context, _ int64, _ json.RawMessage) error {
 	return nil
 }
+func (r *inMemoryOmsRepo) InsertSideEffectDLQRow(_ context.Context, _ *oms.SideEffectDLQRow) error {
+	return nil
+}
+func (r *inMemoryOmsRepo) ListSideEffectDLQByActionLog(_ context.Context, _ int64) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
 
 // Search stubs
 func (r *inMemoryOmsRepo) SearchOntologyResources(_ context.Context, _, _ string) ([]oms.SearchResult, error) {

@@ -208,6 +208,10 @@ func (m *mockRepo) UpdateActionLogStatus(context.Context, int64, string) error  
 func (m *mockRepo) UpdateActionLogSideEffectStatus(context.Context, int64, json.RawMessage) error {
 	return nil
 }
+func (m *mockRepo) InsertSideEffectDLQRow(context.Context, *oms.SideEffectDLQRow) error { return nil }
+func (m *mockRepo) ListSideEffectDLQByActionLog(context.Context, int64) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
 
 // Search stubs
 func (m *mockRepo) SearchOntologyResources(context.Context, string, string) ([]oms.SearchResult, error) {

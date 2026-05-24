@@ -2004,6 +2004,81 @@ func (r *PGRepository) UpdateActionLogStatus(ctx context.Context, id int64, stat
 	return nil
 }
 
+// InsertSideEffectDLQRow appends a failed-after-retries side-effect to
+// the dead-letter queue (PRD-V2 Gap-A4 round 33). Back-fills the row's
+// ID and CreatedAt on success. ErrDuplicate is returned when the same
+// (action_log_id, effect_index) was already queued — defends against
+// double-executor runs without silently double-inserting.
+func (r *PGRepository) InsertSideEffectDLQRow(ctx context.Context, row *SideEffectDLQRow) error {
+	if row == nil {
+		return fmt.Errorf("InsertSideEffectDLQRow: row is nil")
+	}
+	status := row.ReplayStatus
+	if status == "" {
+		status = SideEffectDLQStatusPending
+	}
+	cfg := nilIfEmptyJSON(row.EffectConfig)
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO action_log_side_effect_dlq
+		   (action_log_id, effect_index, effect_type, effect_config, outcome, replay_status)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, created_at`,
+		row.ActionLogID, row.EffectIndex, row.EffectType, cfg, []byte(row.Outcome), status).
+		Scan(&row.ID, &row.CreatedAt)
+	if err != nil {
+		errMsg := err.Error()
+		if contains(errMsg, "23505") || contains(errMsg, "duplicate key") {
+			return ErrDuplicate
+		}
+		return err
+	}
+	row.ReplayStatus = status
+	return nil
+}
+
+// ListSideEffectDLQByActionLog returns the DLQ rows for the given
+// action_log id, ordered by effect_index ascending so callers see the
+// failures in the same order they appeared in the original SideEffects
+// array. Returns an empty (non-nil) slice when the action had no
+// failed dispatches.
+func (r *PGRepository) ListSideEffectDLQByActionLog(ctx context.Context, actionLogID int64) ([]SideEffectDLQRow, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, action_log_id, effect_index, effect_type,
+		        COALESCE(effect_config, 'null'::jsonb), outcome,
+		        created_at, replay_status, replayed_at, replay_count
+		 FROM action_log_side_effect_dlq
+		 WHERE action_log_id = $1
+		 ORDER BY effect_index ASC`,
+		actionLogID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]SideEffectDLQRow, 0)
+	for rows.Next() {
+		var d SideEffectDLQRow
+		if err := rows.Scan(&d.ID, &d.ActionLogID, &d.EffectIndex, &d.EffectType,
+			&d.EffectConfig, &d.Outcome, &d.CreatedAt, &d.ReplayStatus,
+			&d.ReplayedAt, &d.ReplayCount); err != nil {
+			return nil, err
+		}
+		if string(d.EffectConfig) == "null" {
+			d.EffectConfig = nil
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// nilIfEmptyJSON converts a zero-length json.RawMessage to nil so the
+// pgx driver writes SQL NULL instead of an empty byte string.
+func nilIfEmptyJSON(raw json.RawMessage) interface{} {
+	if len(raw) == 0 {
+		return nil
+	}
+	return []byte(raw)
+}
+
 // UpdateActionLogSideEffectStatus stamps the per-effect dispatch outcome
 // JSONB array onto the action_logs row. Passing a nil or zero-length
 // status writes SQL NULL — callers can use this to clear the column or

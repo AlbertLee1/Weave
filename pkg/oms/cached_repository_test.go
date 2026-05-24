@@ -325,6 +325,10 @@ func (*noopRepo) UpdateActionLogStatus(context.Context, int64, string) error    
 func (*noopRepo) UpdateActionLogSideEffectStatus(context.Context, int64, json.RawMessage) error {
 	return nil
 }
+func (*noopRepo) InsertSideEffectDLQRow(context.Context, *oms.SideEffectDLQRow) error { return nil }
+func (*noopRepo) ListSideEffectDLQByActionLog(context.Context, int64) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
 func (*noopRepo) InsertObjectHistory(context.Context, *oms.ObjectHistory) error {
 	return nil
 }

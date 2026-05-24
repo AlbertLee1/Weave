@@ -1025,14 +1025,15 @@ func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prep
 	// Fire per-action side effects (best-effort, non-blocking) and stamp
 	// the per-effect outcomes onto the action_logs row so the Foundry-
 	// style action history surface can render "webhook 1/2 succeeded on
-	// 2nd attempt" without scraping logs. Gap-A4 round 32 wiring.
+	// 2nd attempt" without scraping logs. Gap-A4 round 32 wiring; round
+	// 33 also routes failed outcomes to the side-effect DLQ.
 	for i, p := range prepared {
-		outcomes, _ := ExecuteSideEffectsWithOutcomes(p.ActionType.SideEffects, ActionResult{
+		outcomes, effects, _ := ExecuteSideEffectsWithOutcomes(p.ActionType.SideEffects, ActionResult{
 			ActionRID: p.ActionType.RID,
 			BatchID:   batch.ID,
 			Edits:     result.Results[i].Edits,
 		})
-		e.persistSideEffectOutcomes(ctx, result.Results[i].ActionLogID, outcomes)
+		e.persistSideEffectOutcomes(ctx, result.Results[i].ActionLogID, outcomes, effects)
 	}
 
 	return result, nil
@@ -1044,7 +1045,14 @@ func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prep
 // router) logs once and moves on — side-effect status is observability,
 // not a write barrier. Empty / nil outcomes skip the call entirely so
 // actions with no side effects don't churn the column.
-func (e *Executor) persistSideEffectOutcomes(ctx context.Context, actionLogID int64, outcomes []SideEffectOutcome) {
+//
+// Round-33 DLQ wiring: outcomes with Status=failed (the round-30 retry
+// loop exhausted its budget on a transient failure) are also persisted
+// to action_log_side_effect_dlq so operators can review / replay via
+// the admin surface (round 34). The EffectConfig snapshot is the
+// original SideEffect.Config blob from the ActionType so a future
+// replay can dispatch without re-reading the ActionType definition.
+func (e *Executor) persistSideEffectOutcomes(ctx context.Context, actionLogID int64, outcomes []SideEffectOutcome, effects []SideEffect) {
 	if actionLogID == 0 || len(outcomes) == 0 || e.omsRepo == nil {
 		return
 	}
@@ -1055,6 +1063,36 @@ func (e *Executor) persistSideEffectOutcomes(ctx context.Context, actionLogID in
 	}
 	if err := e.omsRepo.UpdateActionLogSideEffectStatus(ctx, actionLogID, payload); err != nil {
 		log.Printf("actions: failed to persist side-effect outcomes for action_log %d: %v", actionLogID, err)
+	}
+	// Route failed outcomes to the DLQ. Iterating in declared order so
+	// effect_index matches the original SideEffects array. effects may
+	// be nil when ExecuteSideEffectsWithOutcomes was called on an
+	// already-decoded array — that's a defensive degrade path; skip DLQ
+	// rather than persist a half-shaped row.
+	for i, oc := range outcomes {
+		if oc.Status != SideEffectStatusFailed {
+			continue
+		}
+		var cfg json.RawMessage
+		if i < len(effects) {
+			cfg = effects[i].Config
+		}
+		ocBytes, marshalErr := json.Marshal(oc)
+		if marshalErr != nil {
+			log.Printf("actions: failed to marshal DLQ outcome for action_log %d effect %d: %v", actionLogID, i, marshalErr)
+			continue
+		}
+		dlqRow := &oms.SideEffectDLQRow{
+			ActionLogID:  actionLogID,
+			EffectIndex:  i,
+			EffectType:   oc.Type,
+			EffectConfig: cfg,
+			Outcome:      ocBytes,
+			ReplayStatus: oms.SideEffectDLQStatusPending,
+		}
+		if dlqErr := e.omsRepo.InsertSideEffectDLQRow(ctx, dlqRow); dlqErr != nil {
+			log.Printf("actions: failed to queue side-effect DLQ row for action_log %d effect %d: %v", actionLogID, i, dlqErr)
+		}
 	}
 }
 
@@ -1382,14 +1420,15 @@ func (e *Executor) commitBatchAtomicTx(ctx context.Context, ontologyAPIName stri
 
 	// Per-action side effects (best-effort, non-blocking). Mirrors
 	// CommitBatch — stamps per-effect outcomes onto action_logs.
-	// side_effect_status via persistSideEffectOutcomes. Gap-A4 round 32.
+	// side_effect_status via persistSideEffectOutcomes and queues
+	// failed outcomes to the side-effect DLQ. Gap-A4 rounds 32+33.
 	for i, p := range prepared {
-		outcomes, _ := ExecuteSideEffectsWithOutcomes(p.ActionType.SideEffects, ActionResult{
+		outcomes, effects, _ := ExecuteSideEffectsWithOutcomes(p.ActionType.SideEffects, ActionResult{
 			ActionRID: p.ActionType.RID,
 			BatchID:   batch.ID,
 			Edits:     result.Results[i].Edits,
 		})
-		e.persistSideEffectOutcomes(ctx, logs[i].ID, outcomes)
+		e.persistSideEffectOutcomes(ctx, logs[i].ID, outcomes, effects)
 	}
 
 	return result, nil
