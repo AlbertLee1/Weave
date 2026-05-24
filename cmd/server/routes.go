@@ -55,6 +55,12 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	// /fullMetadata. This restores the canonical Foundry endpoints.
 	r.Get("/api/v2/ontologies/{ontologyApiName}/typeGroups", omsHandler.ListTypeGroupsV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/typeGroups/{typeGroup}", omsHandler.GetTypeGroupByAPIName)
+	// Reverse-lookup: which TypeGroups does this ObjectType belong
+	// to? V2/api-name sibling of the legacy admin RID-keyed
+	// /api/admin/objectTypes/{objectTypeRid}/groups path. SDKs +
+	// the SPA ObjectType detail card use it to render category
+	// chips without parsing /fullMetadata.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/typeGroups", omsHandler.ListTypeGroupsForObjectTypeV2)
 	// LinkProperty admin CRUD (US-210): schema lives per LinkType; edge values
 	// ride on link_edges.edge_properties JSONB and are written via the edges
 	// PUT endpoint below.

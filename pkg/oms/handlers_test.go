@@ -29,6 +29,11 @@ type mockRepo struct {
 	functions        []oms.Function
 	sharedProperties []oms.SharedProperty
 	typeGroups       []oms.TypeGroup
+	// typeGroupAssignments maps objectTypeRID → []typeGroupRID for the
+	// reverse-lookup path exercised by ListTypeGroupsForObjectType.
+	// nil by default so the no-assignment majority of tests keep their
+	// historical empty-result behaviour.
+	typeGroupAssignments map[string][]string
 	branches        []oms.OntologyBranch
 	branchChanges   []oms.BranchChange
 	proposals       []oms.OntologyProposal
@@ -527,10 +532,49 @@ func (m *mockRepo) DeleteTypeGroup(_ context.Context, rid string) error {
 	}
 	return nil
 }
-func (m *mockRepo) AssignTypeGroup(_ context.Context, _, _ string) error      { return nil }
-func (m *mockRepo) RemoveTypeGroup(_ context.Context, _, _ string) error      { return nil }
-func (m *mockRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]oms.TypeGroup, error) {
-	return nil, nil
+func (m *mockRepo) AssignTypeGroup(_ context.Context, objectTypeRID, typeGroupRID string) error {
+	if m.typeGroupAssignments == nil {
+		m.typeGroupAssignments = map[string][]string{}
+	}
+	for _, existing := range m.typeGroupAssignments[objectTypeRID] {
+		if existing == typeGroupRID {
+			return nil
+		}
+	}
+	m.typeGroupAssignments[objectTypeRID] = append(m.typeGroupAssignments[objectTypeRID], typeGroupRID)
+	return nil
+}
+func (m *mockRepo) RemoveTypeGroup(_ context.Context, objectTypeRID, typeGroupRID string) error {
+	if m.typeGroupAssignments == nil {
+		return nil
+	}
+	cur := m.typeGroupAssignments[objectTypeRID]
+	for i, existing := range cur {
+		if existing == typeGroupRID {
+			m.typeGroupAssignments[objectTypeRID] = append(cur[:i], cur[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+func (m *mockRepo) ListTypeGroupsForObjectType(_ context.Context, objectTypeRID string) ([]oms.TypeGroup, error) {
+	if m.typeGroupAssignments == nil {
+		return nil, nil
+	}
+	assigned := m.typeGroupAssignments[objectTypeRID]
+	if len(assigned) == 0 {
+		return nil, nil
+	}
+	out := make([]oms.TypeGroup, 0, len(assigned))
+	for _, tgRID := range assigned {
+		for i := range m.typeGroups {
+			if m.typeGroups[i].RID == tgRID {
+				out = append(out, m.typeGroups[i])
+				break
+			}
+		}
+	}
+	return out, nil
 }
 
 // ValueType methods

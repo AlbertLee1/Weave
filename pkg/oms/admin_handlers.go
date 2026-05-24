@@ -1597,6 +1597,61 @@ func (h *OMSHandler) GetSharedPropertyTypeByAPIName(w http.ResponseWriter, r *ht
 	}))
 }
 
+// ListTypeGroupsForObjectTypeV2 handles
+// GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/typeGroups.
+//
+// Foundry-1:1 reverse-lookup: given an ObjectType API name, return
+// every TypeGroup the ObjectType is assigned to. This is the
+// V2/api-name sibling of the legacy admin RID-keyed endpoint
+// (/api/admin/objectTypes/{objectTypeRid}/groups, registered as
+// ListTypeGroupsForObjectType). SDKs and the SPA's ObjectType
+// detail card use it to render category-aware chips without
+// pulling /fullMetadata.
+//
+// Envelope is {"data":[...]} and NEVER null — an ObjectType with
+// zero assignments returns {"data":[]} so SDK iterators don't NPE.
+// Unknown ObjectType API name surfaces as 404 ObjectTypeNotFound,
+// mirroring GetObjectType's error contract.
+func (h *OMSHandler) ListTypeGroupsForObjectTypeV2(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyApiName := chi.URLParam(r, "ontologyApiName")
+	objectTypeApiName := chi.URLParam(r, "objectTypeApiName")
+	if objectTypeApiName == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingObjectType", map[string]string{
+			"reason": "objectTypeApiName path parameter is required",
+		}))
+		return
+	}
+	ot, err := repo.GetObjectTypeByAPIName(r.Context(), ontologyApiName, objectTypeApiName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
+				"ontology":   ontologyApiName,
+				"objectType": objectTypeApiName,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectTypeFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	list, err := repo.ListTypeGroupsForObjectType(r.Context(), ot.RID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListTypeGroupsForObjectTypeFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	if list == nil {
+		list = []TypeGroup{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": list})
+}
+
 // ListTypeGroupsV2 handles
 // GET /api/v2/ontologies/{ontologyApiName}/typeGroups.
 //

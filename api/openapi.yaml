@@ -4836,6 +4836,42 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/typeGroups:
+    get:
+      operationId: listObjectTypeTypeGroups
+      summary: List the TypeGroups an ObjectType belongs to (Foundry OSv2)
+      description: |
+        Reverse-lookup keyed by ObjectType API name — given an
+        ObjectType, return every TypeGroup it is assigned to. SDKs
+        and the SPA ObjectType detail card use the result to render
+        category chips without round-tripping /fullMetadata. The
+        envelope is {"data":[...]} and NEVER null; an ObjectType with
+        zero assignments returns {"data":[]} so SDK iterators don't
+        NPE. Unknown ObjectType API name surfaces as 404
+        ObjectTypeNotFound, mirroring GetObjectType's error contract.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectTypeApiName"
+      responses:
+        "200":
+          description: TypeGroup list envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TypeGroup"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/typeGroups:
     get:
       operationId: listTypeGroups
