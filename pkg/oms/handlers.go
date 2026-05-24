@@ -198,7 +198,7 @@ func (h *OMSHandler) resolveRepo(w http.ResponseWriter, r *http.Request) (Reposi
 func (h *OMSHandler) ListOntologies(w http.ResponseWriter, r *http.Request) {
 	list, err := h.repo.ListOntologies(r.Context())
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewNotFound("ListOntologiesFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("ListOntologiesFailed", nil))
 		return
 	}
 	if list == nil {
@@ -220,7 +220,7 @@ func (h *OMSHandler) GetOntology(w http.ResponseWriter, r *http.Request) {
 			apierror.WriteJSON(w, apierror.NewNotFound("OntologyNotFound", map[string]string{"ontologyApiName": rid}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewNotFound("GetOntologyFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("GetOntologyFailed", nil))
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, o)
@@ -235,7 +235,7 @@ func (h *OMSHandler) ListObjectTypes(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	list, err := repo.ListObjectTypes(r.Context(), ontologyRID)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewNotFound("ListObjectTypesFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("ListObjectTypesFailed", nil))
 		return
 	}
 	if list == nil {
@@ -262,13 +262,13 @@ func (h *OMSHandler) GetObjectType(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewNotFound("GetObjectTypeFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectTypeFailed", nil))
 		return
 	}
 
 	wireData, err := ot.ToWireJSON()
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewNotFound("SerializationFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 		return
 	}
 
@@ -299,7 +299,7 @@ func (h *OMSHandler) GetObjectTypeResolved(w http.ResponseWriter, r *http.Reques
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewNotFound("GetObjectTypeFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectTypeFailed", nil))
 		return
 	}
 
@@ -405,13 +405,13 @@ func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Reques
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewNotFound("GetObjectTypeFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectTypeFailed", nil))
 		return
 	}
 
 	list, err := repo.ListOutgoingLinkTypes(r.Context(), ot.RID)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewNotFound("ListOutgoingLinkTypesFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("ListOutgoingLinkTypesFailed", nil))
 		return
 	}
 
@@ -420,7 +420,7 @@ func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Reques
 	for i := range list {
 		data, err := list[i].ToWireJSON()
 		if err != nil {
-			apierror.WriteJSON(w, apierror.NewNotFound("SerializationFailed", nil))
+			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 			return
 		}
 		wireList = append(wireList, json.RawMessage(data))
@@ -438,7 +438,7 @@ func (h *OMSHandler) ListActionTypes(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	list, err := repo.ListActionTypes(r.Context(), ontologyRID)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewNotFound("ListActionTypesFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("ListActionTypesFailed", nil))
 		return
 	}
 
@@ -446,7 +446,7 @@ func (h *OMSHandler) ListActionTypes(w http.ResponseWriter, r *http.Request) {
 	for i := range list {
 		data, err := list[i].ToWireJSON()
 		if err != nil {
-			apierror.WriteJSON(w, apierror.NewNotFound("SerializationFailed", nil))
+			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 			return
 		}
 		wireList = append(wireList, json.RawMessage(data))
@@ -674,13 +674,13 @@ func (h *OMSHandler) GetActionType(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewNotFound("GetActionTypeFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("GetActionTypeFailed", nil))
 		return
 	}
 
 	wireData, err := at.ToWireJSON()
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewNotFound("SerializationFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 		return
 	}
 
