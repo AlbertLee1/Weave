@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/audit"
+	"github.com/liyang/weave/pkg/httputil"
 )
 
 // UserRoleRequest is the POST /api/admin/users/{userId}/roles body.
@@ -113,7 +114,7 @@ func (h *UserRoleHandler) grantRoleFor(w http.ResponseWriter, r *http.Request, u
 		return
 	}
 	var req UserRoleRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidUserRoleRequest", map[string]string{
 			"reason": err.Error(),
 		}))
