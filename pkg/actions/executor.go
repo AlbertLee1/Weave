@@ -1195,10 +1195,27 @@ func (e *Executor) ApplyBatchAtomic(ctx context.Context, ontologyRID string, req
 	)
 	defer span.End()
 
+	// Gap-O1 round 42: emit per-action weave_actions_applied_total +
+	// weave_actions_duration_seconds. ApplyBatchAtomic is all-or-
+	// nothing — every action in the batch either commits together or
+	// none commit. Emit one observation per request with the SAME
+	// final status (ok / error) so dashboards aggregating by
+	// action_type see honest wall-clock latency. duration is the
+	// total batch time (every action participated in that wait).
+	batchStart := time.Now()
+	var batchErr error
+	defer func() {
+		dur := time.Since(batchStart)
+		for i := range reqs {
+			metrics.ActionApplied(reqs[i].ActionType, batchErr, dur)
+		}
+	}()
+
 	prepared := make([]*PreparedAction, 0, len(reqs))
 	for i := range reqs {
 		p, err := e.Prepare(ctx, ontologyRID, &reqs[i])
 		if err != nil {
+			batchErr = err
 			return nil, &BatchError{
 				Phase:             classifyPrepareError(err),
 				FailedActionIndex: i,
@@ -1210,9 +1227,15 @@ func (e *Executor) ApplyBatchAtomic(ctx context.Context, ontologyRID string, req
 		prepared = append(prepared, p)
 	}
 	if err := e.enforceBatchOptimisticLock(ctx, ontologyRID, reqs, prepared); err != nil {
+		batchErr = err
 		return nil, err
 	}
-	return e.CommitBatch(ctx, ontologyRID, prepared)
+	br, err := e.CommitBatch(ctx, ontologyRID, prepared)
+	if err != nil {
+		batchErr = err
+		return nil, err
+	}
+	return br, nil
 }
 
 // enforceBatchOptimisticLock walks every prepared action and runs the
