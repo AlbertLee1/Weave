@@ -29,7 +29,27 @@ type webhookConfig struct {
 	Headers map[string]string `json:"headers,omitempty"`
 	// TimeoutSeconds controls the HTTP client timeout (default 10s).
 	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
+	// MaxRetries caps the number of retry attempts AFTER the initial call
+	// for transient failures (network errors, 5xx, 408, 429). Total call
+	// count on persistent failure is 1 + MaxRetries. Zero or negative
+	// values fall through to the package default (defaultMaxRetries = 3),
+	// matching Foundry's "transient errors are retried" wire contract.
+	MaxRetries int `json:"maxRetries,omitempty"`
+	// RetryBackoffMilliseconds is the base delay between retry attempts.
+	// Each subsequent attempt waits 2^attempt × base (exponential), capped
+	// at maxRetryBackoffMilliseconds. Zero or negative falls back to
+	// defaultRetryBackoffMilliseconds = 100.
+	RetryBackoffMilliseconds int `json:"retryBackoffMilliseconds,omitempty"`
 }
+
+// Webhook retry defaults. Picked to match common production conventions:
+// 3 retries gives ~700ms tail latency on persistent failure while almost
+// always covering single-node restarts or transient blips.
+const (
+	defaultMaxRetries               = 3
+	defaultRetryBackoffMilliseconds = 100
+	maxRetryBackoffMilliseconds     = 5_000
+)
 
 // ExecuteSideEffects executes side effects after a successful action.
 // Execution is best-effort: errors are logged but not returned to the caller.
@@ -93,27 +113,90 @@ func executeWebhookEffect(configJSON json.RawMessage, result ActionResult) error
 	if cfg.TimeoutSeconds > 0 {
 		timeout = time.Duration(cfg.TimeoutSeconds) * time.Second
 	}
-
 	client := &http.Client{Timeout: timeout}
+
+	maxRetries := cfg.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = defaultMaxRetries
+	}
+	backoffMs := cfg.RetryBackoffMilliseconds
+	if backoffMs <= 0 {
+		backoffMs = defaultRetryBackoffMilliseconds
+	}
+
+	// Retry loop. Total attempts = 1 + maxRetries. Retryable failures
+	// (network error, 5xx, 408, 429) trigger exponential backoff
+	// (2^attempt × backoffMs, capped). Non-retryable failures (other 4xx
+	// = caller bugs) fail immediately so misconfigured webhooks surface
+	// to oncall instead of silently consuming retry budget.
+	var lastErr error
+	totalAttempts := 1 + maxRetries
+	for attempt := 0; attempt < totalAttempts; attempt++ {
+		if attempt > 0 {
+			delay := time.Duration(backoffMs*(1<<uint(attempt-1))) * time.Millisecond
+			if delay > time.Duration(maxRetryBackoffMilliseconds)*time.Millisecond {
+				delay = time.Duration(maxRetryBackoffMilliseconds) * time.Millisecond
+			}
+			time.Sleep(delay)
+		}
+
+		statusCode, attemptErr := doWebhookAttempt(client, cfg, body)
+		if attemptErr == nil {
+			return nil
+		}
+		lastErr = attemptErr
+
+		// 4xx other than 408/429 is a caller bug — no amount of retrying
+		// will fix a bad URL, missing auth header, or malformed payload.
+		if !isRetryableStatus(statusCode) {
+			return fmt.Errorf("webhook: non-retryable failure on attempt 1: %w", attemptErr)
+		}
+	}
+	return fmt.Errorf("webhook: gave up after %d attempts: %w", totalAttempts, lastErr)
+}
+
+// doWebhookAttempt makes one HTTP call. Returns (statusCode, error).
+// statusCode is 0 when the request failed before getting a response
+// (network error / timeout) — treated as retryable.
+func doWebhookAttempt(client *http.Client, cfg webhookConfig, body []byte) (int, error) {
 	req, err := http.NewRequest(http.MethodPost, cfg.URL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("webhook: create request: %w", err)
+		return 0, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range cfg.Headers {
 		req.Header.Set(k, v)
 	}
-
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("webhook: request failed: %w", err)
+		// Transport-level error — no status code yet. Always retryable.
+		return 0, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook: non-2xx response: %d", resp.StatusCode)
+		return resp.StatusCode, fmt.Errorf("non-2xx response: %d", resp.StatusCode)
 	}
-	return nil
+	return resp.StatusCode, nil
+}
+
+// isRetryableStatus reports whether an HTTP status code (or 0 for a
+// transport-level error) should be retried per Foundry's side-effect
+// dispatch contract. 5xx, 408, and 429 are transient; other 4xx are
+// caller bugs and fail fast.
+func isRetryableStatus(statusCode int) bool {
+	if statusCode == 0 {
+		return true // network / timeout
+	}
+	if statusCode >= 500 && statusCode < 600 {
+		return true
+	}
+	if statusCode == http.StatusRequestTimeout {
+		return true // 408
+	}
+	if statusCode == http.StatusTooManyRequests {
+		return true // 429
+	}
+	return false
 }
 
 func executeLogEffect(result ActionResult) error {
