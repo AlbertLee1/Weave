@@ -295,14 +295,23 @@ func (h *Handler) Duplicate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	base := src.Name + " (copy)"
 	// Try the base "(copy)" first; on conflict walk "(copy 2)",
-	// "(copy 3)", ... up to maxDuplicateSuffix.
+	// "(copy 3)", ... up to maxDuplicateSuffix. Round 65: each
+	// candidate's source-name prefix is truncated so the final
+	// name fits dashboards_name_format (length 1..MaxNameLength=128).
+	// Without this, a near-128-char source plus the suffix would
+	// trip the PG CHECK constraint with 23514 check_violation —
+	// MemoryStore-backed tests would never see it.
 	for n := 1; n <= maxDuplicateSuffix; n++ {
-		candidate := base
+		suffix := " (copy)"
 		if n > 1 {
-			candidate = src.Name + " (copy " + strconv.Itoa(n) + ")"
+			suffix = " (copy " + strconv.Itoa(n) + ")"
 		}
+		prefix := src.Name
+		if maxPrefix := MaxNameLength - len(suffix); len(prefix) > maxPrefix {
+			prefix = prefix[:maxPrefix]
+		}
+		candidate := prefix + suffix
 		row := &Dashboard{
 			ID:         newDashboardID(),
 			Name:       candidate,
@@ -331,7 +340,7 @@ func (h *Handler) Duplicate(w http.ResponseWriter, r *http.Request) {
 	}
 	apierror.WriteJSON(w, apierror.NewConflict("DashboardNameConflict", map[string]string{
 		"reason": "exhausted (copy N) suffix attempts",
-		"name":   base,
+		"name":   src.Name + " (copy)",
 	}))
 }
 

@@ -199,3 +199,142 @@ func TestBDD_DashboardDuplicate(t *testing.T) {
 		}
 	})
 }
+
+// TestBDD_DashboardDuplicate_LongName covers the round-65 fix for
+// the dashboard length-CHECK drift introduced by round 62. The
+// dashboards.MaxNameLength constant + migration 000076's
+// `CHECK (length(name) BETWEEN 1 AND 128)` constraint both cap
+// names at 128 chars. Round 62's Duplicate handler appends
+// " (copy)" / " (copy N)" without checking the result fits the
+// cap — a source name near 128 chars would silently produce a 132+
+// char clone name that violates the PG CHECK on real deployments.
+// MemoryStore-backed round-62 BDDs missed it because in-memory
+// has no constraint; the only protection was the Go-side
+// ValidateName called on Create — which the duplicate path skipped
+// when assembling the clone row.
+//
+// Round 65 truncates the source name so suffix + base fit
+// MaxNameLength. Scenarios:
+//   - Source name exactly MaxNameLength: clone uses truncated
+//     prefix + " (copy)" and length <= MaxNameLength.
+//   - Source name MaxNameLength - 5 chars: " (copy)" suffix is 7
+//     chars so total would be MaxNameLength+2 without truncation;
+//     fix must trim source to (MaxNameLength - len(" (copy)")).
+//   - Auto-suffix climbing past " (copy 9)" (which adds 10 chars)
+//     must also fit.
+func TestBDD_DashboardDuplicate_LongName(t *testing.T) {
+	owner := &auth.User{ID: "u-owner"}
+
+	seed := func(t *testing.T, store *MemoryStore, name string) string {
+		t.Helper()
+		row := &Dashboard{
+			ID:         "src-long-" + name[:1],
+			Name:       name,
+			CreatedBy:  owner.ID,
+			Definition: json.RawMessage("{}"),
+		}
+		if err := store.Create(nil, row); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		return row.ID
+	}
+
+	doDuplicate := func(t *testing.T, store Store, user *auth.User, id string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := newTestRouter(store, user)
+		req := httptest.NewRequest(http.MethodPost, "/api/v2/dashboards/"+id+"/duplicate", nil)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("Source name at exactly MaxNameLength clones under cap", func(t *testing.T) {
+		store := NewMemoryStore()
+		longName := strings.Repeat("A", MaxNameLength)
+		id := seed(t, store, longName)
+
+		rec := doDuplicate(t, store, owner, id)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status=%d, want 201; body=%s", rec.Code, rec.Body.String())
+		}
+		var clone Dashboard
+		_ = json.Unmarshal(rec.Body.Bytes(), &clone)
+		if len(clone.Name) > MaxNameLength {
+			t.Errorf("clone name length=%d, want <= %d (PG CHECK would reject)",
+				len(clone.Name), MaxNameLength)
+		}
+		// The clone must still end with " (copy)" so the user can
+		// tell it apart from the source in the list view.
+		if !strings.HasSuffix(clone.Name, " (copy)") {
+			t.Errorf("clone name %q does not end with \" (copy)\"", clone.Name)
+		}
+	})
+
+	t.Run("Source name near limit + (copy) fits", func(t *testing.T) {
+		// "<127 chars> (copy)" would be 134 chars without truncation.
+		store := NewMemoryStore()
+		long := strings.Repeat("B", MaxNameLength-1)
+		id := seed(t, store, long)
+
+		rec := doDuplicate(t, store, owner, id)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status=%d, want 201; body=%s", rec.Code, rec.Body.String())
+		}
+		var clone Dashboard
+		_ = json.Unmarshal(rec.Body.Bytes(), &clone)
+		if len(clone.Name) > MaxNameLength {
+			t.Errorf("clone name length=%d > %d", len(clone.Name), MaxNameLength)
+		}
+	})
+
+	t.Run("Auto-suffix walk past (copy 9) still fits cap", func(t *testing.T) {
+		// Seed source + manually create N existing copies so the
+		// duplicate handler has to climb past " (copy 9)" (10 chars).
+		store := NewMemoryStore()
+		long := strings.Repeat("C", MaxNameLength)
+		id := seed(t, store, long)
+
+		// Pre-create 9 clones via the same handler. Each one is a
+		// fresh suffix attempt.
+		for i := 0; i < 9; i++ {
+			rec := doDuplicate(t, store, owner, id)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("pre-clone %d status=%d", i+1, rec.Code)
+			}
+		}
+		// The 10th clone needs suffix " (copy 10)" (10 chars). Total
+		// length after truncation MUST still be <= MaxNameLength.
+		rec := doDuplicate(t, store, owner, id)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("10th clone status=%d, want 201; body=%s", rec.Code, rec.Body.String())
+		}
+		var clone Dashboard
+		_ = json.Unmarshal(rec.Body.Bytes(), &clone)
+		if len(clone.Name) > MaxNameLength {
+			t.Errorf("10th clone name length=%d > %d (deeper suffix needs more truncation)",
+				len(clone.Name), MaxNameLength)
+		}
+		// The candidate suffix shape stays recognisable.
+		if !strings.Contains(clone.Name, " (copy ") {
+			t.Errorf("10th clone name %q lost the (copy N) suffix shape", clone.Name)
+		}
+	})
+
+	t.Run("Short source name keeps full source + suffix unchanged", func(t *testing.T) {
+		// Regression: round-65 truncation must NOT kick in for
+		// short-source-name cases — round-62's "Sales (copy)" output
+		// must keep working byte-for-byte.
+		store := NewMemoryStore()
+		id := seed(t, store, "Z-Sales")
+		rec := doDuplicate(t, store, owner, id)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status=%d", rec.Code)
+		}
+		var clone Dashboard
+		_ = json.Unmarshal(rec.Body.Bytes(), &clone)
+		if clone.Name != "Z-Sales (copy)" {
+			t.Errorf("short-source clone name=%q, want %q", clone.Name, "Z-Sales (copy)")
+		}
+	})
+}
+
