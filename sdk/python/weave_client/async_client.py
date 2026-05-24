@@ -98,6 +98,8 @@ class WeaveAsyncClient:
         self.objectsets = AsyncObjectSetsAPI(self)
         self.functions = AsyncFunctionsAPI(self)
         self.transactions = AsyncTransactionsAPI(self)
+        self.reactions = AsyncReactionsAPI(self)
+        self.notifications = AsyncNotificationsAPI(self)
 
     @property
     def token(self) -> str:
@@ -860,6 +862,104 @@ class AsyncTransactionsAPI:
         return None
 
 
+class AsyncReactionsAPI:
+    """Async mirror of ReactionsAPI (round 74). Wraps the four
+    /api/v2/reactions endpoints (Aggregate / Create / Delete /
+    AggregateBatch from round 67). Returns the same Reaction /
+    ReactionSummary / EmojiCount dataclasses as the sync sibling so
+    application code can swap clients without touching response
+    handling.
+    """
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def aggregate(self, target_rid: str) -> "ReactionSummary":
+        from .reactions import _parse_summary  # noqa: WPS433  lazy to avoid cycle
+        path = "/api/v2/reactions" + build_query_string({"targetRid": target_rid})
+        resp = await self._client._request("GET", path)
+        return _parse_summary(resp or {})
+
+    async def create(self, target_rid: str, emoji: str) -> "Reaction":
+        from .reactions import _parse_reaction
+        resp = await self._client._request(
+            "POST", "/api/v2/reactions",
+            json_body={"targetRid": target_rid, "emoji": emoji},
+        )
+        return _parse_reaction(resp or {})
+
+    async def delete(self, target_rid: str, emoji: str) -> None:
+        path = "/api/v2/reactions" + build_query_string({
+            "targetRid": target_rid,
+            "emoji": emoji,
+        })
+        await self._client._request("DELETE", path)
+        return None
+
+    async def aggregate_batch(self, target_rids: List[str]) -> List["ReactionSummary"]:
+        if not target_rids:
+            return []
+        from .reactions import _parse_summary
+        resp = await self._client._request(
+            "POST", "/api/v2/reactions/batch",
+            json_body={"targetRids": list(target_rids)},
+        )
+        raw = (resp or {}).get("summaries") or []
+        return [_parse_summary(s) for s in raw]
+
+
+class AsyncNotificationsAPI:
+    """Async mirror of NotificationsAPI (round 74). Wraps the four
+    /api/v2/notifications endpoints (List + round-66 unread-count
+    badge + MarkAllRead + MarkRead). Reuses Notification dataclass
+    from the sync module via lazy import.
+    """
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def list(
+        self,
+        unread_only: bool = False,
+        types: Optional[List[str]] = None,
+    ) -> List["Notification"]:
+        from .notifications import _parse_notification, _url_quote_value
+        params: dict = {}
+        if unread_only:
+            params["unread"] = "true"
+        path = "/api/v2/notifications" + build_query_string(params)
+        if types:
+            extras = "&".join("type=" + _url_quote_value(t) for t in types)
+            path = path + ("&" if "?" in path else "?") + extras
+        resp = await self._client._request("GET", path)
+        data = (resp or {}).get("data") or []
+        return [_parse_notification(n) for n in data]
+
+    async def unread_count(self) -> int:
+        resp = await self._client._request("GET", "/api/v2/notifications/unread-count")
+        try:
+            return int((resp or {}).get("count") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    async def mark_read(self, notification_id: str) -> None:
+        path = "/api/v2/notifications/" + quote_path(notification_id) + "/read"
+        await self._client._request("POST", path)
+        return None
+
+    async def mark_all_read(self, types: Optional[List[str]] = None) -> int:
+        from .notifications import _url_quote_value
+        path = "/api/v2/notifications/read-all"
+        if types:
+            extras = "&".join("type=" + _url_quote_value(t) for t in types)
+            path = path + "?" + extras
+        resp = await self._client._request("POST", path)
+        try:
+            return int((resp or {}).get("updated") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+
 __all__ = [
     "WeaveAsyncClient",
     "AsyncOntologiesAPI",
@@ -868,4 +968,6 @@ __all__ = [
     "AsyncObjectSetsAPI",
     "AsyncFunctionsAPI",
     "AsyncTransactionsAPI",
+    "AsyncReactionsAPI",
+    "AsyncNotificationsAPI",
 ]
