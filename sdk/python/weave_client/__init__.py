@@ -61,6 +61,10 @@ from .subscriptions import (
     WebSocketTransport,
     WebsocketsTransport,
 )
+from .notifications import (
+    Notification,
+    NotificationsAPI,
+)
 from .reactions import (
     EmojiCount,
     Reaction,
@@ -148,6 +152,8 @@ __all__ = [
     "Reaction",
     "ReactionSummary",
     "ReactionsAPI",
+    "Notification",
+    "NotificationsAPI",
 ]
 
 __version__ = "0.1.0"

@@ -50,6 +50,7 @@ class Client:
         from .objects import ObjectsAPI
         from .objectsets import ObjectSetsAPI
         from .ontologies import OntologiesAPI
+        from .notifications import NotificationsAPI
         from .reactions import ReactionsAPI
         from .timeseries import TimeSeriesAPI
         from .transactions import TransactionsAPI
@@ -64,6 +65,7 @@ class Client:
         self.attachments = AttachmentsAPI(self)
         self.transactions = TransactionsAPI(self)
         self.reactions = ReactionsAPI(self)
+        self.notifications = NotificationsAPI(self)
         self.vertex = VertexAPI(self)
 
     @property
