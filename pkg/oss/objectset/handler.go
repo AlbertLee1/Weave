@@ -248,7 +248,7 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 	// BranchScopeProvider on the live path. With no provider wired the
 	// non-main path returns BranchLookupUnavailable 400 instead of
 	// silently degrading to the main branch.
-	branch, apiErr := resolveBranch(r.URL.Query().Get("branch"))
+	branch, apiErr := resolveBranch(branchFromRequest(r))
 	if apiErr != nil {
 		apierror.WriteJSON(w, apiErr)
 		return
@@ -419,14 +419,37 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
-// resolveBranch normalises the ?branch= query parameter (US-381). An empty
-// or whitespace-only value resolves to DefaultBranch ("main") so callers
-// that omit the parameter keep their pre-US-381 behaviour. A non-empty
-// value with leading/trailing whitespace is rejected as InvalidBranch
-// rather than silently trimmed — branch identifiers are user-visible
-// labels and a stray space almost always indicates a client bug. Length
-// is capped at 128 chars to keep audit log lines bounded; matches the
-// same defensive bound the OMS branch model enforces.
+// BranchHeader is the request header that overrides the default
+// branch for read paths (PRD-V2 Gap-T4, round 39). Mirrors
+// oms.BranchHeader; duplicated here to avoid a cross-package import
+// from pkg/oss/objectset → pkg/oms.
+const BranchHeader = "X-Weave-Branch"
+
+// branchFromRequest is the round-39 sibling of oms.ResolveBranch
+// FromRequest. Returns the raw, untrimmed branch input from either
+// ?branch= query parameter (precedent — wins when both are set) or
+// the X-Weave-Branch header (fallback). Returns empty string when
+// neither is present so the caller's resolveBranch logic can keep
+// its "empty → DefaultBranch" short-circuit.
+func branchFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if q := r.URL.Query().Get("branch"); q != "" {
+		return q
+	}
+	return r.Header.Get(BranchHeader)
+}
+
+// resolveBranch normalises the branch input (US-381 ?branch= query
+// + round-39 X-Weave-Branch header). An empty or whitespace-only
+// value resolves to DefaultBranch ("main") so callers that omit
+// both keep their pre-US-381 behaviour. A non-empty value with
+// leading/trailing whitespace is rejected as InvalidBranch rather
+// than silently trimmed — branch identifiers are user-visible
+// labels and a stray space almost always indicates a client bug.
+// Length is capped at 128 chars to keep audit log lines bounded;
+// matches the same defensive bound the OMS branch model enforces.
 func resolveBranch(raw string) (string, *apierror.APIError) {
 	if raw == "" {
 		return DefaultBranch, nil

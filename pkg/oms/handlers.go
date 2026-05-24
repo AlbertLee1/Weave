@@ -175,8 +175,10 @@ func (h *OMSHandler) ColumnLineageStore() ColumnLineageStore {
 // wraps h.repo with a BranchedRepository that overlays branch changes on reads.
 // Returns (repo, true) on success or (nil, false) if an error was written.
 func (h *OMSHandler) resolveRepo(w http.ResponseWriter, r *http.Request) (Repository, bool) {
-	branchID := r.URL.Query().Get("branch")
-	if branchID == "" {
+	// Round 39 (Gap-T4): branch can be pinned via ?branch= query
+	// OR X-Weave-Branch header. Query wins when both are set.
+	branchID := ResolveBranchFromRequest(r)
+	if branchID == "" || branchID == DefaultBranch {
 		return h.repo, true
 	}
 	branch, err := h.repo.GetBranch(r.Context(), branchID)

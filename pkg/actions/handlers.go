@@ -20,14 +20,17 @@ import (
 )
 
 // withBranchScope wraps r so downstream handler code that propagates
-// r.Context() through the executor sees the request's `?branch=` param
-// stamped via oms.WithBranchScope. The branch scope is what drives
+// r.Context() through the executor sees the request's branch pin
+// stamped via oms.WithBranchScope. The branch can come from either
+// ?branch= query (Foundry-style explicit URL pin, wins on conflict)
+// or X-Weave-Branch header (round 39 / Gap-T4 — lets SDK clients
+// pin without rewriting every URL). The branch scope is what drives
 // US-384 routing of ActionType and Function lookups to the
 // branch-specific row when the branch has published its own version.
 // An empty / "main" branch input is a no-op so the legacy main-only
 // path stays free of context churn.
 func withBranchScope(r *http.Request) *http.Request {
-	branch := r.URL.Query().Get("branch")
+	branch := oms.ResolveBranchFromRequest(r)
 	if branch == "" || branch == oms.DefaultBranch {
 		return r
 	}

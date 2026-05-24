@@ -153,10 +153,13 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	// stamping); the body field is the legacy fallback for SDK callers that
 	// can't easily mutate the URL. Empty / "main" both normalise to the
 	// DefaultBranch sentinel so the row lands on trunk just like a pre-US-389
-	// publisher would have.
-	branchID := r.URL.Query().Get("branch")
-	if branchID == "" {
-		branchID = req.BranchID
+	// publisher would have. Round 39 (Gap-T4): also honour X-Weave-Branch
+	// header as a fallback when ?branch= is unset.
+	branchID := ResolveBranchFromRequest(r)
+	if branchID == "" || branchID == DefaultBranch {
+		if req.BranchID != "" {
+			branchID = req.BranchID
+		}
 	}
 	branchID = NormalizeBranchID(branchID)
 	fn := &Function{
@@ -427,7 +430,7 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 	// branch-specific function row when the branch has published its
 	// own version, falling back to main otherwise. Propagating via r so
 	// every downstream r.Context() inherits the scope.
-	r = r.WithContext(WithBranchScope(r.Context(), r.URL.Query().Get("branch")))
+	r = r.WithContext(WithBranchScope(r.Context(), ResolveBranchFromRequest(r)))
 	fn, err := h.resolveFunctionRef(r.Context(), ontologyAPIName, fnIdentifier)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {

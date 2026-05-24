@@ -18,11 +18,13 @@ import (
 
 // --- Branch overlay helpers ---
 
-// validateBranch checks if the ?branch= query parameter references a valid, open branch.
-// Returns the branch if valid, nil if no branch parameter, or writes an error response and returns nil.
+// validateBranch checks if the request pins to a valid, open branch.
+// Branch can come from ?branch= query OR X-Weave-Branch header
+// (round 39 / Gap-T4). Returns the branch if valid, nil if no branch
+// signal, or writes an error response and returns nil.
 func (h *OMSHandler) validateBranch(w http.ResponseWriter, r *http.Request) (*OntologyBranch, bool) {
-	branchID := r.URL.Query().Get("branch")
-	if branchID == "" {
+	branchID := ResolveBranchFromRequest(r)
+	if branchID == "" || branchID == DefaultBranch {
 		return nil, true // no branch, continue with normal flow
 	}
 
