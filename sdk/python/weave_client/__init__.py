@@ -61,6 +61,11 @@ from .subscriptions import (
     WebSocketTransport,
     WebsocketsTransport,
 )
+from .transactions import (
+    Transaction,
+    TransactionAppendResponse,
+    TransactionsAPI,
+)
 from .types import (
     ActionResults,
     ActionType,
@@ -130,6 +135,9 @@ __all__ = [
     "CountResponse",
     "TimeSeriesPoint",
     "Attachment",
+    "Transaction",
+    "TransactionAppendResponse",
+    "TransactionsAPI",
 ]
 
 __version__ = "0.1.0"
