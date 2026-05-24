@@ -135,7 +135,7 @@ func (h *Handler) LoadLinks(w http.ResponseWriter, r *http.Request) {
 	// US-048: honour column-level policy on the link target type.
 	data, err = h.applyPropertyVisibility(ctx, result.ObjectType, data)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("PropertyFilterFailed", map[string]string{"error": err.Error()}))
+		apierror.WriteJSON(w, apierror.NewInternal("PropertyFilterFailed", map[string]string{"error": err.Error()}))
 		return
 	}
 

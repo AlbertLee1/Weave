@@ -229,8 +229,12 @@ func TestCreateSnapshot_PersistFailureSurfaces(t *testing.T) {
 	rr := httptest.NewRecorder()
 	newSnapshotRouter(t, h).ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
+	// Wire-shape contract: a downstream PersistedSnapshotStore failure
+	// is server-side, NOT bad user input. It surfaces as HTTP 500
+	// INTERNAL with the SnapshotPersistFailed envelope so SDK callers
+	// route to retry / oncall rather than 'fix your request'.
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", rr.Code, rr.Body.String())
 	}
 	apiErr := decodeJSON[struct {
 		ErrorName  string            `json:"errorName"`
