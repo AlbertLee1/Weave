@@ -58,6 +58,13 @@ type Server struct {
 	// Transports are request/response today, but keeping the registry here
 	// gives future resource-updated notifications a precise recipient set.
 	resourceSubscriptions map[string]struct{}
+
+	// completionSource backs the completion/complete method (Gap-D4
+	// round 46). Optional — when nil, completion/complete still works
+	// and returns valid empty completion sets (per MCP spec). Wired
+	// from cmd/server with the ontology-aware provider that resolves
+	// objectType / actionType argument prefixes against the OMS repo.
+	completionSource CompletionSource
 }
 
 // ServerOption configures a Server at construction time.
@@ -128,6 +135,8 @@ func (s *Server) Handle(ctx context.Context, req *Request) *Response {
 		return s.handleResourcesSubscribe(ctx, req)
 	case "resources/unsubscribe":
 		return s.handleResourcesUnsubscribe(req)
+	case "completion/complete":
+		return s.handleCompletionComplete(ctx, req)
 	case "ping":
 		return NewSuccessResponse(req.ID, map[string]any{})
 	default:
@@ -146,9 +155,10 @@ func (s *Server) handleInitialize(req *Request) *Response {
 	result := map[string]any{
 		"protocolVersion": ProtocolVersion,
 		"capabilities": map[string]any{
-			"tools":     map[string]any{"listChanged": false},
-			"resources": map[string]any{"listChanged": false, "subscribe": true},
-			"prompts":   map[string]any{"listChanged": false},
+			"tools":      map[string]any{"listChanged": false},
+			"resources":  map[string]any{"listChanged": false, "subscribe": true},
+			"prompts":    map[string]any{"listChanged": false},
+			"completions": map[string]any{},
 		},
 		"serverInfo": map[string]any{
 			"name":    ServerName,
