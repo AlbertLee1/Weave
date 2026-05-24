@@ -51,62 +51,169 @@ const (
 	maxRetryBackoffMilliseconds     = 5_000
 )
 
+// SideEffectOutcome is the per-effect result the dispatcher emits.
+// Round-32 will marshal a []SideEffectOutcome into action_logs's
+// side_effect_status JSONB column so the persisted action history
+// surfaces side-effect status (success / retry-recovered / failed
+// after retries / non-retryable / unknown effect type) without
+// needing a parallel log scrape.
+type SideEffectOutcome struct {
+	// Type echoes back the effect's declared type. Even when the type
+	// is unknown to this dispatcher the original string is preserved
+	// so the persisted record explains what was misconfigured.
+	Type string `json:"type"`
+	// Status taxonomy — see the SideEffectStatus* constants below.
+	Status string `json:"status"`
+	// Attempts is the number of dispatch attempts performed. 0 when
+	// the effect type was unrecognised and no dispatch happened. 1 for
+	// log effects, 1..(MaxRetries+1) for webhooks.
+	Attempts int `json:"attempts"`
+	// Error is the final error message on a non-success outcome.
+	// Empty when Status == success. Carries the wrapped
+	// "gave up after N attempts" or "non-retryable failure" envelope
+	// from executeWebhookEffect so downstream consumers can extract
+	// retry context.
+	Error string `json:"error,omitempty"`
+	// DurationMs is the total dispatch wall-clock time, including
+	// every retry's backoff sleep. Useful for per-effect SLO tracking
+	// once Round 32 wires this into action_logs.
+	DurationMs int64 `json:"durationMs"`
+}
+
+// Side-effect status taxonomy. Stored verbatim in the JSON outcome so
+// downstream consumers (action_logs, future DLQ, dashboards) can route
+// on stable strings instead of inspecting the error message.
+const (
+	SideEffectStatusSuccess      = "success"       // dispatched (possibly after retries)
+	SideEffectStatusFailed       = "failed"        // retry budget exhausted on transient failure
+	SideEffectStatusNonRetryable = "non_retryable" // 4xx other than 408/429 (caller bug)
+	SideEffectStatusUnknownType  = "unknown_type"  // dispatcher does not recognise effect.Type
+)
+
 // ExecuteSideEffects executes side effects after a successful action.
-// Execution is best-effort: errors are logged but not returned to the caller.
-// An empty or nil effects JSON is a no-op.
+// Execution is best-effort: per-effect failures are logged but not
+// surfaced to the caller. An empty or nil effects JSON is a no-op.
+//
+// Round 31 keeps this signature for backwards compatibility — existing
+// call sites in executor.go don't need to change. New callers that
+// want the structured per-effect outcomes (for action_logs
+// persistence, DLQ routing, or per-effect SLO tracking) should use
+// `ExecuteSideEffectsWithOutcomes` instead.
 func ExecuteSideEffects(effectsJSON json.RawMessage, result ActionResult) error {
+	_, err := ExecuteSideEffectsWithOutcomes(effectsJSON, result)
+	return err
+}
+
+// ExecuteSideEffectsWithOutcomes is the structured-outcome variant of
+// ExecuteSideEffects. It returns one SideEffectOutcome per declared
+// effect so callers can persist the outcomes into
+// action_logs.side_effect_status, route failed-after-retries effects
+// to a DLQ, or surface per-effect status on a Foundry-style action
+// detail page.
+//
+// Returns (nil, nil) when effectsJSON is empty / null / [].
+// Returns (nil, error) only when the effects JSON itself is malformed
+// (parse failure) — per-effect dispatch failures are recorded in the
+// outcomes and DO NOT propagate as an error, so a single bad effect
+// never aborts the rest of the array.
+func ExecuteSideEffectsWithOutcomes(effectsJSON json.RawMessage, result ActionResult) ([]SideEffectOutcome, error) {
 	if len(effectsJSON) == 0 || string(effectsJSON) == "null" || string(effectsJSON) == "[]" {
-		return nil
+		return nil, nil
 	}
 
 	// Support either a single effect object or an array of effects.
+	var effects []SideEffect
 	if effectsJSON[0] == '[' {
-		var effects []SideEffect
 		if err := json.Unmarshal(effectsJSON, &effects); err != nil {
-			return fmt.Errorf("parse side effects: %w", err)
+			return nil, fmt.Errorf("parse side effects: %w", err)
 		}
-		for _, e := range effects {
-			if err := executeSingleEffect(e, result); err != nil {
-				// Best-effort: log and continue.
-				log.Printf("side effect %q failed: %v", e.Type, err)
-			}
+	} else {
+		var single SideEffect
+		if err := json.Unmarshal(effectsJSON, &single); err != nil {
+			return nil, fmt.Errorf("parse side effects: %w", err)
 		}
-		return nil
+		effects = []SideEffect{single}
 	}
 
-	var e SideEffect
-	if err := json.Unmarshal(effectsJSON, &e); err != nil {
-		return fmt.Errorf("parse side effects: %w", err)
+	outcomes := make([]SideEffectOutcome, 0, len(effects))
+	for _, e := range effects {
+		outcome := dispatchSingleEffect(e, result)
+		outcomes = append(outcomes, outcome)
+		if outcome.Status != SideEffectStatusSuccess {
+			log.Printf("side effect %q %s (attempts=%d): %s",
+				outcome.Type, outcome.Status, outcome.Attempts, outcome.Error)
+		}
 	}
-	if err := executeSingleEffect(e, result); err != nil {
-		log.Printf("side effect %q failed: %v", e.Type, err)
-	}
-	return nil
+	return outcomes, nil
 }
 
-func executeSingleEffect(e SideEffect, result ActionResult) error {
+// dispatchSingleEffect runs a single effect and returns its outcome.
+// Per-effect failures populate outcome.Error and outcome.Status — never
+// returned as a Go error, because the caller's per-effect isolation
+// guarantee depends on this method being non-panicking.
+func dispatchSingleEffect(e SideEffect, result ActionResult) SideEffectOutcome {
+	started := time.Now()
+	out := SideEffectOutcome{Type: e.Type}
+
 	switch e.Type {
 	case "webhook":
-		return executeWebhookEffect(e.Config, result)
+		attempts, classification, err := executeWebhookEffectTracked(e.Config, result)
+		out.Attempts = attempts
+		out.Status = classification
+		if err != nil {
+			out.Error = err.Error()
+		}
 	case "log":
-		return executeLogEffect(result)
+		out.Attempts = 1
+		if err := executeLogEffect(result); err != nil {
+			out.Status = SideEffectStatusFailed
+			out.Error = err.Error()
+		} else {
+			out.Status = SideEffectStatusSuccess
+		}
 	default:
-		return fmt.Errorf("unknown side effect type: %q", e.Type)
+		out.Status = SideEffectStatusUnknownType
+		out.Error = fmt.Sprintf("unknown side effect type: %q", e.Type)
 	}
+
+	out.DurationMs = time.Since(started).Milliseconds()
+	return out
 }
 
+// executeWebhookEffect is the legacy single-error entry point preserved
+// for the round-30 retry BDD coverage and the existing round-30
+// effects_retry_bdd_test.go. New callers (and round 31's outcome
+// dispatcher) use executeWebhookEffectTracked, which additionally
+// returns the attempt count and a classification string.
 func executeWebhookEffect(configJSON json.RawMessage, result ActionResult) error {
+	_, _, err := executeWebhookEffectTracked(configJSON, result)
+	return err
+}
+
+// executeWebhookEffectTracked runs the webhook retry loop and returns
+// (attempts, status, err). status is one of:
+//
+//   - SideEffectStatusSuccess      — at least one attempt succeeded
+//   - SideEffectStatusFailed       — retry budget exhausted on transient failure
+//   - SideEffectStatusNonRetryable — fail-fast 4xx (caller bug)
+//
+// err is non-nil iff status != success. attempts is the actual number
+// of HTTP calls made (1 on immediate success, up to 1+MaxRetries on
+// exhaustion). Config-parse / URL-validation / body-marshal failures
+// surface as attempts=0 status=non_retryable — these block dispatch
+// before any HTTP call.
+func executeWebhookEffectTracked(configJSON json.RawMessage, result ActionResult) (int, string, error) {
 	var cfg webhookConfig
 	if err := json.Unmarshal(configJSON, &cfg); err != nil {
-		return fmt.Errorf("webhook: invalid config: %w", err)
+		return 0, SideEffectStatusNonRetryable, fmt.Errorf("webhook: invalid config: %w", err)
 	}
 	if cfg.URL == "" {
-		return fmt.Errorf("webhook: url is required")
+		return 0, SideEffectStatusNonRetryable, fmt.Errorf("webhook: url is required")
 	}
 
 	body, err := json.Marshal(result)
 	if err != nil {
-		return fmt.Errorf("webhook: marshal result: %w", err)
+		return 0, SideEffectStatusNonRetryable, fmt.Errorf("webhook: marshal result: %w", err)
 	}
 
 	timeout := 10 * time.Second
@@ -131,6 +238,7 @@ func executeWebhookEffect(configJSON json.RawMessage, result ActionResult) error
 	// to oncall instead of silently consuming retry budget.
 	var lastErr error
 	totalAttempts := 1 + maxRetries
+	attemptsMade := 0
 	for attempt := 0; attempt < totalAttempts; attempt++ {
 		if attempt > 0 {
 			delay := time.Duration(backoffMs*(1<<uint(attempt-1))) * time.Millisecond
@@ -140,19 +248,22 @@ func executeWebhookEffect(configJSON json.RawMessage, result ActionResult) error
 			time.Sleep(delay)
 		}
 
+		attemptsMade++
 		statusCode, attemptErr := doWebhookAttempt(client, cfg, body)
 		if attemptErr == nil {
-			return nil
+			return attemptsMade, SideEffectStatusSuccess, nil
 		}
 		lastErr = attemptErr
 
 		// 4xx other than 408/429 is a caller bug — no amount of retrying
 		// will fix a bad URL, missing auth header, or malformed payload.
 		if !isRetryableStatus(statusCode) {
-			return fmt.Errorf("webhook: non-retryable failure on attempt 1: %w", attemptErr)
+			return attemptsMade, SideEffectStatusNonRetryable,
+				fmt.Errorf("webhook: non-retryable failure on attempt 1: %w", attemptErr)
 		}
 	}
-	return fmt.Errorf("webhook: gave up after %d attempts: %w", totalAttempts, lastErr)
+	return attemptsMade, SideEffectStatusFailed,
+		fmt.Errorf("webhook: gave up after %d attempts: %w", totalAttempts, lastErr)
 }
 
 // doWebhookAttempt makes one HTTP call. Returns (statusCode, error).
