@@ -1366,6 +1366,21 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		api.With(auth.RequirePermission(auth.PermUserManage)).
 			Method(http.MethodPost, "/api/admin/funnel/dlq/{id}/discard", NewAdminFunnelDLQDiscardHandler(funnelDLQDeps))
 
+		// PRD-V2 Gap-A4 round 34: admin surface for the action_log_
+		// side_effect_dlq table (round 33). List pending failed-after-
+		// retries side-effect dispatches and abandon individual rows.
+		// Replay endpoint deferred to a follow-up round — needs payload
+		// reconstruction from action_logs.
+		var sideEffectDLQRepo SideEffectDLQRepo
+		if deps.OmsRepo != nil {
+			sideEffectDLQRepo = deps.OmsRepo
+		}
+		sideEffectDLQDeps := AdminSideEffectDLQDeps{Repo: sideEffectDLQRepo}
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodGet, "/api/admin/side-effect-dlq", NewAdminSideEffectDLQListHandler(sideEffectDLQDeps))
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/side-effect-dlq/{id}/abandon", NewAdminSideEffectDLQAbandonHandler(sideEffectDLQDeps))
+
 		// US-490: zero-downtime JWT signing key rotation. The handler
 		// generates a fresh RSA-2048 keypair and appends it to the
 		// signer's in-memory keyring; previously issued tokens keep

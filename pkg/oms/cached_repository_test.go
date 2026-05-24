@@ -329,6 +329,10 @@ func (*noopRepo) InsertSideEffectDLQRow(context.Context, *oms.SideEffectDLQRow) 
 func (*noopRepo) ListSideEffectDLQByActionLog(context.Context, int64) ([]oms.SideEffectDLQRow, error) {
 	return nil, nil
 }
+func (*noopRepo) ListPendingSideEffectDLQRows(context.Context, int) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (*noopRepo) MarkSideEffectDLQAbandoned(context.Context, int64) error { return nil }
 func (*noopRepo) InsertObjectHistory(context.Context, *oms.ObjectHistory) error {
 	return nil
 }

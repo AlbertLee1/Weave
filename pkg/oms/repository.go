@@ -155,6 +155,21 @@ type Repository interface {
 	// admin / debug surface to render "what failed for this action".
 	ListSideEffectDLQByActionLog(ctx context.Context, actionLogID int64) ([]SideEffectDLQRow, error)
 
+	// ListPendingSideEffectDLQRows returns up to `limit` rows whose
+	// replay_status = 'pending', ordered by created_at DESC then id
+	// DESC (newest first). Used by the admin DLQ listing surface
+	// (Gap-A4 round 34). Empty slice when no pending rows exist.
+	ListPendingSideEffectDLQRows(ctx context.Context, limit int) ([]SideEffectDLQRow, error)
+
+	// MarkSideEffectDLQAbandoned flips a DLQ row's replay_status from
+	// 'pending' to 'abandoned' — the operator's "I've reviewed this
+	// and don't want to replay" signal. Idempotent on rows already in
+	// 'abandoned' status (no-op return nil). Returns ErrNotFound when
+	// the id doesn't exist. Returns an error when the row is in
+	// 'replayed' status (can't abandon a row that already replayed
+	// successfully — that would mask the successful dispatch).
+	MarkSideEffectDLQAbandoned(ctx context.Context, id int64) error
+
 	// ObjectHistory (Tier 2.3)
 	InsertObjectHistory(ctx context.Context, h *ObjectHistory) error
 	ListObjectHistory(ctx context.Context, objectTypeRID, primaryKey string, limit int) ([]ObjectHistory, error)

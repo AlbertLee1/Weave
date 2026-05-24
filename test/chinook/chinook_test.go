@@ -594,6 +594,10 @@ func (r *inMemoryOmsRepo) InsertSideEffectDLQRow(_ context.Context, _ *oms.SideE
 func (r *inMemoryOmsRepo) ListSideEffectDLQByActionLog(_ context.Context, _ int64) ([]oms.SideEffectDLQRow, error) {
 	return nil, nil
 }
+func (r *inMemoryOmsRepo) ListPendingSideEffectDLQRows(_ context.Context, _ int) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (r *inMemoryOmsRepo) MarkSideEffectDLQAbandoned(_ context.Context, _ int64) error { return nil }
 
 // Search stubs
 func (r *inMemoryOmsRepo) SearchOntologyResources(_ context.Context, _, _ string) ([]oms.SearchResult, error) {

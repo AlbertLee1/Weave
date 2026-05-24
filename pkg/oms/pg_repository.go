@@ -16,6 +16,13 @@ import (
 var ErrNotFound = errors.New("not found")
 var ErrDuplicate = errors.New("duplicate")
 
+// ErrInvalidState is returned by state-transition methods when the
+// caller asks for a flip that the current state forbids (e.g.
+// MarkSideEffectDLQAbandoned on a row that already has
+// replay_status='replayed'). Maps to HTTP 409 Conflict at the handler
+// boundary.
+var ErrInvalidState = errors.New("invalid state transition")
+
 type PGRepository struct {
 	pool *pgxpool.Pool
 }
@@ -2077,6 +2084,79 @@ func nilIfEmptyJSON(raw json.RawMessage) interface{} {
 		return nil
 	}
 	return []byte(raw)
+}
+
+// ListPendingSideEffectDLQRows returns up to `limit` pending DLQ rows
+// ordered newest-first. The partial index on (replay_status, created_at
+// DESC) WHERE replay_status='pending' keeps the scan cheap even on a
+// large DLQ. Used by the Gap-A4 round-34 admin listing endpoint.
+func (r *PGRepository) ListPendingSideEffectDLQRows(ctx context.Context, limit int) ([]SideEffectDLQRow, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, action_log_id, effect_index, effect_type,
+		        COALESCE(effect_config, 'null'::jsonb), outcome,
+		        created_at, replay_status, replayed_at, replay_count
+		 FROM action_log_side_effect_dlq
+		 WHERE replay_status = $1
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT $2`,
+		SideEffectDLQStatusPending, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]SideEffectDLQRow, 0)
+	for rows.Next() {
+		var d SideEffectDLQRow
+		if err := rows.Scan(&d.ID, &d.ActionLogID, &d.EffectIndex, &d.EffectType,
+			&d.EffectConfig, &d.Outcome, &d.CreatedAt, &d.ReplayStatus,
+			&d.ReplayedAt, &d.ReplayCount); err != nil {
+			return nil, err
+		}
+		if string(d.EffectConfig) == "null" {
+			d.EffectConfig = nil
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// MarkSideEffectDLQAbandoned flips a pending row's replay_status to
+// 'abandoned'. Idempotent on rows already in 'abandoned' status.
+// Rejects flipping a 'replayed' row to abandoned (would mask the
+// successful dispatch) by returning ErrInvalidState. Returns
+// ErrNotFound when the id doesn't exist.
+func (r *PGRepository) MarkSideEffectDLQAbandoned(ctx context.Context, id int64) error {
+	var current string
+	err := r.pool.QueryRow(ctx,
+		`SELECT replay_status FROM action_log_side_effect_dlq WHERE id = $1`, id).
+		Scan(&current)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if current == SideEffectDLQStatusAbandoned {
+		return nil
+	}
+	if current == SideEffectDLQStatusReplayed {
+		return ErrInvalidState
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE action_log_side_effect_dlq
+		 SET replay_status = $1
+		 WHERE id = $2 AND replay_status = $3`,
+		SideEffectDLQStatusAbandoned, id, SideEffectDLQStatusPending)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // UpdateActionLogSideEffectStatus stamps the per-effect dispatch outcome

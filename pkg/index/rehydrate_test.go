@@ -244,6 +244,10 @@ func (s *stubRehydrateRepo) InsertSideEffectDLQRow(context.Context, *oms.SideEff
 func (s *stubRehydrateRepo) ListSideEffectDLQByActionLog(context.Context, int64) ([]oms.SideEffectDLQRow, error) {
 	return nil, nil
 }
+func (s *stubRehydrateRepo) ListPendingSideEffectDLQRows(context.Context, int) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) MarkSideEffectDLQAbandoned(context.Context, int64) error { return nil }
 func (s *stubRehydrateRepo) SearchOntologyResources(context.Context, string, string) ([]oms.SearchResult, error) {
 	return nil, nil
 }

@@ -3351,6 +3351,62 @@ components:
         dropped:
           type: boolean
           description: True when the entry was removed from the DLQ stream.
+    AdminSideEffectDLQEntry:
+      type: object
+      description: |
+        PRD-V2 Gap-A4 round-33 entry — one failed-after-retries
+        side-effect dispatch parked in `action_log_side_effect_dlq` for
+        operator review/replay.
+      required: [id, actionLogId, effectIndex, effectType, outcome, createdAt, replayStatus, replayCount]
+      properties:
+        id:
+          type: integer
+          format: int64
+        actionLogId:
+          type: integer
+          format: int64
+        effectIndex:
+          type: integer
+        effectType:
+          type: string
+          description: "Side-effect type, e.g. `webhook` or `log`."
+        effectConfig:
+          description: "Snapshot of the original SideEffect.Config blob so a future replay can dispatch without re-reading the ActionType."
+        outcome:
+          description: "Full SideEffectOutcome JSON ({type, status, attempts, error, durationMs})."
+        createdAt:
+          type: string
+          format: date-time
+        replayStatus:
+          type: string
+          enum: [pending, replayed, abandoned]
+        replayedAt:
+          type: string
+          format: date-time
+        replayCount:
+          type: integer
+    AdminSideEffectDLQListResponse:
+      type: object
+      description: PRD-V2 Gap-A4 round-34 wire shape for `GET /api/admin/side-effect-dlq`.
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminSideEffectDLQEntry"
+    AdminSideEffectDLQAbandonResponse:
+      type: object
+      description: PRD-V2 Gap-A4 round-34 wire shape for `POST /api/admin/side-effect-dlq/{id}/abandon`.
+      required: [id, abandoned, status]
+      properties:
+        id:
+          type: integer
+          format: int64
+        abandoned:
+          type: boolean
+        status:
+          type: string
+          enum: [abandoned]
     AdminAuthKeysRotateResponse:
       type: object
       description: US-490 wire shape for `POST /api/admin/auth/keys/rotate`.
@@ -13036,6 +13092,80 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "403":
           $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/side-effect-dlq:
+    get:
+      operationId: adminSideEffectDLQList
+      summary: List pending failed-after-retries side-effect dispatches (Gap-A4 round 34)
+      description: |
+        Lists pending entries in the `action_log_side_effect_dlq`
+        table — one row per side-effect dispatch whose retry budget
+        (set in round 30) was exhausted. The admin UI consumes this
+        to render an operator-actionable inbox. Gated behind
+        `user.manage`. 503 when the OMS repository isn't wired.
+      tags: [Admin]
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+          description: Maximum number of entries to return.
+      responses:
+        "200":
+          description: Pending DLQ entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSideEffectDLQListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/side-effect-dlq/{id}/abandon:
+    post:
+      operationId: adminSideEffectDLQAbandon
+      summary: Flip a side-effect DLQ row to `abandoned` (Gap-A4 round 34)
+      description: |
+        Marks a pending side-effect DLQ row as `abandoned` — the
+        operator's "reviewed and will not replay" signal. Idempotent
+        on rows already in `abandoned`. Returns 409 Conflict when the
+        row is in `replayed` status (can't mask a successful dispatch).
+        Gated behind `user.manage`.
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: BIGSERIAL primary key of the DLQ row.
+      responses:
+        "200":
+          description: Row flipped to abandoned (or already there).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSideEffectDLQAbandonResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/admin/funnel/dlq/{id}/replay:
