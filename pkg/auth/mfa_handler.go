@@ -13,6 +13,7 @@ import (
 
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/audit"
+	"github.com/liyang/weave/pkg/httputil"
 	"github.com/pquerna/otp"
 )
 
@@ -166,7 +167,7 @@ func (h *MFAHandler) Enable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req MFACodeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidMFARequest", map[string]string{"reason": err.Error()}))
 		return
 	}
@@ -207,7 +208,7 @@ func (h *MFAHandler) Disable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req MFACodeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidMFARequest", map[string]string{"reason": err.Error()}))
 		return
 	}
@@ -254,7 +255,7 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req MFACodeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidMFARequest", map[string]string{"reason": err.Error()}))
 		return
 	}
