@@ -487,6 +487,30 @@ components:
           type: string
         editOnly:
           type: boolean
+    SharedProperty:
+      type: object
+      description: |
+        A reusable property definition that can be attached to multiple
+        ObjectTypes (and surfaced inside interface fullMetadata). The
+        wire shape matches the in-process pkg/oms.SharedProperty struct
+        used by the OMS repo.
+      required: [rid, apiName, baseType]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        baseType:
+          type: string
+        typeConfig:
+          type: object
+          additionalProperties: true
+        isArray:
+          type: boolean
     LinkType:
       type: object
       required: [rid, apiName, displayName, objectTypeApiName, linkedObjectTypeApiName, cardinality, required]
@@ -4788,6 +4812,69 @@ paths:
       responses:
         "204":
           description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes:
+    get:
+      operationId: listSharedPropertyTypes
+      summary: List shared property types (Foundry OSv2)
+      description: |
+        Foundry 1:1 — returns every SharedProperty registered in the
+        ontology. The envelope is {"data": [...]} and is NEVER null;
+        an ontology with zero shared properties returns {"data": []}
+        so SDK iterators don't NPE. Prior to this endpoint, SDKs
+        could discover SharedProperties only by parsing the bulky
+        /fullMetadata response — this restores access at the
+        canonical Foundry path.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: SharedProperty list envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SharedProperty"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/{sharedPropertyType}:
+    get:
+      operationId: getSharedPropertyTypeByApiName
+      summary: Get a single SharedProperty by API name (Foundry OSv2)
+      description: |
+        Foundry-1:1 sibling of listSharedPropertyTypes — keyed by
+        API name (not RID). The current implementation scans the
+        ontology-scoped list and filters; ontology-scoped sets are
+        small in practice and SDK caches absorb repeat calls.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: sharedPropertyType
+          required: true
+          description: SharedProperty API name (not the RID).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SharedProperty wire object.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedProperty"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

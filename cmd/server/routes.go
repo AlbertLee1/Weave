@@ -42,6 +42,13 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	// gives the more-specific byRid prefix priority and `byRid` is never
 	// captured as a literal {linkType} slug.
 	r.Get("/api/v2/ontologies/{ontologyApiName}/linkTypes/{linkType}", omsHandler.GetLinkTypeByAPIName)
+	// SharedPropertyType V2 read surface (Foundry-1:1). The repo has full
+	// SharedProperty CRUD already; until now the V2 API only exposed
+	// them via /fullMetadata. SDKs that wanted a single shared property
+	// type had to parse the bulky bundle. Two endpoints, parallel to
+	// the linkTypes pattern above.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes", omsHandler.ListSharedPropertyTypesV2)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/{sharedPropertyType}", omsHandler.GetSharedPropertyTypeByAPIName)
 	// LinkProperty admin CRUD (US-210): schema lives per LinkType; edge values
 	// ride on link_edges.edge_properties JSONB and are written via the edges
 	// PUT endpoint below.

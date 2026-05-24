@@ -1522,6 +1522,81 @@ func (h *OMSHandler) ListAllLinkTypes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ListSharedPropertyTypesV2 handles
+// GET /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes.
+//
+// Foundry OSv2 1:1 alignment: the SharedProperty repo surface
+// (CreateSharedProperty / GetSharedProperty / ListSharedProperties /
+// UpdateSharedProperty / DeleteSharedProperty) has been fully wired
+// inside the OMS for several rounds, but the V2 read API never
+// exposed it — SDKs that wanted to discover shared property types
+// had to parse the bulky /fullMetadata response. This restores
+// access at the canonical Foundry path. Envelope is {"data":[...]}
+// to match ListLinkTypesForOntologyAdmin / ListInterfacesForOntologyAdmin;
+// the list MUST serialise as `[]` rather than `null` so SDK iterators
+// don't NPE on an empty ontology.
+func (h *OMSHandler) ListSharedPropertyTypesV2(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyApiName := chi.URLParam(r, "ontologyApiName")
+	list, err := repo.ListSharedProperties(r.Context(), ontologyApiName)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListSharedPropertyTypesFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	if list == nil {
+		list = []SharedProperty{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": list})
+}
+
+// GetSharedPropertyTypeByAPIName handles
+// GET /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/{sharedPropertyType}.
+//
+// Foundry-1:1 sibling of ListSharedPropertyTypesV2 — keyed by API
+// name (not RID). The repo does not yet expose a native
+// GetSharedPropertyByAPIName helper (unlike LinkType / ObjectType /
+// ActionType / Interface / ValueType / QueryType), so this scans
+// ListSharedProperties and filters; ontology-scoped sets are small
+// in practice (< a few hundred entries even in large deployments)
+// and the SDK-side cache absorbs repeat calls. A future round can
+// promote this to a repo method when measurements show it matters.
+func (h *OMSHandler) GetSharedPropertyTypeByAPIName(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyApiName := chi.URLParam(r, "ontologyApiName")
+	apiName := chi.URLParam(r, "sharedPropertyType")
+	if apiName == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingSharedPropertyType", map[string]string{
+			"reason": "sharedPropertyType path parameter is required",
+		}))
+		return
+	}
+	list, err := repo.ListSharedProperties(r.Context(), ontologyApiName)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("GetSharedPropertyTypeFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	for i := range list {
+		if list[i].APIName == apiName {
+			httputil.WriteJSON(w, http.StatusOK, list[i])
+			return
+		}
+	}
+	apierror.WriteJSON(w, apierror.NewNotFound("SharedPropertyTypeNotFound", map[string]string{
+		"ontology":           ontologyApiName,
+		"sharedPropertyType": apiName,
+	}))
+}
+
 // GetLinkTypeByAPIName handles
 // GET /api/v2/ontologies/{ontologyApiName}/linkTypes/{linkType}.
 //
