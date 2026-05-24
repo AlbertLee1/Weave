@@ -100,6 +100,7 @@ class WeaveAsyncClient:
         self.transactions = AsyncTransactionsAPI(self)
         self.reactions = AsyncReactionsAPI(self)
         self.notifications = AsyncNotificationsAPI(self)
+        self.dashboards = AsyncDashboardsAPI(self)
 
     @property
     def token(self) -> str:
@@ -960,6 +961,75 @@ class AsyncNotificationsAPI:
             return 0
 
 
+class AsyncDashboardsAPI:
+    """Async mirror of DashboardsAPI (round 78). Wraps the six
+    dashboards endpoints (CRUD + round-62 Duplicate). Reuses
+    Dashboard dataclass from the sync module via lazy import.
+    Same PARTIAL UPDATE SEMANTIC: fields set to None preserve
+    the existing server value rather than clearing it.
+    """
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def list(self) -> List["Dashboard"]:
+        from .dashboards import _parse_dashboard
+        resp = await self._client._request("GET", "/api/v2/dashboards")
+        rows = (resp or {}).get("dashboards") or []
+        return [_parse_dashboard(d) for d in rows]
+
+    async def create(
+        self,
+        name: str,
+        definition: Optional[Dict[str, Any]] = None,
+        is_public: bool = False,
+    ) -> "Dashboard":
+        from .dashboards import _parse_dashboard
+        body: Dict[str, Any] = {"name": name}
+        if definition is not None:
+            body["definition"] = definition
+        if is_public:
+            body["isPublic"] = True
+        resp = await self._client._request("POST", "/api/v2/dashboards", json_body=body)
+        return _parse_dashboard(resp or {})
+
+    async def get(self, dashboard_id: str) -> "Dashboard":
+        from .dashboards import _parse_dashboard
+        path = "/api/v2/dashboards/" + quote_path(dashboard_id)
+        resp = await self._client._request("GET", path)
+        return _parse_dashboard(resp or {})
+
+    async def update(
+        self,
+        dashboard_id: str,
+        name: Optional[str] = None,
+        definition: Optional[Dict[str, Any]] = None,
+        is_public: Optional[bool] = None,
+    ) -> "Dashboard":
+        from .dashboards import _parse_dashboard
+        body: Dict[str, Any] = {}
+        if name is not None:
+            body["name"] = name
+        if definition is not None:
+            body["definition"] = definition
+        if is_public is not None:
+            body["isPublic"] = is_public
+        path = "/api/v2/dashboards/" + quote_path(dashboard_id)
+        resp = await self._client._request("PUT", path, json_body=body)
+        return _parse_dashboard(resp or {})
+
+    async def delete(self, dashboard_id: str) -> None:
+        path = "/api/v2/dashboards/" + quote_path(dashboard_id)
+        await self._client._request("DELETE", path)
+        return None
+
+    async def duplicate(self, dashboard_id: str) -> "Dashboard":
+        from .dashboards import _parse_dashboard
+        path = "/api/v2/dashboards/" + quote_path(dashboard_id) + "/duplicate"
+        resp = await self._client._request("POST", path)
+        return _parse_dashboard(resp or {})
+
+
 __all__ = [
     "WeaveAsyncClient",
     "AsyncOntologiesAPI",
@@ -970,4 +1040,5 @@ __all__ = [
     "AsyncTransactionsAPI",
     "AsyncReactionsAPI",
     "AsyncNotificationsAPI",
+    "AsyncDashboardsAPI",
 ]
