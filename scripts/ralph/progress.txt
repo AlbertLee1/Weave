@@ -1,0 +1,78 @@
+# Ralph Progress Log - Parallel2 Integration
+Integrated: 2026-05-24T08:57:45+08:00
+Integration branch: ralph/self-iteration-20260524-084635
+
+## Stream A: ralph/self-iteration-20260524-084635-A
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260524-084635-A
+HEAD: e04f3f241fc7
+
+# Ralph Progress Log - Parallel2 Stream A
+Started: 2026-05-24T08:46:36+08:00
+Integration branch: ralph/self-iteration-20260524-084635
+Stream branch: ralph/self-iteration-20260524-084635-A
+Focus: backend/API/MCP/ontology services, server-side reliability, migrations, Go tests
+---
+
+## Codebase Patterns
+- **Ambiguous-JSON hardening recipe (P2A-30x family)**: when an admin write surface uses `json.NewDecoder(r.Body).Decode(&req)`, swap it for `httputil.ReadJSON(r, &req)`. ReadJSON additionally calls `dec.Decode(&extra)` and requires the result to be `io.EOF`, so concatenated/trailing JSON is rejected with `"request body must contain a single JSON value"`. The handler's existing `apierror.NewInvalidParameter("Invalid…", {"reason": err.Error()})` already surfaces that phrase to clients.
+- **Empty-body endpoints (e.g. POST .../rotate)**: keep the `if r.Body != nil && r.ContentLength != 0` outer guard around `httputil.ReadJSON` — ReadJSON returns `io.EOF` on empty bodies, which "use defaults" flows must treat as a non-error. Pair with a "no-body request still succeeds" regression sub-test.
+- **BDD shape for P2A-30x hardening**: integration tests live next to handlers as `*_handlers_bdd_test.go` and (a) seed an in-memory repo via the existing harness (`newRoleHandlerHarness`, `newUserRoleHandlerHarness`, `newAPIKeyHandlerHarness(t)`, …), (b) send a concatenated body, (c) assert via `assertSingleJSONValueRejection` (in `pkg/auth/role_handlers_bdd_test.go`) that the response is 400 with the expected errorName + a reason containing "single JSON value", (d) snapshot repo state before/after to prove the rejected request was non-mutating, and (e) include a "well-formed body still succeeds" sub-test as a regression guard.
+- **Shared test harnesses**: `withAdmin` / `withViewer` from `pkg/auth/api_key_handlers_test.go` are reusable across all `pkg/auth` BDD tests. `fakeUserRepo` (in `pkg/auth/role_resolver_test.go`) implements both `UserRepository` and `UserRoleRevoker`; reuse via `newFakeUserRepo()` and `newUserRoleHandlerHarness()` rather than re-rolling.
+- **fakeRoleRepo seeds built-ins**: `newFakeRoleRepo()` pre-seeds RoleViewer/RoleEditor/RoleOntologyOwner/RoleAdmin/RoleIngestWriter so role-existence checks pass without extra setup — handy when the test only cares about the request-decoding surface, not role registration.
+
+## [2026-05-24 08:50] - P2A-305
+- Hardened POST /api/admin/users/{userId}/roles (UserRoleHandler.GrantRole) to reject ambiguous JSON request bodies. Before this commit the handler called `json.NewDecoder(r.Body).Decode(&req)`, so a concatenated payload like `{"role":"viewer"}{"role":"admin"}` decoded only the first object and silently dropped the trailing role. The trailer is invisible to the audit log (which records `req.Role` only after decode) but visible to anything that re-parses the raw bytes (proxies, WAFs, log scrapers), giving an attacker who can influence the request body a path to confuse downstream observers about which role grant actually landed. The fix routes the handler through `httputil.ReadJSON`, which uses `dec.Decode(&extra) == io.EOF` to enforce the single-JSON-value contract that P2A-301..304 already imposed on the rest of the auth admin surface.
+- Files changed:
+  - `pkg/auth/user_role_handlers.go` — added `pkg/httputil` import; `grantRoleFor` decodes via `httputil.ReadJSON`.
+  - `pkg/auth/user_role_handlers_bdd_test.go` — new BDD integration test `TestBDD_UserRoleGrantRejectsAmbiguousJSONBody_P2A305` with two scenarios: ambiguous body rejected + no role granted (snapshot before/after), well-formed body still grants the requested role. Reuses `withAdmin`, `newUserRoleHandlerHarness`, and the shared `assertSingleJSONValueRejection` helper.
+  - `scripts/ralph/prd.json` — added P2A-305 user story (now `passes: true`).
+- TDD red verified: with the BDD test in place and the handler still using `json.NewDecoder`, the ambiguous-body sub-test failed with `expected 400 for ambiguous body, got 200 body={"roles":["viewer"]}`, confirming the smuggled `admin` was silently dropped after the viewer grant landed. After swapping to `httputil.ReadJSON` both sub-tests pass.
+- Verification:
+  - `go test ./pkg/auth/ -run 'TestBDD_UserRoleGrantRejectsAmbiguousJSONBody_P2A305|TestUserRoleHandler_' -count=1 -v` → all PASS (0.71s)
+  - `go test ./pkg/auth/...` → ok (17.66s)
+  - `go test -race ./pkg/auth/ -run 'TestBDD_UserRoleGrantRejectsAmbiguousJSONBody_P2A305|TestUserRoleHandler_' -count=1` → ok (1.87s)
+  - `go vet ./pkg/auth/...` → clean
+  - `gofmt -l pkg/auth/user_role_handlers.go pkg/auth/user_role_handlers_bdd_test.go` → clean
+  - `go build ./...` → clean
+  - `golangci-lint` not installed in the worktree environment; skipped.
+- **Learnings for future iterations:**
+  - The `_ = json.NewDecoder(rec.Body).Decode(&resp)` calls elsewhere in pkg/auth tests are decoding **server responses**, not request bodies — leave them alone. Only switch handler-side request-body decodes to `httputil.ReadJSON`.
+  - `RoleAdmin` is a known built-in (seeded by `newFakeRoleRepo`), which is why the ambiguous-body test uses `viewer` first / `admin` smuggled — both are recognized roles so the "smuggled grant would have succeeded under the pre-hardened decoder" framing matches reality (no spurious `RoleNotFound` short-circuits the decode-rejection assertion).
+  - When choosing the next P2A-30x candidate, the remaining `json.NewDecoder(r.Body).Decode` admin write surfaces in pkg/auth are `marking_handlers.go` (POST /api/admin/users/{userId}/markings) and `mfa_handler.go` / `refresh_handler.go` / `logout_handler.go` — marking is the closest analogue (admin grants a marking with optional expiry) and would be a natural P2A-306.
+---
+
+
+---
+
+## Stream B: ralph/self-iteration-20260524-084635-B
+Worktree: /Users/liyang/.hermes/state/weave-self-iteration/parallel2-worktrees/ralph__self-iteration-20260524-084635-B
+HEAD: 589b9da655d0
+
+# Ralph Progress Log - Parallel2 Stream B
+Started: 2026-05-24T08:46:36+08:00
+Integration branch: ralph/self-iteration-20260524-084635
+Stream branch: ralph/self-iteration-20260524-084635-B
+Focus: web UI/browser dogfood, frontend UX, integration tests, documentation-backed behavior
+
+## Codebase Patterns
+- `web/src/api/client.ts` throws `ApiRequestError` whose `.message` is `${errorCode}: ${errorName}` — never surface that string to operators. Inspect `err.errorName` (e.g. `SavedSearchNameConflict`) and translate to a friendly inline message; only fall back to `err.message` for truly unknown errors.
+- Backend uniqueness on saved searches is `(createdBy, trimmed name)` exact match — case- AND whitespace-sensitive (see `pkg/savedsearches/store.go` `nameKey`). Frontend duplicate checks should mirror that exactly: trim, then `Set.has(trimmed)` over `rows[].name`. Do not lowercase.
+- BrowserPage saved-search BDDs render the full BrowserPage with MSW handlers; to enable the Save affordance the test must first drift the view (e.g. type into `search-input`) so `hasCurrentState` becomes true.
+
+---
+
+## 2026-05-24 - P2B-S006
+- Implemented inline duplicate-name detection in the SavedSearchesPanel save dialog. Operators now see "A saved search named "X" already exists. Choose a different name." with the Save button disabled the moment they type a colliding name, instead of POSTing and reading the raw `CONFLICT: SavedSearchNameConflict` ApiRequestError string back through the error banner.
+- The same warning is used as the catch-path fallback when a 409 still slips through (concurrent tab, background invalidation): we detect `err.errorName === 'SavedSearchNameConflict'` and render the duplicate banner instead of leaking the raw error code.
+- Files changed:
+  - web/src/components/browser/SavedSearchesPanel.tsx (new state `duplicateName`, derived `existingNames` Set + `showDuplicateWarning`, short-circuit submit, 409 fallback, new `aria-invalid` + warning element with `data-testid="saved-searches-duplicate-warning"`, disabled Save while colliding)
+  - web/src/components/browser/__tests__/BrowserPage.savedSearchDuplicateName.bdd.test.tsx (new — 4 BDD scenarios: local collision disables Save, edit recovers, whitespace-trim still warns, 409 race surfaces friendly warning instead of raw error code)
+- **Learnings for future iterations:**
+  - `web/src/api/client.ts` throws `ApiRequestError` whose `.message` reads `${errorCode}: ${errorName}` — surfacing it via `err instanceof Error ? err.message : ...` leaks raw codes ("CONFLICT: SavedSearchNameConflict") to operators. Always inspect `err.errorName` for known codes and translate before falling back to `err.message`.
+  - Saved-search uniqueness in `pkg/savedsearches/store.go` is case- and whitespace-sensitive on the trimmed name (`nameKey = createdBy + "\x00" + name`). UI duplicate checks should trim then exact-match — lowercasing would warn on "Apples" vs "apples" even though the backend lets them coexist.
+  - BrowserPage BDD tests need to drift the view (e.g. type into `search-input`) before the Save affordance enables, because `hasCurrentState` is false on a default view. Mirror `BrowserPage.savedSearches.bdd.test.tsx` for handler shapes.
+  - `BrowserPage.savedSearchUpdate.bdd.test.tsx` uses `setupServer(...buildHandlers())` + a `buildHandlers()` factory so per-test mutable state (`createCalls`, `updateResponseStatus`) can be cleanly reset in `afterEach`. Reuse that pattern when a BDD needs to flip server behaviour between scenarios.
+---
+
+
+---

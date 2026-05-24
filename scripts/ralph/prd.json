@@ -1,0 +1,31 @@
+{
+  "project": "Weave parallel2 self-iteration",
+  "branchName": "ralph/self-iteration-20260524-084635",
+  "description": "Combined PRD evidence from two isolated Claude Code/Ralph stream worktrees. Verification and PR gate run on this integration branch.",
+  "userStories": [
+    {
+      "id": "P2A-305",
+      "title": "User-role grant admin write rejects ambiguous JSON request bodies",
+      "priority": 1,
+      "passes": true,
+      "description": "POST /api/admin/users/{userId}/roles (UserRoleHandler.GrantRole at pkg/auth/user_role_handlers.go:116) still decodes its request body via json.NewDecoder(r.Body).Decode(&req). That decoder accepts only the first JSON value and silently drops any trailing bytes, so a concatenated payload like {\"role\":\"viewer\"}{\"role\":\"admin\"} hides intent from auditors and proxies. This endpoint actually mints role grants onto an existing user, so trailing-JSON smuggling is the same high-impact class that P2A-301..304 already closed for role definitions, group writes, service-account mutations, and API-key admin writes. Route GrantRole through httputil.ReadJSON so the single-JSON-value contract holds, and add a BDD integration test next to the handler asserting both the rejection and the existing happy path.",
+      "bddAcceptanceCriteria": [
+        "Given POST /api/admin/users/{userId}/roles with a body of two concatenated JSON objects, when the handler decodes the request, then it returns 400 InvalidUserRoleRequest with a reason mentioning a single JSON value AND no role row is granted to the user.",
+        "Given POST /api/admin/users/{userId}/roles with a single well-formed body, when the handler runs, then the existing 200 OK happy path still persists the requested role.",
+        "A BDD integration test TestBDD_UserRoleGrantRejectsAmbiguousJSONBody_P2A305 lives in pkg/auth/user_role_handlers_bdd_test.go, reuses the shared assertSingleJSONValueRejection helper, and snapshots the user's role list before/after to prove the rejected request was non-mutating."
+      ],
+      "dependencies": [],
+      "stream": "A",
+      "source_branch": "ralph/self-iteration-20260524-084635-A"
+    },
+    {
+      "id": "P2B-S006",
+      "title": "Save Dialog Warns on Duplicate Saved-Search Name",
+      "priority": "high",
+      "passes": true,
+      "summary": "The SavedSearchesPanel save dialog now detects a colliding name before POST (and as a fallback for stale-list 409 races) and surfaces an inline warning with the Save button disabled, replacing the unactionable `CONFLICT: SavedSearchNameConflict` error string.",
+      "stream": "B",
+      "source_branch": "ralph/self-iteration-20260524-084635-B"
+    }
+  ]
+}

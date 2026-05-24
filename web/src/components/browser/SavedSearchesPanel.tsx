@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   useCreateSavedSearch,
   useDeleteSavedSearch,
@@ -6,6 +6,7 @@ import {
   useUpdateSavedSearch,
 } from '../../hooks/useSavedSearches';
 import type { SavedSearch, SavedSearchDefinition } from '../../api/savedSearches';
+import { ApiRequestError } from '../../api/client';
 import { Modal } from '../common/Modal';
 
 interface SavedSearchesPanelProps {
@@ -54,18 +55,37 @@ export function SavedSearchesPanel({
   const [saveOpen, setSaveOpen] = useState(false);
   const [name, setName] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [duplicateName, setDuplicateName] = useState<string | null>(null);
   const [updateErrorId, setUpdateErrorId] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  // Existing names for the current (ontology, objectType) scope. The
+  // backend enforces (createdBy, name) uniqueness exactly — case- and
+  // whitespace-sensitive on the trimmed value — so we mirror that here
+  // to avoid false positives. Surfacing the collision before POST turns
+  // an unactionable `CONFLICT: SavedSearchNameConflict` into a
+  // self-explanatory inline warning.
+  const existingNames = useMemo(
+    () => new Set(rows.map((row) => row.name)),
+    [rows],
+  );
+  const trimmedName = name.trim();
+  const localDuplicate =
+    trimmedName.length > 0 && existingNames.has(trimmedName);
+  const showDuplicateWarning =
+    localDuplicate || (duplicateName !== null && duplicateName === trimmedName);
 
   const openSaveDialog = useCallback(() => {
     setName('');
     setErrorMessage(null);
+    setDuplicateName(null);
     setSaveOpen(true);
   }, []);
 
   const closeSaveDialog = useCallback(() => {
     setSaveOpen(false);
     setErrorMessage(null);
+    setDuplicateName(null);
   }, []);
 
   const handleSave = useCallback(
@@ -74,6 +94,14 @@ export function SavedSearchesPanel({
       const trimmed = name.trim();
       if (!trimmed) {
         setErrorMessage('Name is required');
+        return;
+      }
+      if (existingNames.has(trimmed)) {
+        // The inline duplicate warning is already on screen — short
+        // circuit so the form does not POST and stack a redundant error
+        // banner on top.
+        setDuplicateName(trimmed);
+        setErrorMessage(null);
         return;
       }
       try {
@@ -85,11 +113,24 @@ export function SavedSearchesPanel({
         });
         setSaveOpen(false);
       } catch (err) {
+        // Race fallback: the local list was stale (concurrent tab,
+        // background invalidation) so the backend rejected the POST
+        // with 409 SavedSearchNameConflict. Surface the same inline
+        // warning instead of the raw `CONFLICT: ...` ApiRequestError
+        // message so the operator's next action is obvious.
+        if (
+          err instanceof ApiRequestError &&
+          err.errorName === 'SavedSearchNameConflict'
+        ) {
+          setDuplicateName(trimmed);
+          setErrorMessage(null);
+          return;
+        }
         const reason = err instanceof Error ? err.message : 'Failed to save';
         setErrorMessage(reason);
       }
     },
-    [createMutation, currentDefinition, name, objectType, ontology],
+    [createMutation, currentDefinition, existingNames, name, objectType, ontology],
   );
 
   const handleLoad = useCallback(
@@ -263,13 +304,32 @@ export function SavedSearchesPanel({
               autoFocus
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                // Editing the field invalidates any 409-driven warning
+                // — the operator is now typing a new candidate so
+                // re-evaluation should be purely local until they
+                // submit again.
+                if (duplicateName !== null) {
+                  setDuplicateName(null);
+                }
+              }}
               maxLength={128}
+              aria-invalid={showDuplicateWarning ? 'true' : undefined}
               data-testid="saved-searches-name-input"
               className="px-2 py-1 rounded border border-border bg-bg-secondary text-xs font-mono text-text-primary outline-none focus:border-accent-cyan"
             />
           </label>
-          {errorMessage && (
+          {showDuplicateWarning && (
+            <p
+              role="alert"
+              data-testid="saved-searches-duplicate-warning"
+              className="text-xs font-mono text-accent-error"
+            >
+              A saved search named &ldquo;{trimmedName}&rdquo; already exists. Choose a different name.
+            </p>
+          )}
+          {errorMessage && !showDuplicateWarning && (
             <p
               role="alert"
               data-testid="saved-searches-error"
@@ -288,9 +348,9 @@ export function SavedSearchesPanel({
             </button>
             <button
               type="submit"
-              disabled={createMutation.isPending}
+              disabled={createMutation.isPending || showDuplicateWarning}
               data-testid="saved-searches-confirm"
-              className="px-3 py-1 rounded border border-accent-cyan text-xs font-mono text-accent-cyan hover:bg-accent-cyan/10 disabled:opacity-50"
+              className="px-3 py-1 rounded border border-accent-cyan text-xs font-mono text-accent-cyan hover:bg-accent-cyan/10 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {createMutation.isPending ? 'Saving…' : 'Save'}
             </button>
