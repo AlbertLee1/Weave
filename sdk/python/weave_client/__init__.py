@@ -69,6 +69,15 @@ from .notifications import (
     Notification,
     NotificationsAPI,
 )
+from .permissionrequests import (
+    PermissionRequest,
+    PermissionRequestList,
+    PermissionRequestsAPI,
+    STATUS_APPROVED,
+    STATUS_CANCELLED,
+    STATUS_PENDING,
+    STATUS_REJECTED,
+)
 from .reactions import (
     EmojiCount,
     Reaction,
@@ -160,6 +169,13 @@ __all__ = [
     "NotificationsAPI",
     "Dashboard",
     "DashboardsAPI",
+    "PermissionRequest",
+    "PermissionRequestList",
+    "PermissionRequestsAPI",
+    "STATUS_PENDING",
+    "STATUS_APPROVED",
+    "STATUS_REJECTED",
+    "STATUS_CANCELLED",
 ]
 
 __version__ = "0.1.0"

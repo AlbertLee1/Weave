@@ -52,6 +52,7 @@ class Client:
         from .objectsets import ObjectSetsAPI
         from .ontologies import OntologiesAPI
         from .notifications import NotificationsAPI
+        from .permissionrequests import PermissionRequestsAPI
         from .reactions import ReactionsAPI
         from .timeseries import TimeSeriesAPI
         from .transactions import TransactionsAPI
@@ -68,6 +69,7 @@ class Client:
         self.reactions = ReactionsAPI(self)
         self.notifications = NotificationsAPI(self)
         self.dashboards = DashboardsAPI(self)
+        self.permissionrequests = PermissionRequestsAPI(self)
         self.vertex = VertexAPI(self)
 
     @property
