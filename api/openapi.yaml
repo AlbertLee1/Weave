@@ -5855,6 +5855,51 @@ paths:
                       $ref: "#/components/schemas/TypeGroup"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/queryTypes/getByRidBatch:
+    post:
+      operationId: getQueryTypesByRidBatch
+      summary: Batch lookup query types by RIDs (round 89)
+      description: |
+        Closes the 8-of-8 batch-get-by-RID symmetry across the OMS
+        metadata surface (objectTypes + actionTypes + linkTypes
+        round-79 + interfaceTypes round-81 + valueTypes round-83 +
+        sharedPropertyTypes round-85 + typeGroups round-87 + this).
+        QueryTypes — the predefined filter+aggregation combos stored
+        as metadata — round out the set; a saved-query palette
+        rendering N saved queries no longer needs N round-trips.
+        Missing RIDs are silently skipped — same convention as the
+        seven other batch surfaces.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of QueryType RIDs to look up.
+      responses:
+        "200":
+          description: Batch query type list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/QueryType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}:
     get:
       operationId: getActionType

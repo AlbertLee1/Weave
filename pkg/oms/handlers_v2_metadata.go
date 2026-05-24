@@ -272,6 +272,38 @@ func (h *OMSHandler) GetActionTypesByRidBatchV2(w http.ResponseWriter, r *http.R
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
 }
 
+// GetQueryTypesByRidBatchV2 handles POST /api/v2/ontologies/{ontologyApiName}/queryTypes/getByRidBatch.
+// Round 89 closes the 8-of-8 batch-get-by-RID symmetry across the
+// OMS metadata surface (objectTypes + actionTypes + linkTypes
+// round-79 + interfaceTypes round-81 + valueTypes round-83 +
+// sharedPropertyTypes round-85 + typeGroups round-87 + this).
+// QueryTypes — the predefined filter+aggregation combos stored
+// as metadata — round out the set; a saved-query palette
+// rendering N saved queries no longer needs N round-trips.
+// Reuses shared getByRidBatchRequest. Missing RIDs silently
+// skipped (same convention). QueryType serialises directly via
+// the JSON encoder — no ToWireJSON helper.
+func (h *OMSHandler) GetQueryTypesByRidBatchV2(w http.ResponseWriter, r *http.Request) {
+	var req getByRidBatchRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	out := make([]*QueryType, 0, len(req.RIDs))
+	for _, rid := range req.RIDs {
+		qt, err := h.repo.GetQueryType(r.Context(), rid)
+		if err != nil {
+			continue
+		}
+		out = append(out, qt)
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": out})
+}
+
 // GetTypeGroupsByRidBatchV2 handles POST /api/v2/ontologies/{ontologyApiName}/typeGroups/getByRidBatch.
 // Round 87 extends the batch-get-by-RID convention to TypeGroups,
 // the navigation-pane categorisation primitive. The SPA Browser
