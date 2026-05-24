@@ -49,7 +49,7 @@ func (h *Handler) DecryptCipherTextProperty(w http.ResponseWriter, r *http.Reque
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("GetObjectFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectFailed", map[string]string{
 			"reason": err.Error(),
 		}))
 		return

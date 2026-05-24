@@ -147,7 +147,7 @@ func (h *Handler) resolveTimeSeriesKey(w http.ResponseWriter, r *http.Request) (
 			}))
 			return timeseries.SeriesKey{}, false
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("GetObjectFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectFailed", map[string]string{
 			"reason": err.Error(),
 		}))
 		return timeseries.SeriesKey{}, false

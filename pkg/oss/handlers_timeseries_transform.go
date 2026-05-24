@@ -91,7 +91,7 @@ func (h *Handler) TransformTimeSeries(w http.ResponseWriter, r *http.Request) {
 				}))
 				return
 			}
-			apierror.WriteJSON(w, apierror.NewInvalidParameter("GetObjectFailed", map[string]string{
+			apierror.WriteJSON(w, apierror.NewInternal("GetObjectFailed", map[string]string{
 				"reason": err.Error(),
 			}))
 			return

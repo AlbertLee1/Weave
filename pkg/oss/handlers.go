@@ -193,7 +193,7 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("GetObjectFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectFailed", map[string]string{
 			"reason": err.Error(),
 		}))
 		return
@@ -253,7 +253,7 @@ func (h *Handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("ListObjectsFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("ListObjectsFailed", map[string]string{
 			"reason": err.Error(),
 		}))
 		return
@@ -583,7 +583,7 @@ func (h *Handler) GetLinkedObject(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("GetLinkedObjectFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("GetLinkedObjectFailed", map[string]string{
 			"reason": err.Error(),
 		}))
 		return
@@ -634,7 +634,7 @@ func (h *Handler) ListLinkedObjects(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("ListLinkedObjectsFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("ListLinkedObjectsFailed", map[string]string{
 			"reason": err.Error(),
 		}))
 		return

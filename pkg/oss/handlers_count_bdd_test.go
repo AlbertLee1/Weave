@@ -32,7 +32,11 @@ import (
 //     SearchObjects uses, but with Size=0 so Bleve returns the total
 //     match count without paying to materialise documents.
 //   - Malformed where surfaces as 400 CountObjectsFailed, mirroring
-//     SearchObjects' error contract.
+//     SearchObjects' error contract. (Note: a downstream PG/Bleve
+//     failure DOES surface here too with the same envelope; round 26
+//     left CountObjectsFailed as INVALID_ARGUMENT because the same
+//     code path also handles legitimate user-input failures — needs
+//     sentinel error types in svc.CountObjects to safely split.)
 func TestBDD_CountObjects_WhereFilter_FoundryAlignment(t *testing.T) {
 	doCount := func(t *testing.T, body string) *httptest.ResponseRecorder {
 		t.Helper()

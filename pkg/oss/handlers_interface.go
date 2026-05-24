@@ -202,7 +202,7 @@ func (h *Handler) InterfaceListLinkedObjects(w http.ResponseWriter, r *http.Requ
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("InterfaceLinkedObjectsFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("InterfaceLinkedObjectsFailed", map[string]string{
 			"reason": err.Error(),
 		}))
 		return
