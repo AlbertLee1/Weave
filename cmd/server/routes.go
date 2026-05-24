@@ -34,6 +34,14 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/linkTypes", omsHandler.CreateLinkType)
 	r.Put("/api/v2/ontologies/{ontologyApiName}/linkTypes/byRid/{linkTypeRid}", omsHandler.UpdateLinkType)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/linkTypes/byRid/{linkTypeRid}", omsHandler.DeleteLinkType)
+	// Foundry-1:1 read by API name (mirrors GET /objectTypes/{objectTypeApiName}).
+	// SDKs hit this after a search response surfaces a linkType slug they
+	// need to render — without it, callers fall back to ListLinkTypes +
+	// client-side filter on every call. MUST be declared AFTER the
+	// /linkTypes/byRid/{linkTypeRid} routes above so chi's path matcher
+	// gives the more-specific byRid prefix priority and `byRid` is never
+	// captured as a literal {linkType} slug.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/linkTypes/{linkType}", omsHandler.GetLinkTypeByAPIName)
 	// LinkProperty admin CRUD (US-210): schema lives per LinkType; edge values
 	// ride on link_edges.edge_properties JSONB and are written via the edges
 	// PUT endpoint below.

@@ -4792,6 +4792,39 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/linkTypes/{linkType}:
+    get:
+      operationId: getLinkTypeByApiName
+      summary: Get a LinkType by API name (Foundry OSv2)
+      description: |
+        Foundry 1:1 alignment — mirrors GET /objectTypes/{objectTypeApiName}.
+        SDKs hit this endpoint after a search response surfaces a
+        linkType api name they need to render. Without it, callers
+        fall back to ListLinkTypes + client-side filter on every
+        call. {linkType} is the API name (bare slug); RID-keyed
+        mutations remain on /linkTypes/byRid/{linkTypeRid}.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: linkType
+          required: true
+          description: LinkType API name (not the RID).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: LinkType wire object.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/links/{linkTypeRid}/properties:
     get:
       operationId: listLinkProperties

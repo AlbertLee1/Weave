@@ -1522,6 +1522,47 @@ func (h *OMSHandler) ListAllLinkTypes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetLinkTypeByAPIName handles
+// GET /api/v2/ontologies/{ontologyApiName}/linkTypes/{linkType}.
+//
+// Foundry OSv2 1:1 alignment: SDKs hit this endpoint after a search
+// response surfaces a linkType api name they need to render — without
+// it, callers fall back to ListLinkTypes + client-side filter on every
+// call. {linkType} is the API name (not the RID); pass the bare slug,
+// not `ri.ontology.main.link-type.uuid`. RID-keyed mutations remain on
+// the existing /linkTypes/byRid/{linkTypeRid} routes; this is the
+// Foundry-shape read-only sibling that mirrors GET
+// /objectTypes/{objectTypeApiName}.
+func (h *OMSHandler) GetLinkTypeByAPIName(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyApiName := chi.URLParam(r, "ontologyApiName")
+	linkTypeApiName := chi.URLParam(r, "linkType")
+	if linkTypeApiName == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingLinkType", map[string]string{
+			"reason": "linkType path parameter is required",
+		}))
+		return
+	}
+	lt, err := repo.GetLinkTypeByAPIName(r.Context(), ontologyApiName, linkTypeApiName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("LinkTypeNotFound", map[string]string{
+				"ontology": ontologyApiName,
+				"linkType": linkTypeApiName,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetLinkTypeFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, lt)
+}
+
 // ListLinkTypesForOntologyAdmin handles
 // GET /api/v2/ontologies/{ontologyApiName}/linkTypes.
 // Returns all LinkTypes for the ontology, used by the Ontology Manager visual
