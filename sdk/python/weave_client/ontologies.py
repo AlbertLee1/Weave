@@ -231,6 +231,19 @@ class OntologiesAPI:
         )
         return (body or {}).get("data", [])
 
+    # ---- type groups --------------------------------------------------------
+
+    def get_type_groups_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """POST batch-fetch type groups by their RIDs (round 87)."""
+        body = self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/typeGroups/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
     # ---- query types --------------------------------------------------------
 
     def list_query_types(self, ontology: str) -> List[QueryType]:

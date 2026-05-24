@@ -394,6 +394,42 @@ class BatchByRidRound84Tests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["rid"], "sp-1")
 
+    # ---- round 88 — typeGroups batch wrapper --------------------------
+
+    def test_get_type_groups_by_rid_batch_posts_rids(self):
+        # Round 88 mirrors round-87 backend on the sync SDK surface,
+        # 7-of-7 sync helpers in lockstep with 7-of-7 backend.
+        resp = json.dumps({"data": [
+            {"rid": "tg-1", "apiName": "people", "displayName": "People",
+             "color": "#3b82f6"},
+            {"rid": "tg-2", "apiName": "places", "displayName": "Places",
+             "color": "#10b981"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/typeGroups/getByRidBatch":
+                  (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_type_groups_by_rid_batch(
+                "nw", ["tg-1", "tg-2"])
+            sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"rids": ["tg-1", "tg-2"]})
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["apiName"], "people")
+        self.assertEqual(result[1]["color"], "#10b981")
+
+    def test_get_type_groups_by_rid_batch_partial_resolve(self):
+        resp = json.dumps({"data": [
+            {"rid": "tg-1", "apiName": "people", "displayName": "People"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/typeGroups/getByRidBatch":
+                  (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_type_groups_by_rid_batch(
+                "nw", ["tg-1", "ghost-99"])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["rid"], "tg-1")
+
 
 if __name__ == "__main__":
     unittest.main()
