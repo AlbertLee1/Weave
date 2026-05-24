@@ -63,6 +63,29 @@ func typedAPIError(err error) *apierror.APIError {
 	return nil
 }
 
+// sentinelActionError converts the round-38 wire-shape sentinels
+// (ErrActionTypeNotFound, ErrInvalidActionParameters) to the proper
+// HTTP status / errorName envelopes. Returns nil when err carries
+// neither sentinel so the caller can fall through to the default
+// 500 ActionFailed envelope. Caller MUST check
+// staleObjectAPIError + typedAPIError first because those richer
+// envelopes (StaleObject 409, WEAVE_VALIDATION_ENUM 422) wrap the
+// underlying typed errors and shouldn't be flattened to the
+// sentinel layer.
+func sentinelActionError(err error) *apierror.APIError {
+	if errors.Is(err, ErrActionTypeNotFound) {
+		return apierror.NewNotFound("ActionTypeNotFound", map[string]string{
+			"reason": err.Error(),
+		})
+	}
+	if errors.Is(err, ErrInvalidActionParameters) {
+		return apierror.NewInvalidParameter("InvalidActionParameters", map[string]string{
+			"reason": err.Error(),
+		})
+	}
+	return nil
+}
+
 // Handler handles action HTTP requests.
 type Handler struct {
 	executor *Executor
@@ -171,7 +194,14 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 			apierror.WriteJSON(w, apiErr)
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()}))
+		// Round 38: route the new wire-shape sentinels before the
+		// default. ActionTypeNotFound → 404, InvalidActionParameters →
+		// 400; anything else is a server-side failure → 500.
+		if apiErr := sentinelActionError(err); apiErr != nil {
+			apierror.WriteJSON(w, apiErr)
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("ActionFailed", map[string]string{"error": err.Error()}))
 		return
 	}
 
@@ -842,7 +872,12 @@ func (h *Handler) ApplyWithOverrides(w http.ResponseWriter, r *http.Request) {
 			apierror.WriteJSON(w, apiErr)
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()}))
+		// Round 38: same sentinel routing as the Apply path above.
+		if apiErr := sentinelActionError(err); apiErr != nil {
+			apierror.WriteJSON(w, apiErr)
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("ActionFailed", map[string]string{"error": err.Error()}))
 		return
 	}
 
@@ -1001,20 +1036,30 @@ func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 // ActionFailed. US-208: when the BatchError wraps a typed *apierror.APIError
 // (e.g. WEAVE_VALIDATION_ENUM from constraint validation) the typed error is
 // surfaced verbatim with its original status code + parameters.
+//
+// Round 38: also checks the round-38 sentinels before the *BatchError
+// fallback so a BatchError wrapping ErrActionTypeNotFound /
+// ErrInvalidActionParameters still routes to 404 / 400 respectively
+// (preserves the per-action attribution via the inner error chain).
+// The fallback at the bottom now uses NewInternal (500) for genuine
+// server-side batch failures.
 func asBatchError(err error) *apierror.APIError {
 	if apiErr := typedAPIError(err); apiErr != nil {
 		return apiErr
 	}
+	if apiErr := sentinelActionError(err); apiErr != nil {
+		return apiErr
+	}
 	var be *BatchError
 	if errors.As(err, &be) {
-		return apierror.NewInvalidParameter("ActionFailed", map[string]string{
+		return apierror.NewInternal("ActionFailed", map[string]string{
 			"phase":             be.Phase,
 			"failedActionIndex": strconv.Itoa(be.FailedActionIndex),
 			"actionType":        be.ActionType,
 			"error":             be.Message,
 		})
 	}
-	return apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()})
+	return apierror.NewInternal("ActionFailed", map[string]string{"error": err.Error()})
 }
 
 // revertRequest is the JSON body for POST .../actions/revert.

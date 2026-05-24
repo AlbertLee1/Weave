@@ -487,18 +487,28 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 		}
 	}
 	if actionType == nil {
-		return nil, fmt.Errorf("action type %q not found", req.ActionType)
+		// Round 38: wrap with sentinel so handler routes to 404
+		// ActionTypeNotFound rather than the historical 400 ActionFailed.
+		return nil, fmt.Errorf("%w: action type %q not found", ErrActionTypeNotFound, req.ActionType)
 	}
 
 	// Step 2: Parse parameter definitions
 	paramDefs, err := ParseParameterDefs(actionType.Parameters)
 	if err != nil {
-		return nil, fmt.Errorf("parse params: %w", err)
+		// Bad ActionType.Parameters JSON is technically a schema-author
+		// bug (server-side data issue), but in practice it surfaces to
+		// the SDK caller because the malformed schema blocks every
+		// invocation. Treat as InvalidActionParameters so the SDK
+		// surface routes consistently with the user-side flavor.
+		return nil, fmt.Errorf("%w: parse params: %w", ErrInvalidActionParameters, err)
 	}
 
 	// Step 3: Validate parameters
 	if err := ValidateParameters(paramDefs, req.Parameters); err != nil {
-		return nil, fmt.Errorf("validate params: %w", err)
+		// Round 38: caller-supplied parameters failed shape/value
+		// validation. Wrap with sentinel so the handler routes to 400
+		// InvalidActionParameters rather than 500 ActionFailed.
+		return nil, fmt.Errorf("%w: validate params: %w", ErrInvalidActionParameters, err)
 	}
 
 	// Step 3b (US-245): evaluate the optional Draft-07 JSON Schema. Schema
