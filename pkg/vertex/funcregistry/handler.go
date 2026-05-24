@@ -54,6 +54,7 @@ func NewHandler(lookup FunctionLookup, ontology OntologyResolver) *Handler {
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/vertex/v1/functions/{rid}", h.getFunction)
 	r.Get("/api/vertex/v1/ontologies/{ontologyApiName}/functions/{name}/resolve", h.resolveFunction)
+	r.Get("/api/vertex/v1/ontologies/{ontologyApiName}/functions/{name}/versions", h.listFunctionVersions)
 	r.Post("/api/vertex/v1/ontologies/{ontologyApiName}/functions/register", h.registerFunction)
 }
 
@@ -173,6 +174,50 @@ type registerFunctionRequest struct {
 	Runtime    string          `json:"runtime,omitempty"`
 	Signature  json.RawMessage `json:"signature,omitempty"`
 	CreatedBy  string          `json:"createdBy,omitempty"`
+}
+
+// listFunctionVersions GET /api/vertex/v1/ontologies/{ontologyApiName}/
+// functions/{name}/versions. Round 73. Returns every Function row
+// matching (ontologyRID, name) sorted version DESC (newest first) —
+// the registry's internal default ordering surfaced via
+// ListFunctionVersionsByName.
+//
+// Unknown function name returns 200 + {versions: []} so the SPA's
+// version-history panel renders cleanly against a brand-new function
+// (name is a filter here, not a key). Unknown ontology slug returns
+// 404 because the slug is a real lookup.
+type listVersionsResponse struct {
+	Versions []functionResponse `json:"versions"`
+}
+
+func (h *Handler) listFunctionVersions(w http.ResponseWriter, r *http.Request) {
+	if h.lookup == nil || h.ontology == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("LookupNotConfigured", nil))
+		return
+	}
+	apiName := chi.URLParam(r, "ontologyApiName")
+	name := chi.URLParam(r, "name")
+
+	ontologyRID, err := h.ontology.ResolveOntologyRID(r.Context(), apiName)
+	if err != nil {
+		if errors.Is(err, oms.ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("OntologyNotFound", map[string]string{"ontologyApiName": apiName}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("ResolveOntologyFailed", map[string]string{"error": err.Error()}))
+		return
+	}
+
+	versions, err := h.lookup.ListFunctionVersionsByName(r.Context(), ontologyRID, name)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListFunctionVersionsFailed", map[string]string{"error": err.Error()}))
+		return
+	}
+	out := make([]functionResponse, 0, len(versions))
+	for i := range versions {
+		out = append(out, buildFunctionResponse(&versions[i]))
+	}
+	httputil.WriteJSON(w, http.StatusOK, listVersionsResponse{Versions: out})
 }
 
 func (h *Handler) registerFunction(w http.ResponseWriter, r *http.Request) {
