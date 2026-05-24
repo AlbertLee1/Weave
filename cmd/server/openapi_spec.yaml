@@ -12230,6 +12230,49 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "500":
           $ref: "#/components/responses/InternalError"
+    get:
+      operationId: listVertexShareLinksForGraph
+      summary: List share links for a Vertex graph (round 69)
+      description: |
+        Returns every share-link minted on the graph (including revoked
+        ones — the owner needs to see them to explain 410 Gone errors
+        on revoked URLs). Same canManageShareLinks ACL as createShare
+        Link so management mirrors mutation.
+
+        Security: the full token is NEVER returned in this list. Each
+        row carries `tokenSuffix` (last 8 chars) for identification
+        only — full tokens are one-time disclosures at create time.
+        Returning full tokens here would let anyone with graph-manage
+        access enumerate every live share URL.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Share link list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [shareLinks]
+                properties:
+                  shareLinks:
+                    type: array
+                    items:
+                      type: object
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/vertex/v1/share-links/{token}:
     delete:
       operationId: revokeVertexShareLink

@@ -66,8 +66,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/vertex/v1/graphs/{rid}/versions/{version}", h.getVersion)
 	r.Get("/api/vertex/v1/graphs/{rid}/diff", h.diff)
 	r.Post("/api/vertex/v1/templates/{rid}/instantiate", h.instantiate)
-	// VTX-013: share link surface.
+	// VTX-013: share link surface. Round 69 adds list-by-graph.
 	r.Post("/api/vertex/v1/graphs/{rid}/share-links", h.createShareLink)
+	r.Get("/api/vertex/v1/graphs/{rid}/share-links", h.listShareLinksForGraph)
 	r.Delete("/api/vertex/v1/share-links/{token}", h.revokeShareLink)
 	r.Get("/api/vertex/v1/share-links/{token}/graph", h.getViaShareLink)
 	// VTX-014: Workshop widget surface.
@@ -576,6 +577,84 @@ func (h *Handler) createShareLink(w http.ResponseWriter, r *http.Request) {
 		"createdBy": link.CreatedBy,
 		"createdAt": link.CreatedAt,
 	})
+}
+
+// listShareLinksForGraph returns every share-link minted on the graph
+// (including revoked) so the owner's manage-share-links surface can
+// render. Owner-only — same canManageShareLinks check as
+// createShareLink so management mirrors mutation. Round 69.
+//
+// Security: the full Token is NEVER returned in the list response.
+// Each row is surfaced with `tokenSuffix` = last 8 chars only, so
+// anyone with graph-manage access can't enumerate live share URLs
+// from list output. The full token is only revealed at create time
+// (one-time disclosure pattern).
+func (h *Handler) listShareLinksForGraph(w http.ResponseWriter, r *http.Request) {
+	if h.repo == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("RepoNotConfigured", nil))
+		return
+	}
+	if h.shareLinks == nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ShareLinksUnavailable",
+			map[string]string{"reason": "share link store is not configured"}))
+		return
+	}
+	u := auth.UserFromContext(r.Context())
+	if u == nil {
+		apierror.WriteJSON(w, apierror.NewUnauthorized("MissingAuthenticatedUser",
+			map[string]string{"reason": "no authenticated user in request context"}))
+		return
+	}
+	ridStr := chi.URLParam(r, "rid")
+	g, err := h.repo.Get(r.Context(), ridStr)
+	if err != nil {
+		writeRepoError(w, err, ridStr)
+		return
+	}
+	if !canManageShareLinks(u, g) {
+		apierror.WriteJSON(w, apierror.NewPermissionDenied("ShareLinkManageForbidden",
+			map[string]string{"rid": ridStr}))
+		return
+	}
+	links, err := h.shareLinks.ListByGraph(r.Context(), g.RID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListShareLinksFailed",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	out := make([]map[string]any, 0, len(links))
+	for _, link := range links {
+		row := map[string]any{
+			"tokenSuffix": shareLinkTokenSuffix(link.Token),
+			"graphRid":    link.GraphRID,
+			"createdBy":   link.CreatedBy,
+			"createdAt":   link.CreatedAt,
+			"revoked":     link.Revoked,
+		}
+		if !link.ExpiresAt.IsZero() {
+			row["expiresAt"] = link.ExpiresAt
+		}
+		if !link.RevokedAt.IsZero() {
+			row["revokedAt"] = link.RevokedAt
+		}
+		out = append(out, row)
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{"shareLinks": out})
+}
+
+// shareLinkTokenSuffix returns the last 8 chars of a token (or the
+// whole token when shorter) for identification-only purposes in the
+// list response. Last-8-chars is enough for an owner to disambiguate
+// links in the UI without enabling brute-force reconstruction —
+// share tokens are 24 bytes of base64url (32 chars) so 8 chars is
+// 24 bits of unique suffix per row, well below the entropy needed
+// to guess the remaining 24.
+func shareLinkTokenSuffix(token string) string {
+	const suffixLen = 8
+	if len(token) <= suffixLen {
+		return token
+	}
+	return token[len(token)-suffixLen:]
 }
 
 // revokeShareLink marks a share link revoked. Owner-only — only the user

@@ -83,4 +83,42 @@ func (s *PGShareLinkStore) Revoke(ctx context.Context, token string) error {
 	return nil
 }
 
+// ListByGraph returns every share-link for graphRID sorted newest-first.
+// Backed by the graph_share_links_graph_idx index on graph_rid from
+// migration 000203 so the scan stays index-bounded even on large
+// tables. Includes revoked rows — the owner's manage-shares panel
+// needs to surface them to explain 410-Gone errors on revoked links.
+func (s *PGShareLinkStore) ListByGraph(ctx context.Context, graphRID string) ([]*ShareLink, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT token, graph_rid, created_by, created_at, expires_at, revoked, revoked_at
+		   FROM graph_share_links
+		  WHERE graph_rid = $1
+		  ORDER BY created_at DESC`, graphRID)
+	if err != nil {
+		return nil, fmt.Errorf("list share links: %w", err)
+	}
+	defer rows.Close()
+	out := []*ShareLink{}
+	for rows.Next() {
+		link := &ShareLink{}
+		var expiresAt *time.Time
+		var revokedAt *time.Time
+		if err := rows.Scan(&link.Token, &link.GraphRID, &link.CreatedBy, &link.CreatedAt,
+			&expiresAt, &link.Revoked, &revokedAt); err != nil {
+			return nil, fmt.Errorf("scan share link: %w", err)
+		}
+		if expiresAt != nil {
+			link.ExpiresAt = *expiresAt
+		}
+		if revokedAt != nil {
+			link.RevokedAt = *revokedAt
+		}
+		out = append(out, link)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate share links: %w", err)
+	}
+	return out, nil
+}
+
 var _ ShareLinkStore = (*PGShareLinkStore)(nil)
