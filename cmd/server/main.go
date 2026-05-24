@@ -711,6 +711,16 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	if deps.ObjSetStore != nil {
 		mcpSrv.SetObjectSetCatalog(newObjectSetCatalogAdapter(deps.ObjSetStore))
 	}
+	// Gap-D4 round 47: wire the ontology-backed completion/complete
+	// provider so AI clients get real autocomplete for prompt
+	// arguments named objectType/actionType/linkType and for
+	// weave://objecttype/<ontology>/ + weave://ontology/ resource
+	// URI templates. A nil OmsRepo (degraded boot) makes the source
+	// a no-op — completion/complete still answers with empty
+	// envelopes rather than -32601 method-not-found.
+	if deps.OmsRepo != nil {
+		mcpSrv.SetCompletionSource(mcp.NewOntologyCompletionSource(deps.OmsRepo))
+	}
 	r.Method(http.MethodPost, "/mcp", mcp.NewHTTPHandler(mcpSrv))
 
 	// Prometheus metrics scrape endpoint (public).
