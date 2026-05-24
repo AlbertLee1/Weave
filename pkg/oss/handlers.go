@@ -431,7 +431,17 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("SearchObjectsFailed", map[string]string{
+		// Round 36 sentinel split: user-side where-clause errors stay
+		// 400 INVALID_ARGUMENT with the explicit InvalidWhereClause
+		// envelope; downstream Bleve/PG failures surface as 500 INTERNAL
+		// so SDKs route to retry instead of "fix your input".
+		if errors.Is(err, where.ErrInvalidWhereClause) {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidWhereClause", map[string]string{
+				"reason": err.Error(),
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("SearchObjectsFailed", map[string]string{
 			"reason": err.Error(),
 		}))
 		return
@@ -549,7 +559,14 @@ func (h *Handler) CountObjects(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("CountObjectsFailed", map[string]string{
+		// Round 36 sentinel split — mirrors SearchObjects.
+		if errors.Is(err, where.ErrInvalidWhereClause) {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidWhereClause", map[string]string{
+				"reason": err.Error(),
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("CountObjectsFailed", map[string]string{
 			"reason": err.Error(),
 		}))
 		return

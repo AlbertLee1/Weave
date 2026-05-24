@@ -701,7 +701,12 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	result, err := s.indexMgr.SearchInContext(searchCtx, scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType), searchReq)
 	if err != nil {
 		if hasRegex && errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("regex search exceeded %s timeout: %w", where.RegexQueryTimeout, err)
+			// Wrap with ErrInvalidWhereClause sentinel — Foundry's
+			// contract treats "your regex was too slow" as a user-input
+			// bound (HTTP 400) rather than a server failure. Round-36
+			// sentinel routing in the handler keeps the 400 envelope.
+			return nil, fmt.Errorf("%w: regex search exceeded %s timeout: %w",
+				where.ErrInvalidWhereClause, where.RegexQueryTimeout, err)
 		}
 		return nil, err
 	}
