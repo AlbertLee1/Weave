@@ -11,12 +11,25 @@ import (
 )
 
 // RID represents a parsed Resource Identifier.
+//
+// Version is the optional @vN suffix (US-070). Empty when the RID
+// has no version pin; otherwise the decimal version digits without
+// leading zero. Two RIDs with the same {Service, Realm, ResourceType,
+// ID} but different Version are NOT equal — explicit @vN means "this
+// specific historical version" while empty means "latest", and Action
+// / Snapshot endpoints will route on that distinction.
 type RID struct {
 	Service      string
 	Realm        string
 	ResourceType string
 	ID           string
+	Version      string
 }
+
+// versionPattern matches a canonical version digit string: positive
+// decimal, no leading zero. Rejects "0", "0123" so persisted RIDs stay
+// byte-identical across reads (same rationale as uuidPattern).
+var versionPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 
 // uuidPattern is the canonical RFC 4122 textual form, lowercase only.
 // We intentionally reject uppercase to keep persisted RIDs byte-identical
@@ -159,7 +172,17 @@ func IsRID(s string) bool {
 // non-canonical / non-lowercase UUIDs are rejected. Callers like
 // realmFromRID intentionally treat any error as "fallback to defaults".
 func Parse(rid string) (*RID, error) {
-	parts := strings.SplitN(rid, ".", 5)
+	// US-070: split optional @vN suffix off the ID segment before the
+	// 5-way dot-split. We do this first so a malformed base RID still
+	// errors on the base shape rather than being masked by a suffix
+	// branch — callers like realmFromRID treat any error as fallback,
+	// so the error message matters less than the rejection itself.
+	idSegment, version, err := splitVersionSuffix(rid)
+	if err != nil {
+		return nil, err
+	}
+
+	parts := strings.SplitN(idSegment, ".", 5)
 	if len(parts) != 5 || parts[0] != "ri" {
 		return nil, fmt.Errorf("invalid RID format: %q", rid)
 	}
@@ -180,7 +203,34 @@ func Parse(rid string) (*RID, error) {
 		Realm:        parts[2],
 		ResourceType: parts[3],
 		ID:           parts[4],
+		Version:      version,
 	}, nil
+}
+
+// splitVersionSuffix peels an optional @vN suffix off the input,
+// returning (base, version, err). version is the decimal digit string
+// (no "v" prefix); empty when no suffix is present. Errors when the
+// suffix is malformed so we never persist garbage like "@v" or
+// "@vabc".
+func splitVersionSuffix(rid string) (base, version string, err error) {
+	at := strings.Index(rid, "@")
+	if at < 0 {
+		return rid, "", nil
+	}
+	// Reject more than one @ — two @ would mean either a double
+	// suffix (@v3@v4) or an @ inside the base, both invalid.
+	if strings.LastIndex(rid, "@") != at {
+		return "", "", fmt.Errorf("invalid RID version suffix (multiple @): %q", rid)
+	}
+	suffix := rid[at+1:]
+	if !strings.HasPrefix(suffix, "v") {
+		return "", "", fmt.Errorf("invalid RID version suffix (expected @vN): %q", rid)
+	}
+	v := suffix[1:]
+	if !versionPattern.MatchString(v) {
+		return "", "", fmt.Errorf("invalid RID version suffix (expected positive decimal, no leading zero): %q", rid)
+	}
+	return rid[:at], v, nil
 }
 
 // String returns the canonical "ri.{service}.{realm}.{resourceType}.{id}"
@@ -190,7 +240,11 @@ func (r *RID) String() string {
 	if r == nil {
 		return ""
 	}
-	return "ri." + r.Service + "." + r.Realm + "." + r.ResourceType + "." + r.ID
+	s := "ri." + r.Service + "." + r.Realm + "." + r.ResourceType + "." + r.ID
+	if r.Version != "" {
+		s += "@v" + r.Version
+	}
+	return s
 }
 
 // Equal reports whether two RIDs have identical fields. Nil-safe: two nil
@@ -202,7 +256,8 @@ func (r *RID) Equal(other *RID) bool {
 	return r.Service == other.Service &&
 		r.Realm == other.Realm &&
 		r.ResourceType == other.ResourceType &&
-		r.ID == other.ID
+		r.ID == other.ID &&
+		r.Version == other.Version
 }
 
 // Hash returns a stable SHA-256 hex digest of the canonical string form.
