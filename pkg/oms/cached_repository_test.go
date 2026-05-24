@@ -333,6 +333,12 @@ func (*noopRepo) ListPendingSideEffectDLQRows(context.Context, int) ([]oms.SideE
 	return nil, nil
 }
 func (*noopRepo) MarkSideEffectDLQAbandoned(context.Context, int64) error { return nil }
+func (*noopRepo) GetSideEffectDLQRow(context.Context, int64) (*oms.SideEffectDLQRow, error) {
+	return nil, oms.ErrNotFound
+}
+func (*noopRepo) UpdateSideEffectDLQAfterReplay(context.Context, int64, json.RawMessage, bool) error {
+	return nil
+}
 func (*noopRepo) InsertObjectHistory(context.Context, *oms.ObjectHistory) error {
 	return nil
 }

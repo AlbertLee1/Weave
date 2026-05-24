@@ -223,11 +223,22 @@ func TestBDD_AdminSideEffectDLQ_ListAndAbandon(t *testing.T) {
 
 // fakeSideEffectDLQRepo is a minimal in-memory test double for
 // SideEffectDLQRepo. byID drives MarkSideEffectDLQAbandoned;
-// pending drives ListPendingSideEffectDLQRows.
+// pending drives ListPendingSideEffectDLQRows. rowByID + actionLogByID
+// support the round-35 replay path. updateReplayCalls captures replay
+// outcome persistence so tests can assert what was written.
 type fakeSideEffectDLQRepo struct {
-	pending       []oms.SideEffectDLQRow
-	byID          map[int64]string // id → current replay_status
-	lastListLimit int
+	pending          []oms.SideEffectDLQRow
+	byID             map[int64]string // id → current replay_status
+	rowByID          map[int64]*oms.SideEffectDLQRow
+	actionLogByID    map[int64]*oms.ActionLog
+	updateReplayLast struct {
+		id      int64
+		outcome json.RawMessage
+		success bool
+		called  bool
+	}
+	updateReplayErr error
+	lastListLimit   int
 }
 
 func (f *fakeSideEffectDLQRepo) ListPendingSideEffectDLQRows(_ context.Context, limit int) ([]oms.SideEffectDLQRow, error) {
@@ -253,14 +264,48 @@ func (f *fakeSideEffectDLQRepo) MarkSideEffectDLQAbandoned(_ context.Context, id
 	return nil
 }
 
-// newSideEffectDLQRouter wires the round-34 admin handlers on a fresh
-// chi router. Mirrors the production wire-up in main.go minus the auth
-// middleware (these tests focus on the handler contract, not auth).
+func (f *fakeSideEffectDLQRepo) GetSideEffectDLQRow(_ context.Context, id int64) (*oms.SideEffectDLQRow, error) {
+	if row, ok := f.rowByID[id]; ok {
+		// Return a copy so handler mutations don't leak.
+		cp := *row
+		return &cp, nil
+	}
+	return nil, oms.ErrNotFound
+}
+
+func (f *fakeSideEffectDLQRepo) UpdateSideEffectDLQAfterReplay(_ context.Context, id int64, outcome json.RawMessage, success bool) error {
+	f.updateReplayLast.id = id
+	f.updateReplayLast.outcome = outcome
+	f.updateReplayLast.success = success
+	f.updateReplayLast.called = true
+	if f.updateReplayErr != nil {
+		return f.updateReplayErr
+	}
+	if row, ok := f.rowByID[id]; ok {
+		row.ReplayCount++
+		if success {
+			row.ReplayStatus = oms.SideEffectDLQStatusReplayed
+		}
+	}
+	return nil
+}
+
+func (f *fakeSideEffectDLQRepo) GetActionLog(_ context.Context, id int64) (*oms.ActionLog, error) {
+	if al, ok := f.actionLogByID[id]; ok {
+		return al, nil
+	}
+	return nil, oms.ErrNotFound
+}
+
+// newSideEffectDLQRouter wires the round-34/35 admin handlers on a
+// fresh chi router. Mirrors the production wire-up in main.go minus
+// the auth middleware (these tests focus on handler contract).
 func newSideEffectDLQRouter(repo SideEffectDLQRepo) http.Handler {
 	r := chi.NewRouter()
 	deps := AdminSideEffectDLQDeps{Repo: repo}
 	r.Method(http.MethodGet, "/api/admin/side-effect-dlq", NewAdminSideEffectDLQListHandler(deps))
 	r.Method(http.MethodPost, "/api/admin/side-effect-dlq/{id}/abandon", NewAdminSideEffectDLQAbandonHandler(deps))
+	r.Method(http.MethodPost, "/api/admin/side-effect-dlq/{id}/replay", NewAdminSideEffectDLQReplayHandler(deps))
 	return r
 }
 

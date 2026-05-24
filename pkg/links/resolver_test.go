@@ -216,6 +216,12 @@ func (m *mockRepo) ListPendingSideEffectDLQRows(context.Context, int) ([]oms.Sid
 	return nil, nil
 }
 func (m *mockRepo) MarkSideEffectDLQAbandoned(context.Context, int64) error { return nil }
+func (m *mockRepo) GetSideEffectDLQRow(context.Context, int64) (*oms.SideEffectDLQRow, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *mockRepo) UpdateSideEffectDLQAfterReplay(context.Context, int64, json.RawMessage, bool) error {
+	return nil
+}
 
 // Search stubs
 func (m *mockRepo) SearchOntologyResources(context.Context, string, string) ([]oms.SearchResult, error) {

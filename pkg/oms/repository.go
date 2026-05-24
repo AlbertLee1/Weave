@@ -170,6 +170,23 @@ type Repository interface {
 	// successfully — that would mask the successful dispatch).
 	MarkSideEffectDLQAbandoned(ctx context.Context, id int64) error
 
+	// GetSideEffectDLQRow returns a single DLQ row by id, including
+	// the snapshotted effect_config and the last-known outcome so the
+	// admin replay path can re-dispatch without re-reading the
+	// ActionType. Returns ErrNotFound when the id doesn't exist.
+	GetSideEffectDLQRow(ctx context.Context, id int64) (*SideEffectDLQRow, error)
+
+	// UpdateSideEffectDLQAfterReplay records the result of a manual
+	// replay attempt. Always bumps replay_count, sets replayed_at to
+	// now, and writes the new outcome JSON. When success=true, also
+	// flips replay_status to 'replayed' (the terminal state); on
+	// failure replay_status stays at the caller's discretion — the
+	// admin handler keeps it 'pending' so the operator can try again.
+	// Returns ErrNotFound when the id doesn't exist. Returns
+	// ErrInvalidState when the row is already in 'replayed' or
+	// 'abandoned' status (replay is only valid from 'pending').
+	UpdateSideEffectDLQAfterReplay(ctx context.Context, id int64, outcome json.RawMessage, success bool) error
+
 	// ObjectHistory (Tier 2.3)
 	InsertObjectHistory(ctx context.Context, h *ObjectHistory) error
 	ListObjectHistory(ctx context.Context, objectTypeRID, primaryKey string, limit int) ([]ObjectHistory, error)

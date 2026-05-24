@@ -248,6 +248,12 @@ func (s *stubRehydrateRepo) ListPendingSideEffectDLQRows(context.Context, int) (
 	return nil, nil
 }
 func (s *stubRehydrateRepo) MarkSideEffectDLQAbandoned(context.Context, int64) error { return nil }
+func (s *stubRehydrateRepo) GetSideEffectDLQRow(context.Context, int64) (*oms.SideEffectDLQRow, error) {
+	return nil, oms.ErrNotFound
+}
+func (s *stubRehydrateRepo) UpdateSideEffectDLQAfterReplay(context.Context, int64, json.RawMessage, bool) error {
+	return nil
+}
 func (s *stubRehydrateRepo) SearchOntologyResources(context.Context, string, string) ([]oms.SearchResult, error) {
 	return nil, nil
 }

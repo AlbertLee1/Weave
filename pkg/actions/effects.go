@@ -152,6 +152,18 @@ func ExecuteSideEffectsWithOutcomes(effectsJSON json.RawMessage, result ActionRe
 	return outcomes, effects, nil
 }
 
+// ReplaySideEffect runs a single side effect and returns its outcome
+// — the public entry point the admin replay handler (Gap-A4 round 35)
+// uses to re-dispatch a DLQ row. Caller is responsible for passing
+// the snapshotted effect_config (stored on the DLQ row) and a
+// reconstructed ActionResult (built from the linked action_logs row).
+// Outcome shape matches the round-31 contract so the same
+// action_logs.side_effect_status + DLQ writer code paths can record
+// the result.
+func ReplaySideEffect(e SideEffect, result ActionResult) SideEffectOutcome {
+	return dispatchSingleEffect(e, result)
+}
+
 // dispatchSingleEffect runs a single effect and returns its outcome.
 // Per-effect failures populate outcome.Error and outcome.Status — never
 // returned as a Go error, because the caller's per-effect isolation

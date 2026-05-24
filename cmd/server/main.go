@@ -1380,6 +1380,8 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			Method(http.MethodGet, "/api/admin/side-effect-dlq", NewAdminSideEffectDLQListHandler(sideEffectDLQDeps))
 		api.With(auth.RequirePermission(auth.PermUserManage)).
 			Method(http.MethodPost, "/api/admin/side-effect-dlq/{id}/abandon", NewAdminSideEffectDLQAbandonHandler(sideEffectDLQDeps))
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/side-effect-dlq/{id}/replay", NewAdminSideEffectDLQReplayHandler(sideEffectDLQDeps))
 
 		// US-490: zero-downtime JWT signing key rotation. The handler
 		// generates a fresh RSA-2048 keypair and appends it to the

@@ -817,6 +817,12 @@ func (m *mockRepo) ListPendingSideEffectDLQRows(_ context.Context, _ int) ([]oms
 	return nil, nil
 }
 func (m *mockRepo) MarkSideEffectDLQAbandoned(_ context.Context, _ int64) error { return nil }
+func (m *mockRepo) GetSideEffectDLQRow(_ context.Context, _ int64) (*oms.SideEffectDLQRow, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *mockRepo) UpdateSideEffectDLQAfterReplay(_ context.Context, _ int64, _ json.RawMessage, _ bool) error {
+	return nil
+}
 
 // ObjectHistory stubs (Tier 2.3)
 func (m *mockRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {

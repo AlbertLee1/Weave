@@ -2123,6 +2123,73 @@ func (r *PGRepository) ListPendingSideEffectDLQRows(ctx context.Context, limit i
 	return out, rows.Err()
 }
 
+// GetSideEffectDLQRow returns one DLQ row by id. Used by the admin
+// replay handler (Gap-A4 round 35) to load the snapshotted effect
+// config + linked action_log_id before re-dispatching.
+func (r *PGRepository) GetSideEffectDLQRow(ctx context.Context, id int64) (*SideEffectDLQRow, error) {
+	d := &SideEffectDLQRow{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, action_log_id, effect_index, effect_type,
+		        COALESCE(effect_config, 'null'::jsonb), outcome,
+		        created_at, replay_status, replayed_at, replay_count
+		 FROM action_log_side_effect_dlq WHERE id = $1`, id).
+		Scan(&d.ID, &d.ActionLogID, &d.EffectIndex, &d.EffectType,
+			&d.EffectConfig, &d.Outcome, &d.CreatedAt, &d.ReplayStatus,
+			&d.ReplayedAt, &d.ReplayCount)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if string(d.EffectConfig) == "null" {
+		d.EffectConfig = nil
+	}
+	return d, nil
+}
+
+// UpdateSideEffectDLQAfterReplay records the result of one manual
+// replay attempt. Always bumps replay_count and writes the latest
+// outcome; sets replayed_at to now; flips replay_status to 'replayed'
+// only on success. Returns ErrInvalidState when the current
+// replay_status is not 'pending' (replay is only valid from pending).
+// Returns ErrNotFound when the id doesn't exist.
+func (r *PGRepository) UpdateSideEffectDLQAfterReplay(ctx context.Context, id int64, outcome json.RawMessage, success bool) error {
+	var current string
+	err := r.pool.QueryRow(ctx,
+		`SELECT replay_status FROM action_log_side_effect_dlq WHERE id = $1`, id).
+		Scan(&current)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if current != SideEffectDLQStatusPending {
+		return ErrInvalidState
+	}
+	newStatus := SideEffectDLQStatusPending
+	if success {
+		newStatus = SideEffectDLQStatusReplayed
+	}
+	outcomeArg := nilIfEmptyJSON(outcome)
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE action_log_side_effect_dlq
+		 SET replay_status = $1,
+		     replayed_at   = now(),
+		     replay_count  = replay_count + 1,
+		     outcome       = COALESCE($2, outcome)
+		 WHERE id = $3 AND replay_status = $4`,
+		newStatus, outcomeArg, id, SideEffectDLQStatusPending)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // MarkSideEffectDLQAbandoned flips a pending row's replay_status to
 // 'abandoned'. Idempotent on rows already in 'abandoned' status.
 // Rejects flipping a 'replayed' row to abandoned (would mask the

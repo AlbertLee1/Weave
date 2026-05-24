@@ -3407,6 +3407,33 @@ components:
         status:
           type: string
           enum: [abandoned]
+    AdminSideEffectDLQReplayResponse:
+      type: object
+      description: |
+        PRD-V2 Gap-A4 round-35 wire shape for `POST
+        /api/admin/side-effect-dlq/{id}/replay`. HTTP 200 indicates the
+        replay MACHINERY ran (load + dispatch + persist); the
+        webhook's actual success/failure lives inside `outcome.status`
+        — operators reading "replayed: false" with `outcome.status:
+        "failed"` know the dispatcher tried but the target is still
+        broken.
+      required: [id, replayed, status, replayCount, outcome]
+      properties:
+        id:
+          type: integer
+          format: int64
+        replayed:
+          type: boolean
+          description: True when outcome.status='success' (terminal flip).
+        status:
+          type: string
+          enum: [pending, replayed]
+          description: Row's replay_status AFTER the replay attempt.
+        replayCount:
+          type: integer
+          description: Total number of manual replay attempts so far.
+        outcome:
+          description: Full SideEffectOutcome ({type, status, attempts, error, durationMs}) from this attempt.
     AdminAuthKeysRotateResponse:
       type: object
       description: US-490 wire shape for `POST /api/admin/auth/keys/rotate`.
@@ -13156,6 +13183,56 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminSideEffectDLQAbandonResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/side-effect-dlq/{id}/replay:
+    post:
+      operationId: adminSideEffectDLQReplay
+      summary: Re-dispatch a failed side-effect from the DLQ (Gap-A4 round 35)
+      description: |
+        Loads the snapshotted `effect_config` plus the linked
+        `action_logs` row, reconstructs an `ActionResult`, and fires
+        the webhook through the round-30 retry loop. Persists the
+        per-attempt outcome to the DLQ row (bumps `replay_count`,
+        stamps `replayed_at`). On success flips `replay_status` to
+        `replayed` (terminal); on failure stays `pending` so the
+        operator can try again later.
+
+        HTTP 200 means the replay MACHINERY ran. The webhook's actual
+        success/failure is encoded inside `outcome.status` — a 200
+        response with `replayed: false` + `outcome.status: "failed"`
+        means "we dispatched but the target is still broken".
+
+        Returns 409 when the row is not in `pending` status (already
+        replayed or abandoned). Returns 404 when either the DLQ row
+        or its linked `action_log` row is missing. Gated behind
+        `user.manage`.
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: BIGSERIAL primary key of the DLQ row.
+      responses:
+        "200":
+          description: Replay machinery ran (webhook may still have failed — see outcome.status).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSideEffectDLQReplayResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":
