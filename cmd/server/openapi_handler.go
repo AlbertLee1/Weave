@@ -5,10 +5,20 @@ import (
 	"net/http"
 )
 
-// openapiSpecYAML is the OpenAPI 3.0.3 spec for the Weave HTTP API. The YAML
-// is the source of truth: it lives in /api/openapi.yaml at the repo root and
-// is embedded into the binary at build time so the spec is always shipped
-// in-sync with the running server.
+// openapiSpecYAML is the OpenAPI 3.0.3 spec for the Weave HTTP API.
+//
+// Source of truth: /api/openapi.yaml at the repo root. Go's //go:embed
+// directive cannot reference files outside the package directory, so
+// the spec is mirrored to cmd/server/openapi_spec.yaml and embedded
+// here. The mirror is kept byte-identical to the source — edits land
+// in /api/openapi.yaml and then `make sync-openapi` (or
+// `go generate ./cmd/server/`) copies the file across.
+//
+// TestContract_EmbeddedSpecMatchesCanonical in contract_test.go fails
+// loudly if the two files diverge, so a forgotten sync is caught by
+// CI before reaching main.
+//
+//go:generate cp ../../api/openapi.yaml openapi_spec.yaml
 //
 //go:embed openapi_spec.yaml
 var openapiSpecYAML []byte

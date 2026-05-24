@@ -105,6 +105,10 @@ lint-fix:
 web-test-cover:
 	cd web && npx vitest run --coverage
 
+sync-openapi: ## Copy api/openapi.yaml into cmd/server/openapi_spec.yaml so the embed mirrors the source of truth (rounds 59/66/68/69 all tripped TestContract_EmbeddedSpecMatchesCanonical by editing api/openapi.yaml without copying)
+	cp api/openapi.yaml cmd/server/openapi_spec.yaml
+	@echo "openapi sync ✓ api/openapi.yaml -> cmd/server/openapi_spec.yaml"
+
 build: ## Build Go server without generating embedded WebUI assets
 	go build -o bin/weave ./cmd/server
 
