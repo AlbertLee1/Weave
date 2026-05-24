@@ -218,6 +218,19 @@ class OntologiesAPI:
         )
         return (body or {}).get("data", [])
 
+    # ---- shared property types ----------------------------------------------
+
+    def get_shared_property_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """POST batch-fetch shared property types by their RIDs (round 85)."""
+        body = self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/sharedPropertyTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
     # ---- query types --------------------------------------------------------
 
     def list_query_types(self, ontology: str) -> List[QueryType]:

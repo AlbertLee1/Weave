@@ -358,6 +358,42 @@ class BatchByRidRound84Tests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["rid"], "vt-1")
 
+    # ---- round 86 — sharedPropertyTypes batch wrapper -----------------
+
+    def test_get_shared_property_types_by_rid_batch_posts_rids(self):
+        # Round 86 mirrors round-85 backend on the sync SDK surface,
+        # closing the 6-of-6 batch helper symmetry on the sync side.
+        resp = json.dumps({"data": [
+            {"rid": "sp-1", "apiName": "email", "baseType": "string",
+             "displayName": "Email"},
+            {"rid": "sp-2", "apiName": "phone", "baseType": "string",
+             "displayName": "Phone"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/sharedPropertyTypes/getByRidBatch":
+                  (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_shared_property_types_by_rid_batch(
+                "nw", ["sp-1", "sp-2"])
+            sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"rids": ["sp-1", "sp-2"]})
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["apiName"], "email")
+        self.assertEqual(result[1]["baseType"], "string")
+
+    def test_get_shared_property_types_by_rid_batch_partial_resolve(self):
+        resp = json.dumps({"data": [
+            {"rid": "sp-1", "apiName": "email", "baseType": "string"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/sharedPropertyTypes/getByRidBatch":
+                  (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_shared_property_types_by_rid_batch(
+                "nw", ["sp-1", "ghost-99"])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["rid"], "sp-1")
+
 
 if __name__ == "__main__":
     unittest.main()
