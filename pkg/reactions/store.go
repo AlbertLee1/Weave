@@ -36,6 +36,14 @@ type Store interface {
 	// column carries zero references to userID. Idempotent — a missing
 	// user returns (0, nil).
 	DeleteAllForUser(ctx context.Context, userID string) (rowsAffected int, err error)
+	// AggregateForTargets is the batch sibling of AggregateForTarget
+	// (round 67). Returns one EmojiCount slice per target in input
+	// order. PG implementations should resolve all targets with a
+	// single SELECT … WHERE target_rid = ANY($1) so the navbar /
+	// ObjectList badge polling stays O(1) round trips regardless of
+	// rendered row count. An empty input slice short-circuits to
+	// (empty, nil) without touching the store.
+	AggregateForTargets(ctx context.Context, userID string, targetRIDs []string) ([][]EmojiCount, error)
 }
 
 // MemoryStore is the in-memory Store impl used in tests and degraded
@@ -139,5 +147,29 @@ func (m *MemoryStore) AggregateForTarget(_ context.Context, userID, targetRID st
 		}
 		return out[i].Emoji < out[j].Emoji
 	})
+	return out, nil
+}
+
+// AggregateForTargets implements Store. Round 67. The MemoryStore
+// impl is a simple per-target loop — the PG impl will use a single
+// SELECT … WHERE target_rid = ANY($1) for an O(1)-roundtrip path.
+// Empty input yields ([], nil) without holding the lock. Each
+// summary slot is guaranteed non-nil (empty slice, not nil) so the
+// handler can safely serialise [].
+func (m *MemoryStore) AggregateForTargets(ctx context.Context, userID string, targetRIDs []string) ([][]EmojiCount, error) {
+	if len(targetRIDs) == 0 {
+		return [][]EmojiCount{}, nil
+	}
+	out := make([][]EmojiCount, len(targetRIDs))
+	for i, t := range targetRIDs {
+		buckets, err := m.AggregateForTarget(ctx, userID, t)
+		if err != nil {
+			return nil, err
+		}
+		if buckets == nil {
+			buckets = []EmojiCount{}
+		}
+		out[i] = buckets
+	}
 	return out, nil
 }

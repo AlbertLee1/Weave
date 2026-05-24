@@ -76,6 +76,56 @@ func (s *pgReactionsStore) DeleteAllForUser(ctx context.Context, userID string) 
 	return int(tag.RowsAffected()), nil
 }
 
+// AggregateForTargets is the round-67 batch variant. One SELECT
+// with WHERE target_rid = ANY($1) returns counts + mine flag per
+// (target, emoji) so the Foundry ObjectList row-reactions panel
+// renders N rows in O(1) round-trips instead of N. Result slice
+// is index-aligned with targetRIDs: out[i] is the bucket list for
+// targetRIDs[i] (empty slice when no reactions exist on that target).
+// Each per-target slice respects the AggregateForTarget ordering
+// (count DESC, emoji ASC).
+func (s *pgReactionsStore) AggregateForTargets(ctx context.Context, userID string, targetRIDs []string) ([][]reactions.EmojiCount, error) {
+	if len(targetRIDs) == 0 {
+		return [][]reactions.EmojiCount{}, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT target_rid,
+		        emoji,
+		        COUNT(*)::int                AS total,
+		        BOOL_OR(user_id = $1)        AS mine
+		   FROM reactions
+		  WHERE target_rid = ANY($2)
+		  GROUP BY target_rid, emoji
+		  ORDER BY target_rid ASC, total DESC, emoji ASC`,
+		userID, targetRIDs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byTarget := make(map[string][]reactions.EmojiCount, len(targetRIDs))
+	for rows.Next() {
+		var t string
+		var bucket reactions.EmojiCount
+		if err := rows.Scan(&t, &bucket.Emoji, &bucket.Count, &bucket.Mine); err != nil {
+			return nil, err
+		}
+		byTarget[t] = append(byTarget[t], bucket)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([][]reactions.EmojiCount, len(targetRIDs))
+	for i, t := range targetRIDs {
+		buckets := byTarget[t]
+		if buckets == nil {
+			buckets = []reactions.EmojiCount{}
+		}
+		out[i] = buckets
+	}
+	return out, nil
+}
+
 // AggregateForTarget returns one bucket per distinct emoji on the
 // target with the caller's "mine" flag set when (userID, target, emoji)
 // has a row. Single GROUP BY query backed by the (target_rid, emoji)
