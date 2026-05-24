@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/audit"
+	"github.com/liyang/weave/pkg/httputil"
 )
 
 // MarkingGrantAdminRepository extends the request-hot-path MarkingRepository
@@ -259,7 +260,7 @@ func (h *MarkingHandler) grantMarkingFor(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	var req MarkingRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidMarkingRequest", map[string]string{
 			"reason": err.Error(),
 		}))
