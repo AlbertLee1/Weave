@@ -7,12 +7,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/liyang/weave/pkg/funnel"
 	"github.com/liyang/weave/pkg/oms"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// dispatcherTracerName is the name the dispatcher tracer registers under so
+// observability dashboards can group spans by the instrumentation library
+// that produced them.
+const dispatcherTracerName = "github.com/liyang/weave/pkg/actions/http_dispatcher"
 
 // defaultFunctionTimeout is the per-call timeout the HTTP dispatcher applies
 // when the operator did not configure one. 30s mirrors the operator-facing
@@ -77,8 +88,28 @@ func (d *HTTPDispatcher) Dispatch(ctx context.Context, at *oms.ActionType, param
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(callCtx, http.MethodPost, url, bytes.NewReader(payload))
+	// Wrap the outbound call in a client-kind span named after the
+	// action API. The propagator then writes the active span's
+	// TraceContext into the outbound headers so the function server
+	// can attach its own spans under the same trace tree (OTel/W3C
+	// TraceContext). Without this the dispatch edge was a "trace
+	// snap point" — function-server traces became disjoint roots.
+	tracer := otel.GetTracerProvider().Tracer(dispatcherTracerName)
+	spanCtx, span := tracer.Start(callCtx, "function.dispatch."+at.APIName,
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("http.method", http.MethodPost),
+			attribute.String("http.url", url),
+			attribute.String("function.rid", at.FunctionRID),
+			attribute.String("action.api_name", at.APIName),
+		),
+	)
+	defer span.End()
+
+	req, err := http.NewRequestWithContext(spanCtx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
+		span.SetStatus(codes.Error, "build request")
+		span.RecordError(err)
 		return nil, fmt.Errorf("function dispatcher: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -86,6 +117,11 @@ func (d *HTTPDispatcher) Dispatch(ctx context.Context, at *oms.ActionType, param
 	for k, v := range d.Headers {
 		req.Header.Set(k, v)
 	}
+	// Inject the W3C TraceContext (and any baggage) into the
+	// outbound headers after caller-supplied headers so callers
+	// can't accidentally override traceparent — the propagator
+	// always writes the live span's context as the source of truth.
+	otel.GetTextMapPropagator().Inject(spanCtx, propagation.HeaderCarrier(req.Header))
 
 	client := d.Client
 	if client == nil {
@@ -94,16 +130,28 @@ func (d *HTTPDispatcher) Dispatch(ctx context.Context, at *oms.ActionType, param
 
 	resp, err := client.Do(req)
 	if err != nil {
+		span.SetStatus(codes.Error, "call")
+		span.RecordError(err)
 		return nil, fmt.Errorf("function dispatcher: call %s: %w", url, err)
 	}
 	defer resp.Body.Close()
+	span.SetAttributes(attribute.String("http.status_code", strconv.Itoa(resp.StatusCode)))
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
+		span.SetStatus(codes.Error, "read response")
+		span.RecordError(err)
 		return nil, fmt.Errorf("function dispatcher: read response: %w", err)
 	}
 
 	if resp.StatusCode >= 400 {
+		// 4xx/5xx both fail the dispatch; only 5xx flips to span
+		// status Error so head-based samplers keep the trace. 4xx
+		// stays Unset per OTel semantic conventions — caller bugs
+		// shouldn't dominate a low-rate trace stream.
+		if resp.StatusCode >= 500 {
+			span.SetStatus(codes.Error, http.StatusText(resp.StatusCode))
+		}
 		return nil, fmt.Errorf("function dispatcher: function %s returned status %d: %s",
 			at.FunctionRID, resp.StatusCode, strings.TrimSpace(string(respBytes)))
 	}
