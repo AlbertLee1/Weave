@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ._http import quote_path
+from .builders import ObjectSetLike, to_object_set
 from .types import ObjectPage
 
 if TYPE_CHECKING:
@@ -25,14 +26,14 @@ class ObjectSetsAPI:
     def load_objects(
         self,
         ontology: str,
-        object_set: Dict[str, Any],
+        object_set: ObjectSetLike,
         select: List[str],
         *,
         page_size: Optional[int] = None,
         page_token: Optional[str] = None,
     ) -> ObjectPage:
         """Load objects matching an ObjectSet definition."""
-        body: Dict[str, Any] = {"objectSet": object_set, "select": select}
+        body: Dict[str, Any] = {"objectSet": to_object_set(object_set), "select": select}
         if page_size is not None:
             body["pageSize"] = page_size
         if page_token:
@@ -44,7 +45,7 @@ class ObjectSetsAPI:
     def load_links(
         self,
         ontology: str,
-        object_set: Dict[str, Any],
+        object_set: ObjectSetLike,
         link_type: str,
         select: List[str],
         *,
@@ -53,7 +54,7 @@ class ObjectSetsAPI:
     ) -> ObjectPage:
         """Load linked objects from an ObjectSet definition."""
         body: Dict[str, Any] = {
-            "objectSet": object_set,
+            "objectSet": to_object_set(object_set),
             "linkType": link_type,
             "select": select,
         }
@@ -68,13 +69,13 @@ class ObjectSetsAPI:
     def aggregate(
         self,
         ontology: str,
-        object_set: Dict[str, Any],
+        object_set: ObjectSetLike,
         aggregation: List[Dict[str, Any]],
         group_by: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Run an aggregation over an ObjectSet."""
         body: Dict[str, Any] = {
-            "objectSet": object_set,
+            "objectSet": to_object_set(object_set),
             "aggregation": aggregation,
         }
         if group_by:
@@ -86,10 +87,10 @@ class ObjectSetsAPI:
     def create_temporary(
         self,
         ontology: str,
-        object_set: Dict[str, Any],
+        object_set: ObjectSetLike,
     ) -> Dict[str, Any]:
         """Create a temporary ObjectSet for later re-use."""
-        body = {"objectSet": object_set}
+        body = {"objectSet": to_object_set(object_set)}
         path = f"/api/v2/ontologies/{quote_path(ontology)}/objectSets/createTemporary"
         resp = self._client._request("POST", path, json_body=body)
         return resp or {}

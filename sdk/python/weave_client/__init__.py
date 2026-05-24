@@ -26,6 +26,14 @@ varies per object type.
 """
 from ._retry import RetryPolicy
 from .async_client import WeaveAsyncClient
+from .builders import (
+    ObjectSetBuilder,
+    avg,
+    count,
+    max_,
+    min_,
+    sum_,
+)
 from .client import Client
 from .exceptions import (
     WeaveAuthError,
@@ -59,8 +67,14 @@ from .types import (
 
 __all__ = [
     "Client",
+    "ObjectSetBuilder",
     "RetryPolicy",
     "WeaveAsyncClient",
+    "avg",
+    "count",
+    "max_",
+    "min_",
+    "sum_",
     "WeaveError",
     "WeaveAuthError",
     "WeaveNotFoundError",
