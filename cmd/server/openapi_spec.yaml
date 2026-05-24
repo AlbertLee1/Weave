@@ -5701,6 +5701,47 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceRid}/objectTypes:
+    get:
+      operationId: listInterfaceObjectTypes
+      summary: List ObjectTypes implementing an Interface (round 75)
+      description: |
+        Forward direction of the ObjectType↔Interface m:n relationship.
+        Returns every ObjectType in the ontology whose attachment row
+        references this Interface. The reverse direction (which
+        Interfaces does ObjectType X implement) was already exposed at
+        /objectTypes/byRid/{otRid}/interfaces; round 75 closes the
+        symmetry gap so the Interface admin UI can render its
+        implementor list without scanning every ObjectType and
+        calling the reverse direction N times.
+
+        Filter-not-key semantics: an unknown interfaceRid returns 200
+        + {data: []} rather than 404 — matches the SPA list-panel
+        convention of rendering cleanly against brand-new entities.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: interfaceRid
+          required: true
+          description: Interface RID whose implementing ObjectTypes to list.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of ObjectTypes implementing the Interface.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ObjectType"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}:
     get:
       operationId: getInterfaceType

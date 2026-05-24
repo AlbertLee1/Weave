@@ -2141,6 +2141,35 @@ func (h *OMSHandler) DetachInterface(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ListInterfaceObjectTypesV2 handles GET
+// /api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceRid}/objectTypes.
+// Round 75: closes the m:n symmetry gap. The reverse direction
+// (ListObjectTypeInterfaces — "which interfaces does X implement")
+// was already wired; this surfaces the forward direction ("which
+// ObjectTypes implement Y") so the Interface admin UI panel can
+// render the implementor list without scanning every ObjectType
+// and calling the reverse direction N times.
+//
+// Filter-not-key semantics: an unknown interfaceRid returns 200 +
+// {data: []} rather than 404. Matches rounds 68/69/73's
+// "render-cleanly-against-brand-new-entities" rule for SPA list
+// panels.
+func (h *OMSHandler) ListInterfaceObjectTypesV2(w http.ResponseWriter, r *http.Request) {
+	interfaceRID := chi.URLParam(r, "interfaceRid")
+
+	list, err := h.repo.ListInterfaceObjectTypes(r.Context(), interfaceRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListInterfaceObjectTypesFailed", nil))
+		return
+	}
+	if list == nil {
+		list = []ObjectType{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"data": list,
+	})
+}
+
 // ListObjectTypeInterfaces handles GET /api/admin/objectTypes/{objectTypeRid}/interfaces.
 func (h *OMSHandler) ListObjectTypeInterfaces(w http.ResponseWriter, r *http.Request) {
 	objectTypeRID := chi.URLParam(r, "objectTypeRid")

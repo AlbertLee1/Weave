@@ -419,8 +419,25 @@ func (m *mockRepo) DetachInterface(_ context.Context, objectTypeRID, interfaceRI
 	return oms.ErrNotFound
 }
 
-func (m *mockRepo) ListInterfaceObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
-	return nil, nil
+func (m *mockRepo) ListInterfaceObjectTypes(_ context.Context, interfaceRID string) ([]oms.ObjectType, error) {
+	// Walk interfaceAttachments for matching interfaceRID, then
+	// resolve each ObjectTypeRID against the seeded objectTypes slice
+	// so the wire shape matches the production PG path (full
+	// ObjectType rows, not just RIDs). Round 75: prior stub returned
+	// (nil, nil) for everything which made the new endpoint untestable.
+	matchedRIDs := map[string]bool{}
+	for _, a := range m.interfaceAttachments {
+		if a.InterfaceRID == interfaceRID {
+			matchedRIDs[a.ObjectTypeRID] = true
+		}
+	}
+	var out []oms.ObjectType
+	for _, ot := range m.objectTypes {
+		if matchedRIDs[ot.RID] {
+			out = append(out, ot)
+		}
+	}
+	return out, nil
 }
 
 func (m *mockRepo) ListObjectTypeInterfaces(_ context.Context, objectTypeRID string) ([]oms.ObjectTypeInterface, error) {
