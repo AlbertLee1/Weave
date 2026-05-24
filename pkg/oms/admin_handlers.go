@@ -208,6 +208,14 @@ type CreatePropertyRequest struct {
 	// Classification (US-262) is an optional label from KnownClassifications().
 	// Empty means "unspecified". Unknown labels are rejected 400.
 	Classification string `json:"classification,omitempty"`
+	// SharedPropertyTypeApiName (round 55) binds the Property to a
+	// SharedProperty in the same ontology by api-name. When set, the
+	// handler resolves the api-name → RID, validates that baseType and
+	// isArray match the SharedProperty exactly, and stores the
+	// resolved RID on Property.SharedPropertyRID. Mismatches are
+	// rejected at write time so admins can't ship an inconsistent
+	// schema that silently produces wrong-typed loads later.
+	SharedPropertyTypeApiName string `json:"sharedPropertyTypeApiName,omitempty"`
 }
 
 // CreateLinkTypeRequest is the request body for creating a link type.
@@ -747,20 +755,73 @@ func (h *OMSHandler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Round 55: resolve sharedPropertyTypeApiName → RID inside the
+	// owning ontology and validate baseType / isArray match the
+	// SharedProperty. Resolution happens BEFORE any write so a
+	// failure leaves the repo untouched. Empty field = no binding,
+	// preserving the round-54-era behaviour bit-for-bit.
+	var resolvedSharedPropertyRID string
+	if req.SharedPropertyTypeApiName != "" {
+		ot, otErr := h.repo.GetObjectType(r.Context(), objectTypeRID)
+		if otErr != nil || ot == nil {
+			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
+				"objectTypeRid": objectTypeRID,
+			}))
+			return
+		}
+		spList, spErr := h.repo.ListSharedProperties(r.Context(), ot.OntologyRID)
+		if spErr != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("ListSharedPropertiesFailed", nil))
+			return
+		}
+		var matched *SharedProperty
+		for i := range spList {
+			if spList[i].APIName == req.SharedPropertyTypeApiName {
+				matched = &spList[i]
+				break
+			}
+		}
+		if matched == nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("SharedPropertyTypeNotFound", map[string]string{
+				"ontology":           ot.OntologyRID,
+				"sharedPropertyType": req.SharedPropertyTypeApiName,
+			}))
+			return
+		}
+		if matched.BaseType != req.BaseType {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("SharedPropertyTypeMismatch", map[string]string{
+				"sharedPropertyType":     req.SharedPropertyTypeApiName,
+				"sharedPropertyBaseType": matched.BaseType,
+				"propertyBaseType":       req.BaseType,
+			}))
+			return
+		}
+		if matched.IsArray != req.IsArray {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("SharedPropertyTypeMismatch", map[string]string{
+				"sharedPropertyType":    req.SharedPropertyTypeApiName,
+				"sharedPropertyIsArray": strconv.FormatBool(matched.IsArray),
+				"propertyIsArray":       strconv.FormatBool(req.IsArray),
+			}))
+			return
+		}
+		resolvedSharedPropertyRID = matched.RID
+	}
+
 	p := &Property{
-		RID:            rid.NewPropertyRID(),
-		ObjectTypeRID:  objectTypeRID,
-		APIName:        req.APIName,
-		DisplayName:    req.DisplayName,
-		Description:    req.Description,
-		BaseType:       req.BaseType,
-		TypeConfig:     req.TypeConfig,
-		IsArray:        req.IsArray,
-		IsNullable:     req.IsNullable,
-		IsSearchable:   req.IsSearchable,
-		IsSortable:     req.IsSortable,
-		IsEditOnly:     req.EditOnly,
-		Classification: req.Classification,
+		RID:               rid.NewPropertyRID(),
+		ObjectTypeRID:     objectTypeRID,
+		APIName:           req.APIName,
+		DisplayName:       req.DisplayName,
+		Description:       req.Description,
+		BaseType:          req.BaseType,
+		TypeConfig:        req.TypeConfig,
+		IsArray:           req.IsArray,
+		IsNullable:        req.IsNullable,
+		IsSearchable:      req.IsSearchable,
+		IsSortable:        req.IsSortable,
+		IsEditOnly:        req.EditOnly,
+		Classification:    req.Classification,
+		SharedPropertyRID: resolvedSharedPropertyRID,
 	}
 
 	// Branch overlay
