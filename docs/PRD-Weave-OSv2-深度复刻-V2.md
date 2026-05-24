@@ -295,8 +295,8 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 建议：把 row/column/marking/security policy 修改全部纳入统一 audit taxonomy，补 SIEM delivery health、retention evidence dashboard、批量审计 UX 与部署级 root-hash 操作手册。
 
 **Gap-S5 — SQL Query 沙箱与资源限制**
-- 现状：执行真实 SQL（通过 DuckDB 或 PG?）无超时/read-only guard。
-- 建议：强制 read-only transaction + statement_timeout + `EXPLAIN` 前置检查。
+- 现状：✅ 已落地。`pkg/sqlqueries/safety.go` `ValidateQuery` 实现全 SQL tokenizer（line/block/dollar-quoted 字符串与注释剥离、双引号 identifier、反引号拒绝）+ 白名单仅 SELECT/WITH/VALUES/TABLE + 黑名单 30+ DML/DDL/DCL/事务/存储过程关键字 + body 嵌入 INSERT/UPDATE/DELETE 防御 + pg_* / information_schema / pg_catalog / pg_toast 系统表防御 + stacked-statement 防御。`pkg/sqlqueries/engine.go` PGEngine 强制 `pgx.TxOptions{AccessMode: pgx.ReadOnly}` + `context.WithTimeout`（默认 5s，US-468 契约）+ MaxRows 流式截断（默认 10K）+ 超时错误映射为 `ErrQueryTimeout` 便于 SDK 分类。
+- 剩余：`EXPLAIN` 前置成本估算可选；当前 timeout + row cap 已足够防止资源失控。
 
 ### 4.4 实时与事件层
 
@@ -324,12 +324,12 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
   - `hierarchy.parent` → 驱动 Explorer 树形视图
 
 **Gap-T2 — Struct / Array 深度序列化**
-- 现状：可声明但无嵌套校验测试。
-- 建议：TDD 一组 struct-in-struct、array-of-struct 的校验用例。
+- 现状：✅ 已落地。`pkg/types/validate.go` 递归校验 Struct 字段（present-only 语义，宽容 MODIFY 部分更新）+ Array 元素（带类型化 SubType 时逐元素），错误路径携带 `struct field "x":` / `array element [i]:` 前缀；测试覆盖 `pkg/types/validate_deep_bdd_test.go`、`us010_test.go`、`union_test.go`。
+- 剩余：Vector / GeoShape 等高级类型的嵌套校验保持宽容，待业务驱动。
 
 **Gap-T3 — ValueType 约束执行**
-- 现状：schema 存储。
-- 建议：在 property 写入路径上执行 constraint.apply(value)。
+- 现状：✅ 已落地。`pkg/types/constraints.go` `ValidateConstraints` 实现 regex/pattern/minLength/maxLength/min/max/enum 全套；`EnumViolationError` 携带 AllowedValues 用于结构化 422 响应；调用点：`pkg/oss/stream_ingest_validation.go:151`（stream 摄入）+ `pkg/actions/executor.go:815`（action edits）；ValueType 链解析 `pkg/types/valuetype.go` ResolveValueType 防 cycle + depth-limit。
+- 剩余：DSL 形式（CEL）的更复杂条件约束未实现，普通声明式约束已满足 Foundry 1:1 范围。
 
 **Gap-T4 — Ontology 分支与语义版本**
 - 现状：`ontology_snapshots` 存在；RID 不含 version，无 branch 概念。
@@ -342,19 +342,19 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 ### 4.6 可观测性与运维
 
 **Gap-O1 — 业务指标**
-- 现状：go runtime / chi request 指标已暴露。
-- 建议：加 `weave_objectset_execute_duration`、`weave_action_apply_duration`、`weave_bleve_query_latency`、`weave_funnel_lag_seconds` 等业务指标。
+- 现状：✅ 已落地。go runtime / chi request 指标暴露之外，`pkg/metrics/oss.go` 注册 `weave_objectset_execute_duration_seconds` / `weave_objectset_load_duration_seconds`，`pkg/metrics/actions.go` 注册 `weave_actions_apply_duration_seconds` / `weave_actions_applied_total`，`pkg/metrics/funnel.go` 注册 `weave_funnel_lag_messages`。
+- 剩余：业务侧 dashboard JSON 模板未随源码 ship（运维独立维护）。
 
 **Gap-O2 — Trace propagation**
-- 现状：OTel 基础框架。
-- 建议：在 chi middleware 注入 trace context，在 Funnel consumer 恢复 span，实现 "HTTP → Funnel → Bleve → Broadcast" 全链路 trace。
+- 现状：✅ 已落地。`pkg/tracing/tracing.go` HTTPMiddleware + BaggageMiddleware + PgxTracer（chi 模板做 span 名、5xx 翻 Error、request_id/user_id W3C baggage、DB 查询 span），`pkg/funnel/tracing.go` natsHeaderCarrier 跨 NATS JetStream 注入/抽取 TraceContext，round 52 `pkg/actions/http_dispatcher.go` 出站函数调用注入，round 53 `pkg/actions/effects.go` 出站 webhook 注入 + 每次 attempt client-kind span。
+- 剩余：外部 sampler 配置矩阵、多租户 trace 隔离。
 
 **Gap-O3 — Audit log 聚合**
 - 见 Gap-S4。
 
 **Gap-O4 — Health check 深度**
-- 现状：/health 返回 200；/health/ready 检查 PG/NATS/Bleve。
-- 建议：加 "Funnel consumer lag <= N" 阈值，超过即 degraded。
+- 现状：✅ 已落地。`cmd/server/health.go` ReadinessHandlerWithState 依次探测 PG / NATS / Bleve / Funnel；ProbeFunnel 返回 `ErrFunnelLagDegraded`（带 lag/threshold）时 wire 上 status="degraded" 仍 HTTP 200（k8s readiness 保持绿色，dashboard 摆 banner）；硬失败走 503 unready。`/healthz/ready` 是 k8s 习惯别名，`StateStarting`/`StateReady`/`StateDraining` lifecycle 一次性升降。
+- 剩余：runtime 自我恢复（DB reconnect 后 ProbeFunnel 自愈）已 OK；细粒度的子系统配额仍待补。
 
 ### 4.7 开发体验
 
