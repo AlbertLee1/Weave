@@ -272,6 +272,36 @@ func (h *OMSHandler) GetActionTypesByRidBatchV2(w http.ResponseWriter, r *http.R
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
 }
 
+// GetTypeGroupsByRidBatchV2 handles POST /api/v2/ontologies/{ontologyApiName}/typeGroups/getByRidBatch.
+// Round 87 extends the batch-get-by-RID convention to TypeGroups,
+// the navigation-pane categorisation primitive. The SPA Browser
+// sidebar and Explorer faceting controls render N type-groups at
+// a time; without a batch surface a 50-group list needed 50
+// round-trips to label them. Reuses shared getByRidBatchRequest.
+// Missing RIDs silently skipped (same convention). TypeGroup
+// serialises directly via the JSON encoder — same as Interface
+// / ValueType / SharedProperty, no ToWireJSON helper.
+func (h *OMSHandler) GetTypeGroupsByRidBatchV2(w http.ResponseWriter, r *http.Request) {
+	var req getByRidBatchRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	out := make([]*TypeGroup, 0, len(req.RIDs))
+	for _, rid := range req.RIDs {
+		tg, err := h.repo.GetTypeGroup(r.Context(), rid)
+		if err != nil {
+			continue
+		}
+		out = append(out, tg)
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": out})
+}
+
 // GetSharedPropertyTypesByRidBatchV2 handles POST /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/getByRidBatch.
 // Round 85 extends the batch-get-by-RID convention beyond the five
 // core metadata kinds (objectTypes / actionTypes / linkTypes /

@@ -5810,6 +5810,51 @@ paths:
                       $ref: "#/components/schemas/SharedProperty"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/typeGroups/getByRidBatch:
+    post:
+      operationId: getTypeGroupsByRidBatch
+      summary: Batch lookup type groups by RIDs (round 87)
+      description: |
+        Extends the batch-get-by-RID convention to TypeGroups, the
+        navigation-pane categorisation primitive. SPA Browser sidebar
+        and Explorer faceting controls render N type-groups at a
+        time; without a batch surface a 50-group list needed 50
+        round-trips to label them. Missing RIDs are silently skipped —
+        matches the established convention shared with the six other
+        batch surfaces (objectTypes + actionTypes + linkTypes round-79
+        + interfaceTypes round-81 + valueTypes round-83 +
+        sharedPropertyTypes round-85).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of TypeGroup RIDs to look up.
+      responses:
+        "200":
+          description: Batch type group list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TypeGroup"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}:
     get:
       operationId: getActionType
