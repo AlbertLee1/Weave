@@ -21,6 +21,12 @@ const (
 	StatusPending  = "PENDING"
 	StatusApproved = "APPROVED"
 	StatusRejected = "REJECTED"
+	// StatusCancelled (round 63) is the terminal state a row enters
+	// when the requester withdraws their own pending request. Stored
+	// alongside APPROVED / REJECTED so the audit trail keeps the row
+	// rather than hard-deleting; the inbox UI hides cancelled rows
+	// by default.
+	StatusCancelled = "CANCELLED"
 )
 
 // MaxReasonLength bounds both the requester's reason and the approver's
@@ -84,9 +90,9 @@ func ValidateReason(reason string) error {
 	return nil
 }
 
-// IsTerminalStatus reports whether s is APPROVED or REJECTED. Used by
-// the store and handler to short-circuit double-decide attempts with
-// ErrAlreadyDecided.
+// IsTerminalStatus reports whether s is APPROVED, REJECTED or
+// CANCELLED. Used by the store and handler to short-circuit double-
+// decide / double-cancel attempts with ErrAlreadyDecided.
 func IsTerminalStatus(s string) bool {
-	return s == StatusApproved || s == StatusRejected
+	return s == StatusApproved || s == StatusRejected || s == StatusCancelled
 }

@@ -133,6 +133,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/permission-requests/{id}", h.Get)
 	r.Post("/api/v2/permission-requests/{id}/approve", h.Approve)
 	r.Post("/api/v2/permission-requests/{id}/reject", h.Reject)
+	r.Delete("/api/v2/permission-requests/{id}", h.Cancel)
 }
 
 func (h *Handler) requireAuth(w http.ResponseWriter, r *http.Request) *auth.User {
@@ -432,6 +433,63 @@ func (h *Handler) fanoutDecision(ctx context.Context, row *Request) {
 		return
 	}
 	_ = h.notifier.NotifyRequesterDecision(ctx, DecisionEvent{Request: row})
+}
+
+// Cancel DELETE /api/v2/permission-requests/{id}. Round 63: the
+// requester withdraws their own pending request. The row transitions
+// to terminal CANCELLED state (DecidedBy = requester, DecidedAt =
+// now) rather than being hard-deleted so the audit trail is
+// preserved.
+//
+// Authorization:
+//   - Only the original RequestedBy user may cancel — admins use
+//     reject for unwanted requests; cancellation is the requester's
+//     prerogative and stays distinct in the audit log.
+//   - Only PENDING rows are cancellable; APPROVED / REJECTED /
+//     already-CANCELLED rows return 409 (terminal states immutable).
+func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
+	user := h.requireAuth(w, r)
+	if user == nil || !h.requireStore(w) {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	// Load to authorize: only the requester may cancel. Doing this
+	// BEFORE Decide means the 403 path doesn't burn a write attempt
+	// and preserves the row's UpdatedAt timestamp on rejected
+	// cancels.
+	row, err := h.store.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("PermissionRequestNotFound", map[string]string{"id": id}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("PermissionRequestLookupFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	if row.RequestedBy != user.ID {
+		apierror.WriteJSON(w, apierror.NewPermissionDenied("PermissionRequestForbidden", map[string]string{
+			"reason": "only the original requester may cancel; admins reject instead",
+		}))
+		return
+	}
+	dec := Decision{Status: StatusCancelled, By: user.ID}
+	if err := h.store.Decide(r.Context(), id, dec); err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			apierror.WriteJSON(w, apierror.NewNotFound("PermissionRequestNotFound", map[string]string{"id": id}))
+			return
+		case errors.Is(err, ErrAlreadyDecided):
+			apierror.WriteJSON(w, apierror.NewConflict("PermissionRequestAlreadyDecided", map[string]string{"id": id}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("PermissionRequestCancelFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // newRequestID returns a uuid-shaped identifier for a new row. Mirrors
