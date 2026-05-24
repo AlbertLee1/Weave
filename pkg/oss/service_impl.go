@@ -768,19 +768,62 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	return page, nil
 }
 
-// CountObjects returns the number of objects of a given type.
+// CountObjects returns the number of objects of a given type, optionally
+// filtered by the supplied Where clause.
+//
+// Two paths:
+//
+//  1. Unfiltered fast path (req.Where == nil): use indexMgr.DocCount —
+//     constant-time index read. Backward-compatible for SDK callers
+//     that send no body.
+//  2. Filtered path (req.Where != nil): run the same where → Bleve
+//     query → mergePolicyQuery pipeline SearchObjects uses, but with
+//     Size=0 so Bleve returns the total match count without paying
+//     to materialise documents. This is the path Foundry's OSv2
+//     count endpoint takes on every request, and it is the only
+//     path that respects the row-level policy filter — never let a
+//     filtered count short-circuit through DocCount, or a user with
+//     a restricting policy will over-count rows they cannot see.
 func (s *ServiceImpl) CountObjects(ctx context.Context, req CountObjectsRequest) (*CountObjectsResponse, error) {
-	if _, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType); err != nil {
+	ot, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType)
+	if err != nil {
 		return nil, err
 	}
 
-	count, err := s.indexMgr.DocCount(scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType))
+	if req.Where == nil {
+		count, err := s.indexMgr.DocCount(scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType))
+		if err != nil {
+			// Index not found for this object type — valid type but no data yet.
+			return &CountObjectsResponse{Count: 0}, nil
+		}
+		return &CountObjectsResponse{Count: int(count)}, nil
+	}
+
+	bleveQuery, err := where.ConvertToBleveQueryWithOpts(req.Where, nil)
 	if err != nil {
-		// Index not found for this object type — valid type but no data yet.
+		return nil, err
+	}
+	policyQ, err := s.compilePolicyQuery(ctx, *ot)
+	if err != nil {
+		return nil, err
+	}
+	bleveQuery = mergePolicyQuery(bleveQuery, policyQ)
+
+	idx := s.indexMgr.GetIndex(scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType))
+	if idx == nil {
+		// No index yet — a filtered count over zero rows is zero,
+		// regardless of the predicate.
 		return &CountObjectsResponse{Count: 0}, nil
 	}
 
-	return &CountObjectsResponse{Count: int(count)}, nil
+	searchReq := bleve.NewSearchRequest(bleveQuery)
+	searchReq.Size = 0
+	searchReq.From = 0
+	res, err := idx.SearchInContext(ctx, searchReq)
+	if err != nil {
+		return nil, err
+	}
+	return &CountObjectsResponse{Count: int(res.Total)}, nil
 }
 
 // defaultFacetSize is the per-field bucket ceiling for US-236 faceted

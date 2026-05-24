@@ -506,14 +506,41 @@ func splitRegexQueryParam(raw string) (field, pattern string, ok bool) {
 	return field, pattern, true
 }
 
+// countRequestBody is the optional JSON body for the count endpoint.
+// Foundry OSv2 wire shape: {"where": <whereClause>}. An empty body or
+// {} (no where field) means "count everything of this type" and keeps
+// the pre-Where backward-compatible behaviour.
+type countRequestBody struct {
+	Where *where.WhereClause `json:"where,omitempty"`
+}
+
 // CountObjects handles POST /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count.
+//
+// Foundry OSv2 1:1 alignment: the request body is OPTIONAL but, when
+// supplied with a where clause, the response counts ONLY matching
+// objects (subject to row-level policy). An empty body keeps the
+// fast indexMgr.DocCount path so SDK callers that never sent a body
+// see no behaviour change.
 func (h *Handler) CountObjects(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	objectType := chi.URLParam(r, "objectType")
 
+	// Tolerate empty / absent body — httputil.ReadJSON returns io.EOF
+	// in that case, which the count contract treats as "no filter".
+	var body countRequestBody
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := httputil.ReadJSON(r, &body); err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+				"reason": err.Error(),
+			}))
+			return
+		}
+	}
+
 	resp, err := h.svc.CountObjects(r.Context(), CountObjectsRequest{
 		OntologyRID: ontologyRID,
 		ObjectType:  objectType,
+		Where:       body.Where,
 	})
 	if err != nil {
 		if errors.Is(err, oms.ErrNotFound) {

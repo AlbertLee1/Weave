@@ -2281,13 +2281,27 @@ components:
           type: object
           additionalProperties:
             $ref: "#/components/schemas/AggregationResponse"
+    CountObjectsRequest:
+      type: object
+      description: |
+        Optional request body for POST .../objects/{objectType}/count.
+        When omitted (or sent as `{}`), the count returns every
+        object of the given type via the indexMgr.DocCount fast path.
+        When `where` is supplied, the same where-clause → Bleve query
+        pipeline used by SearchObjects is run with Size=0 and the
+        Bleve total is returned — also AND-combined with the caller's
+        row-level security policy so a filtered count cannot
+        over-report rows the caller is not authorised to see.
+      properties:
+        where:
+          $ref: "#/components/schemas/WhereClause"
     CountObjectsResponse:
       type: object
       required: [count]
       properties:
         count:
           type: integer
-          description: The number of objects of the given type.
+          description: The number of objects matching the (optional) filter.
     AggregationResponse:
       type: object
       properties:
@@ -8326,11 +8340,24 @@ paths:
   /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count:
     post:
       operationId: countObjects
-      summary: Count the number of objects of a given type
+      summary: Count the number of objects of a given type (optionally filtered)
+      description: |
+        Foundry OSv2 1:1 alignment: the request body is OPTIONAL but,
+        when supplied with a `where` clause, the response counts ONLY
+        matching objects (and respects any row-level security policy
+        the caller is subject to). An empty body or {} keeps the
+        backward-compatible fast indexMgr.DocCount path so callers
+        that never sent a body see no behaviour change.
       tags: [Objects]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
         - $ref: "#/components/parameters/ObjectType"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CountObjectsRequest"
       responses:
         "200":
           description: Object count.
@@ -8338,6 +8365,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CountObjectsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":

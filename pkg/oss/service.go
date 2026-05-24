@@ -78,9 +78,17 @@ type GetLinkedObjectRequest struct {
 }
 
 // CountObjectsRequest is the request for counting objects of a given type.
+//
+// Where is optional. When nil the implementation MAY use the fast
+// indexMgr.DocCount path (no row-policy AND-combine, no Bleve search
+// overhead). When non-nil the implementation MUST run the same
+// where → Bleve query pipeline SearchObjects uses, including the
+// row-level policy merge, so filtered counts can never over-report
+// rows the caller is not authorised to see. PRD-V2 §4.1 OSv2-1:1.
 type CountObjectsRequest struct {
 	OntologyRID string
 	ObjectType  string
+	Where       *where.WhereClause
 }
 
 // CountObjectsResponse is the Foundry V2 response for the count endpoint.
