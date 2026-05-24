@@ -227,9 +227,8 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 ### 4.1 查询层（OSS）
 
 **Gap-Q1 — Interface 多态稳定性**
-- 现状：`loadObjectsOrInterfaces` 端点返回正确 objects，但跨多个 ObjectType 的分页游标不稳定：如果一个子类型有 100 条、另一个有 10 条、cursor 在中途时，后续页可能漏或重复。
-- 影响：违背 MUST 9 的 "stable v2 API shape"。
-- 建议：引入一个 composite cursor = `{objectTypeApiName, innerCursor}`，并在执行器里对多个子集做有序 merge（按 sort key）。
+- 现状：✅ 已落地。`pkg/oss/pagination/composite_cursor.go` 实现 `{objectTypeApiName, innerCursor}` composite cursor，`pkg/oss/objectset/us463_interface_cursor_stability_test.go` + Playwright `interface-multitype-paging.spec.ts` 覆盖 3-type Northwind HasOwner interface paging；多子类型按 sort key heap merge 稳定，分页不再漏或重。
+- 剩余：表 §3 行 99 已记录 90%；Phase 6 Gate 通过 (US-006..US-008, US-041)。
 
 **Gap-Q2 — withProperties 真实计算**
 - 现状：executor 里有 `executeWithProperties` 分发，但代码只是把属性名传下去；**跨 link 的聚合（reportsCount / teamSize 之类）未实现**。
@@ -254,14 +253,12 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 ### 4.2 写入层（Actions）
 
 **Gap-A1 — Edit 冲突解决策略**
-- 现状：隐式 last-write-wins。
-- 影响：在 Funnel consumer 并发时，streaming ingest 可能"盖掉"用户的 edit，无回路补救。
-- 建议：实现 Foundry 的 **user-edit-wins** 策略 —— 在 Edit payload 里标记 `source: user | funnel`，Funnel ingest 先比对 object_history 最近一次 user edit 的 timestamp，若更新则放弃。另外加 `always_apply` 标志位覆盖"edit-only property"。
+- 现状：✅ 已落地。Edit payload 携带 `source: user | funnel | edit_only`，`pkg/actions/edit_source_test.go` 覆盖 user-edit-wins 路径：Funnel ingest 在 `pkg/funnel/consumer.go` 应用前比对 `object_history` 最近一次 user-source edit 的 timestamp，若用户 edit 更新则跳过；edit-only property 走单独路径 (US-035..US-037)。
+- 剩余：`always_apply` 覆盖开关、跨节点 conflict 仲裁（多机部署）保留为 Foundry SHOULD 层。
 
 **Gap-A2 — Optimistic concurrency**
-- 现状：无 `If-Match` / version header，无 stale-object detection。
-- 影响：两个用户同时编辑同一对象时互相覆盖。
-- 建议：`object_history.version` 字段已存在；apply 路径应该接受 `options.expectedVersion`，mismatch 时返回 409。
+- 现状：✅ 已落地。apply 路径接受 `options.expectedVersion`（HTTP body）+ `If-Match` header (US-035 / US-471)，`pkg/actions/optimistic_test.go` + `pkg/actions/us471_optimistic_multitarget_test.go` 覆盖单对象与多对象批量；mismatch 返回 409 `OptimisticVersionConflict` 携带 actualVersion 用于客户端冲突合并；Playwright `optimistic-concurrency.spec.ts` 验证双 context 同时编辑场景。
+- 剩余：跨批次"intent token"风格的语义合并保留 Foundry SHOULD 层。
 
 **Gap-A3 — Submission criteria 表达力**
 - 现状：`criteria.go` 支持基础比较，无法表达"参数 A > 参数 B" 等跨字段约束。
@@ -269,8 +266,8 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 建议：引入一个迷你表达式 DSL（CEL-lite），或直接嵌入 Goja。
 
 **Gap-A4 — Side effects 真实触发**
-- 现状：结构体存在，没有 webhook 发送代码（grep 不到 http post 到 URL 的路径）。
-- 建议：实现 webhook dispatcher + 重试 + DLQ + action_logs.side_effect_status。
+- 现状：✅ 已落地。`pkg/actions/effects.go` 实现 webhook + log 两种 side-effect dispatcher：webhook 路径覆盖完整重试循环（exponential backoff、429/408/5xx 重试、4xx fail-fast，round 30）+ per-effect outcomes 持久化到 `action_logs.side_effect_status` JSONB 列（round 31）+ DLQ 表 `action_log_side_effect_dlq` 失败行重放（round 33）+ admin replay 端点（round 35）+ round 53 全链路 W3C TraceContext 注入与每次 attempt 一个 client-kind span。
+- 剩余：notification / function-call 等其它 Foundry side-effect 类型；webhook signed-request (HMAC) 验证保留为 SHOULD 层。
 
 **Gap-A5 — Function-backed action 内嵌运行时**
 - 现状：只有 HTTP dispatcher。
@@ -306,8 +303,8 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 剩余：多实例 fan-out、replay window 运维指标、断线恢复矩阵与端到端压测仍需补齐。
 
 **Gap-R2 — 数据摄入 stream**
-- 现状：只能通过 Action 写入。
-- 建议：新增 `POST /api/v2/ontologies/{ontology}/streams/{objectType}/ingest` 端点，直接把 Edit batch 推到 NATS subject，绕过 Action rule（但依然通过 funnel 到 bleve）。适用于 ETL 导入场景。
+- 现状：✅ 已落地。`pkg/oss/stream_ingest.go` 实现专用 streaming ingest 路径，绕过 Action rule 直接生成 Edit batch 推送 NATS subject（仍经 funnel → bleve），适用于 ETL 大批量导入；`pkg/oss/stream_ingest_validation.go` 在摄入侧执行 `types.ValidateConstraints` 防止脏数据；BDD 覆盖 `pkg/oss/stream_ingest_dog003_bdd_test.go` (Dog 数据集) + `stream_ingest_self102_bdd_test.go` (自驱动场景)。
+- 剩余：双写 (Kafka Connect 风格) 与背压策略保留运维侧选项。
 
 **Gap-R3 — rehydrate 路径测试矩阵**
 - 现状：`pkg/index/rehydrate_test.go` 存在。
@@ -316,12 +313,8 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 ### 4.5 语义层（Types / Interfaces / Derived）
 
 **Gap-T1 — TypeClass 驱动索引**
-- 现状：`type_groups` / `typeclass` 存储完成；Bleve field mapping 固定忽略。
-- 建议：实现 `pkg/index/mapping_builder.go`，读取 property.typeclass 决定：
-  - `analyzer.not_analyzed` → keyword mapping
-  - `analyzer.not_indexed` → skip bleve field
-  - `hubble.icon` / `hubble.media_url` → 前端 hint（不改索引）
-  - `hierarchy.parent` → 驱动 Explorer 树形视图
+- 现状：✅ 已落地（Bleve 端）。`pkg/index/mapping_builder.go` 读取 `property.typeclass` (`analyzer.not_analyzed`/`analyzer.keyword`/`analyzer.english`) 决定 Bleve `FieldMapping`，FK link resolver (US-040) 依赖 not_analyzed 闭环；`pkg/index/mapping_builder_test.go` 覆盖每条映射规则。
+- 剩余：`hubble.icon` / `hubble.media_url` 前端 hint 与 `hierarchy.parent` Explorer 树形视图属于 UI 侧渲染层，由 `web/src/lib/typeclass-hints.ts` 等单独 owner 管理。
 
 **Gap-T2 — Struct / Array 深度序列化**
 - 现状：✅ 已落地。`pkg/types/validate.go` 递归校验 Struct 字段（present-only 语义，宽容 MODIFY 部分更新）+ Array 元素（带类型化 SubType 时逐元素），错误路径携带 `struct field "x":` / `array element [i]:` 前缀；测试覆盖 `pkg/types/validate_deep_bdd_test.go`、`us010_test.go`、`union_test.go`。

@@ -70,6 +70,38 @@ func TestBDD_PRDV2GapEntriesReflectImplementationReality(t *testing.T) {
 			marker: "pkg/sqlqueries",
 			why:    "Gap-S5 SQL Query sandbox IS implemented — pkg/sqlqueries/safety.go (30+ forbidden keywords, system-table guard, full tokenizer) + engine.go (5s timeout, 10K row cap, pgx.ReadOnly transactions).",
 		},
+		// Round 57 — second wave of stale gaps surfaced while
+		// auditing Gap-Q* / Gap-A* / Gap-R* / Gap-T* sections.
+		{
+			gap:    "Gap-Q1",
+			marker: "composite_cursor.go",
+			why:    "Gap-Q1 multi-type interface paging IS stable — pkg/oss/pagination/composite_cursor.go + pkg/oss/objectset/us463_interface_cursor_stability_test.go drive the {objectTypeApiName, innerCursor} composite cursor.",
+		},
+		{
+			gap:    "Gap-A1",
+			marker: "edit_source_test.go",
+			why:    "Gap-A1 user-edit-wins IS implemented — pkg/actions/edit_source_test.go covers the EditSource marking; consumer compares last user-edit timestamp before applying funnel writes.",
+		},
+		{
+			gap:    "Gap-A2",
+			marker: "optimistic_test.go",
+			why:    "Gap-A2 optimistic concurrency IS implemented — pkg/actions/optimistic_test.go + us471_optimistic_multitarget_test.go cover expectedVersion / If-Match wiring with 409 on stale version.",
+		},
+		{
+			gap:    "Gap-A4",
+			marker: "pkg/actions/effects.go",
+			why:    "Gap-A4 webhook side-effects ARE implemented — pkg/actions/effects.go full retry loop + DLQ + action_logs.side_effect_status; rounds 30/31/33/53 sealed retry/outcomes/DLQ/tracing.",
+		},
+		{
+			gap:    "Gap-R2",
+			marker: "pkg/oss/stream_ingest.go",
+			why:    "Gap-R2 stream ingest IS implemented — pkg/oss/stream_ingest.go + BDDs in stream_ingest_dog003_bdd_test.go / stream_ingest_self102_bdd_test.go cover the dedicated edit-batch ingestion path that bypasses Action rules.",
+		},
+		{
+			gap:    "Gap-T1",
+			marker: "pkg/index/mapping_builder.go",
+			why:    "Gap-T1 TypeClass driving Bleve index IS implemented — pkg/index/mapping_builder.go reads property.typeclass to choose analyzer / keyword / skip mapping per US-001 / US-012 / US-040.",
+		},
 	}
 
 	for _, c := range cases {
