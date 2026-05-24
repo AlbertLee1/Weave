@@ -2920,6 +2920,15 @@ func main() {
 			log.Printf("[funnel-dlq] size poll error: %v", err)
 		})
 
+		// PRD-V2 §4.6 Gap-O4 follow-up: the readiness handler already
+		// surfaces funnel lag as a soft degraded signal, but oncall
+		// needs a Prometheus gauge for trend + alerting. Same 30s
+		// cadence as the DLQ size loop so operators see both funnel
+		// observability surfaces refresh on the same beat.
+		go metrics.RunFunnelConsumerLagPollLoop(ctx, deps.FunnelConsumer, 30*time.Second, func(err error) {
+			log.Printf("[funnel-consumer] lag poll error: %v", err)
+		})
+
 		// US-055: stand up the in-process SSE broadcast hub and have the
 		// consumer fan every applied edit onto it so HTTP subscribers can
 		// tail the change stream. Event.Type is CREATE / MODIFY / DELETE,
