@@ -61,6 +61,12 @@ from .subscriptions import (
     WebSocketTransport,
     WebsocketsTransport,
 )
+from .reactions import (
+    EmojiCount,
+    Reaction,
+    ReactionsAPI,
+    ReactionSummary,
+)
 from .transactions import (
     Transaction,
     TransactionAppendResponse,
@@ -138,6 +144,10 @@ __all__ = [
     "Transaction",
     "TransactionAppendResponse",
     "TransactionsAPI",
+    "EmojiCount",
+    "Reaction",
+    "ReactionSummary",
+    "ReactionsAPI",
 ]
 
 __version__ = "0.1.0"
