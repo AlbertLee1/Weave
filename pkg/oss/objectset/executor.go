@@ -14,6 +14,7 @@ import (
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
+	"github.com/liyang/weave/pkg/metrics"
 	"github.com/liyang/weave/pkg/oss/where"
 	"github.com/liyang/weave/pkg/types/formula"
 )
@@ -203,11 +204,34 @@ type Result struct {
 }
 
 // Execute evaluates an ObjectSet definition and returns matching primary keys.
+//
+// PRD-V2 §4.6 Gap-O1 wiring: the call is wrapped with a deferred Observe
+// onto weave_objectset_execute_duration_seconds, labelled by definition
+// kind (base / filter / union / …) and outcome (ok | error). The metric
+// is captured at THIS layer rather than inside the per-kind helpers so
+// composite ObjectSets (union/intersect/subtract) record one observation
+// per public Execute call rather than one per recursive child — the
+// Grafana panel asks "how long did this operator take end-to-end?",
+// not "how long did each subtree take?". Use the recursive private
+// execute() if you need per-subtree timings in the future.
 func (e *Executor) Execute(ctx context.Context, def *Definition) (*Result, error) {
 	if err := def.Validate(); err != nil {
+		// Validation failure happens before we've classified the
+		// definition; record it under definition_type="invalid" so the
+		// dashboard can spot SDK clients sending malformed bodies
+		// without conflating them with backend-level errors.
+		metrics.ObserveObjectSetExecute("invalid", "error", 0)
 		return nil, err
 	}
-	return e.execute(ctx, def)
+	defType := def.Type
+	start := time.Now()
+	res, err := e.execute(ctx, def)
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
+	}
+	metrics.ObserveObjectSetExecute(defType, outcome, time.Since(start).Seconds())
+	return res, err
 }
 
 func (e *Executor) execute(ctx context.Context, def *Definition) (*Result, error) {
