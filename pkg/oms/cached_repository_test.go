@@ -2,6 +2,7 @@ package oms_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -321,6 +322,9 @@ func (*noopRepo) ListActionLogs(context.Context, string, int, int) ([]oms.Action
 }
 func (*noopRepo) CountActionLogs(context.Context, string) (int, error)             { return 0, nil }
 func (*noopRepo) UpdateActionLogStatus(context.Context, int64, string) error       { return nil }
+func (*noopRepo) UpdateActionLogSideEffectStatus(context.Context, int64, json.RawMessage) error {
+	return nil
+}
 func (*noopRepo) InsertObjectHistory(context.Context, *oms.ObjectHistory) error {
 	return nil
 }

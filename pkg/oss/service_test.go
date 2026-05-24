@@ -337,6 +337,9 @@ func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]o
 }
 func (m *mockOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error)    { return 0, nil }
 func (m *mockOmsRepo) UpdateActionLogStatus(_ context.Context, _ int64, _ string) error { return nil }
+func (m *mockOmsRepo) UpdateActionLogSideEffectStatus(_ context.Context, _ int64, _ json.RawMessage) error {
+	return nil
+}
 
 // ObjectHistory stubs (Tier 2.3)
 func (m *mockOmsRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {

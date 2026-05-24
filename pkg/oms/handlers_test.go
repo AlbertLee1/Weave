@@ -804,6 +804,9 @@ func (m *mockRepo) ListActionLogs(_ context.Context, _ string, limit, offset int
 }
 func (m *mockRepo) CountActionLogs(_ context.Context, _ string) (int, error)    { return 0, nil }
 func (m *mockRepo) UpdateActionLogStatus(_ context.Context, _ int64, _ string) error { return nil }
+func (m *mockRepo) UpdateActionLogSideEffectStatus(_ context.Context, _ int64, _ json.RawMessage) error {
+	return nil
+}
 
 // ObjectHistory stubs (Tier 2.3)
 func (m *mockRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {

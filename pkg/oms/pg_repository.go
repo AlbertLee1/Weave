@@ -1970,15 +1970,23 @@ func (r *PGRepository) GetActionLog(ctx context.Context, id int64) (*ActionLog, 
 	al := &ActionLog{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, action_type_rid, user_id, parameters, edits, COALESCE(prev_edits, 'null'),
-		 status, COALESCE(error_message, ''), created_at
+		 status, COALESCE(error_message, ''), created_at,
+		 COALESCE(side_effect_status, 'null')
 		 FROM action_logs WHERE id = $1`, id).
 		Scan(&al.ID, &al.ActionTypeRID, &al.UserID, &al.Parameters, &al.Edits,
-			&al.PrevEdits, &al.Status, &al.ErrorMessage, &al.CreatedAt)
+			&al.PrevEdits, &al.Status, &al.ErrorMessage, &al.CreatedAt,
+			&al.SideEffectStatus)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	// Pre-migration rows (or actions with no side effects) come back as
+	// JSON `null` thanks to COALESCE; normalize to nil so callers see the
+	// natural Go zero value.
+	if string(al.SideEffectStatus) == "null" {
+		al.SideEffectStatus = nil
 	}
 	return al, nil
 }
@@ -1996,10 +2004,34 @@ func (r *PGRepository) UpdateActionLogStatus(ctx context.Context, id int64, stat
 	return nil
 }
 
+// UpdateActionLogSideEffectStatus stamps the per-effect dispatch outcome
+// JSONB array onto the action_logs row. Passing a nil or zero-length
+// status writes SQL NULL — callers can use this to clear the column or
+// skip storage when the action had no side effects. PRD-V2 Gap-A4.
+func (r *PGRepository) UpdateActionLogSideEffectStatus(ctx context.Context, id int64, status json.RawMessage) error {
+	var arg interface{}
+	if len(status) == 0 {
+		arg = nil
+	} else {
+		arg = []byte(status)
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE action_logs SET side_effect_status = $1 WHERE id = $2`,
+		arg, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *PGRepository) ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, action_type_rid, user_id, parameters, edits, status,
-		 COALESCE(error_message, ''), created_at
+		 COALESCE(error_message, ''), created_at,
+		 COALESCE(side_effect_status, 'null')
 		 FROM action_logs WHERE action_type_rid = $1
 		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
 		actionTypeRID, limit, offset)
@@ -2012,8 +2044,12 @@ func (r *PGRepository) ListActionLogs(ctx context.Context, actionTypeRID string,
 	for rows.Next() {
 		var al ActionLog
 		if err := rows.Scan(&al.ID, &al.ActionTypeRID, &al.UserID, &al.Parameters,
-			&al.Edits, &al.Status, &al.ErrorMessage, &al.CreatedAt); err != nil {
+			&al.Edits, &al.Status, &al.ErrorMessage, &al.CreatedAt,
+			&al.SideEffectStatus); err != nil {
 			return nil, err
+		}
+		if string(al.SideEffectStatus) == "null" {
+			al.SideEffectStatus = nil
 		}
 		result = append(result, al)
 	}

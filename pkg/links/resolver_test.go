@@ -205,6 +205,9 @@ func (m *mockRepo) ListActionLogs(context.Context, string, int, int) ([]oms.Acti
 }
 func (m *mockRepo) CountActionLogs(context.Context, string) (int, error)            { return 0, nil }
 func (m *mockRepo) UpdateActionLogStatus(context.Context, int64, string) error      { return nil }
+func (m *mockRepo) UpdateActionLogSideEffectStatus(context.Context, int64, json.RawMessage) error {
+	return nil
+}
 
 // Search stubs
 func (m *mockRepo) SearchOntologyResources(context.Context, string, string) ([]oms.SearchResult, error) {

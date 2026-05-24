@@ -585,6 +585,9 @@ func (r *inMemoryOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) 
 }
 func (r *inMemoryOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error)    { return 0, nil }
 func (r *inMemoryOmsRepo) UpdateActionLogStatus(_ context.Context, _ int64, _ string) error { return nil }
+func (r *inMemoryOmsRepo) UpdateActionLogSideEffectStatus(_ context.Context, _ int64, _ json.RawMessage) error {
+	return nil
+}
 
 // Search stubs
 func (r *inMemoryOmsRepo) SearchOntologyResources(_ context.Context, _, _ string) ([]oms.SearchResult, error) {

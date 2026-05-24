@@ -614,6 +614,14 @@ type ActionLog struct {
 	Status        string          `json:"status"`
 	ErrorMessage  string          `json:"errorMessage,omitempty"`
 	CreatedAt     time.Time       `json:"createdAt"`
+	// SideEffectStatus is the JSONB array of per-effect dispatch outcomes
+	// (PRD-V2 Gap-A4). Shape: [{type, status, attempts, error, durationMs}].
+	// Empty/nil when the action had no side effects, or when the row
+	// pre-dates migration 000213 (2026-05-24). Populated by the executor
+	// via UpdateActionLogSideEffectStatus after ExecuteSideEffectsWithOutcomes
+	// returns, so SDK clients can render per-effect status without scraping
+	// logs.
+	SideEffectStatus json.RawMessage `json:"sideEffectStatus,omitempty"`
 }
 
 // DatasourceBinding connects an ObjectType to its underlying data source.

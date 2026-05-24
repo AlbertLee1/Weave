@@ -1022,16 +1022,40 @@ func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prep
 		e.recordLineage(ctx, logRow.ID, p.Edits)
 	}
 
-	// Fire per-action side effects (best-effort, non-blocking).
+	// Fire per-action side effects (best-effort, non-blocking) and stamp
+	// the per-effect outcomes onto the action_logs row so the Foundry-
+	// style action history surface can render "webhook 1/2 succeeded on
+	// 2nd attempt" without scraping logs. Gap-A4 round 32 wiring.
 	for i, p := range prepared {
-		ExecuteSideEffects(p.ActionType.SideEffects, ActionResult{
+		outcomes, _ := ExecuteSideEffectsWithOutcomes(p.ActionType.SideEffects, ActionResult{
 			ActionRID: p.ActionType.RID,
 			BatchID:   batch.ID,
 			Edits:     result.Results[i].Edits,
 		})
+		e.persistSideEffectOutcomes(ctx, result.Results[i].ActionLogID, outcomes)
 	}
 
 	return result, nil
+}
+
+// persistSideEffectOutcomes marshals the per-effect outcomes and stamps
+// them onto action_logs.side_effect_status. Best-effort: a failed
+// persistence call (or a missing action log id from a degraded-mode
+// router) logs once and moves on — side-effect status is observability,
+// not a write barrier. Empty / nil outcomes skip the call entirely so
+// actions with no side effects don't churn the column.
+func (e *Executor) persistSideEffectOutcomes(ctx context.Context, actionLogID int64, outcomes []SideEffectOutcome) {
+	if actionLogID == 0 || len(outcomes) == 0 || e.omsRepo == nil {
+		return
+	}
+	payload, err := json.Marshal(outcomes)
+	if err != nil {
+		log.Printf("actions: failed to marshal side-effect outcomes for action_log %d: %v", actionLogID, err)
+		return
+	}
+	if err := e.omsRepo.UpdateActionLogSideEffectStatus(ctx, actionLogID, payload); err != nil {
+		log.Printf("actions: failed to persist side-effect outcomes for action_log %d: %v", actionLogID, err)
+	}
 }
 
 // Apply executes a single action. Preserved as the backwards-compatible entry
@@ -1356,13 +1380,16 @@ func (e *Executor) commitBatchAtomicTx(ctx context.Context, ontologyAPIName stri
 		e.recordLineage(ctx, logs[i].ID, p.Edits)
 	}
 
-	// Per-action side effects (best-effort, non-blocking). Mirrors CommitBatch.
+	// Per-action side effects (best-effort, non-blocking). Mirrors
+	// CommitBatch — stamps per-effect outcomes onto action_logs.
+	// side_effect_status via persistSideEffectOutcomes. Gap-A4 round 32.
 	for i, p := range prepared {
-		ExecuteSideEffects(p.ActionType.SideEffects, ActionResult{
+		outcomes, _ := ExecuteSideEffectsWithOutcomes(p.ActionType.SideEffects, ActionResult{
 			ActionRID: p.ActionType.RID,
 			BatchID:   batch.ID,
 			Edits:     result.Results[i].Edits,
 		})
+		e.persistSideEffectOutcomes(ctx, logs[i].ID, outcomes)
 	}
 
 	return result, nil

@@ -133,6 +133,12 @@ type Repository interface {
 	ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error)
 	CountActionLogs(ctx context.Context, actionTypeRID string) (int, error)
 	UpdateActionLogStatus(ctx context.Context, id int64, status string) error
+	// UpdateActionLogSideEffectStatus persists the per-effect dispatch
+	// outcomes (PRD-V2 Gap-A4) for the given action_logs row. status is a
+	// JSON array of {type, status, attempts, error, durationMs} objects.
+	// nil/empty payload is allowed and stores SQL NULL — callers can use
+	// this to clear the column or skip the update entirely.
+	UpdateActionLogSideEffectStatus(ctx context.Context, id int64, status json.RawMessage) error
 
 	// ObjectHistory (Tier 2.3)
 	InsertObjectHistory(ctx context.Context, h *ObjectHistory) error

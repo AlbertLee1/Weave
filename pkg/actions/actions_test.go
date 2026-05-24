@@ -208,6 +208,13 @@ func (m *mockOmsRepo) InsertActionLog(_ context.Context, log *oms.ActionLog) err
 	// from the same pointer they handed to this stub.
 	log.ID = int64(len(m.insertedLogs)) + 1
 	m.insertedLogs = append(m.insertedLogs, log)
+	// Mirror into actionLogByID so UpdateActionLog* lookups land on the
+	// same pointer the test holds — needed for the round-32 side-effect
+	// status persistence path which Update-after-Inserts.
+	if m.actionLogByID == nil {
+		m.actionLogByID = map[int64]*oms.ActionLog{}
+	}
+	m.actionLogByID[log.ID] = log
 	return nil
 }
 func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
@@ -226,6 +233,15 @@ func (m *mockOmsRepo) UpdateActionLogStatus(_ context.Context, id int64, status 
 	if m.actionLogByID != nil {
 		if al, ok := m.actionLogByID[id]; ok {
 			al.Status = status
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+func (m *mockOmsRepo) UpdateActionLogSideEffectStatus(_ context.Context, id int64, status json.RawMessage) error {
+	if m.actionLogByID != nil {
+		if al, ok := m.actionLogByID[id]; ok {
+			al.SideEffectStatus = status
 			return nil
 		}
 	}
