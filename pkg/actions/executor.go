@@ -463,6 +463,16 @@ func (e *BatchError) Unwrap() error {
 // does NOT publish to NATS, write the action log, or fire side effects. The
 // returned PreparedAction can be committed later via CommitBatch.
 func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRequest) (*PreparedAction, error) {
+	actionName := ""
+	if req != nil {
+		actionName = req.ActionType
+	}
+	ctx, span := tracing.StartSpan(ctx, "actions.Prepare",
+		attribute.String("ontology.rid", ontologyRID),
+		attribute.String("action.type", actionName),
+	)
+	defer span.End()
+
 	// Step 1: Look up ActionType
 	actionTypes, err := e.omsRepo.ListActionTypes(ctx, ontologyRID)
 	if err != nil {
@@ -906,6 +916,12 @@ func tagEditsAsUserSource(edits []funnel.Edit) {
 // publisher can route the message onto a per-ontology NATS subject and the
 // consumer can apply edits to the per-ontology Bleve index.
 func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prepared []*PreparedAction) (*BatchResult, error) {
+	ctx, span := tracing.StartSpan(ctx, "actions.CommitBatch",
+		attribute.String("ontology.rid", ontologyAPIName),
+		attribute.Int("batch.size", len(prepared)),
+	)
+	defer span.End()
+
 	result := &BatchResult{
 		Mode:    "atomic",
 		Results: make([]*ApplyResult, 0, len(prepared)),
@@ -1086,6 +1102,12 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 // *BatchError) so the handler routes it through staleObjectAPIError → 409
 // StaleObject, identical to the single-Apply 409 shape.
 func (e *Executor) ApplyBatchAtomic(ctx context.Context, ontologyRID string, reqs []ApplyRequest) (*BatchResult, error) {
+	ctx, span := tracing.StartSpan(ctx, "actions.ApplyBatchAtomic",
+		attribute.String("ontology.rid", ontologyRID),
+		attribute.Int("batch.size", len(reqs)),
+	)
+	defer span.End()
+
 	prepared := make([]*PreparedAction, 0, len(reqs))
 	for i := range reqs {
 		p, err := e.Prepare(ctx, ontologyRID, &reqs[i])
@@ -1134,6 +1156,12 @@ func (e *Executor) enforceBatchOptimisticLock(ctx context.Context, ontologyRID s
 // the returned BatchResult; a publish failure is still returned as an error
 // because "commit what you can" cannot partially commit a single NATS message.
 func (e *Executor) ApplyBatchBestEffort(ctx context.Context, ontologyRID string, reqs []ApplyRequest) (*BatchResult, error) {
+	ctx, span := tracing.StartSpan(ctx, "actions.ApplyBatchBestEffort",
+		attribute.String("ontology.rid", ontologyRID),
+		attribute.Int("batch.size", len(reqs)),
+	)
+	defer span.End()
+
 	var prepared []*PreparedAction
 	var failures []BatchFailure
 	for i := range reqs {
@@ -1186,6 +1214,12 @@ func (e *Executor) ApplyBatchAtomicTx(ctx context.Context, ontologyRID string, r
 	if e.atomicLogStore == nil {
 		return e.ApplyBatchAtomic(ctx, ontologyRID, reqs)
 	}
+
+	ctx, span := tracing.StartSpan(ctx, "actions.ApplyBatchAtomicTx",
+		attribute.String("ontology.rid", ontologyRID),
+		attribute.Int("batch.size", len(reqs)),
+	)
+	defer span.End()
 
 	prepared := make([]*PreparedAction, 0, len(reqs))
 	for i := range reqs {
