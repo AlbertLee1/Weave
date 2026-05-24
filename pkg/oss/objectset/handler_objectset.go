@@ -1,6 +1,7 @@
 package objectset
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/pagination"
+	"github.com/liyang/weave/pkg/oss/where"
 )
 
 // GetObjectSet handles GET /api/v2/ontologies/{o}/objectSets/{objectSetRid}.
@@ -67,7 +69,14 @@ func (h *Handler) LoadLinks(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.executor.Execute(ctx, searchAroundDef)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("LoadLinksFailed", map[string]string{"error": err.Error()}))
+		// Round 37: sentinel routing — user-side definition / where
+		// errors stay 400 InvalidObjectSet; everything else is server-
+		// side → 500 LoadLinksFailed.
+		if errors.Is(err, ErrInvalidObjectSetDefinition) || errors.Is(err, where.ErrInvalidWhereClause) {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidObjectSet", map[string]string{"error": err.Error()}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("LoadLinksFailed", map[string]string{"error": err.Error()}))
 		return
 	}
 

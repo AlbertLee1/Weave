@@ -18,6 +18,7 @@ import (
 	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/pagination"
+	"github.com/liyang/weave/pkg/oss/where"
 )
 
 // LoadObjectSetRequest is the Palantir V2 request format for loadObjects.
@@ -186,10 +187,21 @@ func (h *Handler) applyPropertyVisibility(ctx context.Context, objectType string
 	return out, nil
 }
 
-// executeError maps an executor error to a typed APIError. Most failures
-// degrade to INVALID_ARGUMENT (the historical "ObjectSetFailed" envelope);
-// the multi-hop searchAround intermediate-cap breach (US-366) is promoted
-// to WEAVE_QUERY_TOO_LARGE / 422 so SDK clients can surface a stable code.
+// executeError maps an executor error to a typed APIError.
+//
+//   - ErrQueryTooLarge → 422 WEAVE_QUERY_TOO_LARGE (US-366 multi-hop
+//     searchAround intermediate-cap breach)
+//   - ErrInvalidObjectSetDefinition OR where.ErrInvalidWhereClause →
+//     400 InvalidObjectSet (round 37 wire-shape sentinel: definition
+//     shape problems + bad where clauses are user-side)
+//   - any other error → 500 ObjectSetFailed (round 37 fix: was 400
+//     INVALID_ARGUMENT, but Bleve/PG outages and policy-resolver
+//     failures are server-side)
+//
+// where.ErrInvalidWhereClause from round 36 already gets wrapped at
+// the converter; the executor's `%w` chain through executeFilter /
+// executeBase preserves it so errors.Is at the handler boundary sees
+// both sentinels.
 func executeError(err error) *apierror.APIError {
 	if errors.Is(err, ErrQueryTooLarge) {
 		return apierror.NewQueryTooLarge("SearchAroundQueryTooLarge", map[string]string{
@@ -197,7 +209,10 @@ func executeError(err error) *apierror.APIError {
 			"cap":   strconv.Itoa(SearchAroundIntermediateCap),
 		})
 	}
-	return apierror.NewInvalidParameter("ObjectSetFailed", map[string]string{"error": err.Error()})
+	if errors.Is(err, ErrInvalidObjectSetDefinition) || errors.Is(err, where.ErrInvalidWhereClause) {
+		return apierror.NewInvalidParameter("InvalidObjectSet", map[string]string{"error": err.Error()})
+	}
+	return apierror.NewInternal("ObjectSetFailed", map[string]string{"error": err.Error()})
 }
 
 // LoadObjects handles POST /api/v2/ontologies/{ont}/objectSets/loadObjects.

@@ -221,7 +221,10 @@ func (e *Executor) Execute(ctx context.Context, def *Definition) (*Result, error
 		// dashboard can spot SDK clients sending malformed bodies
 		// without conflating them with backend-level errors.
 		metrics.ObserveObjectSetExecute("invalid", "error", 0)
-		return nil, err
+		// Round 37: wrap with the user-side sentinel so handlers route
+		// to 400 InvalidObjectSet rather than 500 — Definition.Validate
+		// only reports shape problems the caller can fix.
+		return nil, fmt.Errorf("%w: %w", ErrInvalidObjectSetDefinition, err)
 	}
 	defType := def.Type
 	start := time.Now()
@@ -267,9 +270,14 @@ func (e *Executor) execute(ctx context.Context, def *Definition) (*Result, error
 	case "sample":
 		return e.executeSample(ctx, def)
 	case "methodInput":
-		return nil, fmt.Errorf("methodInput objectSet not yet supported: bind at function invocation time")
+		// Round 37: caller-side error — methodInput is a user-supplied
+		// type the executor explicitly rejects at runtime.
+		return nil, fmt.Errorf("%w: methodInput objectSet not yet supported: bind at function invocation time",
+			ErrInvalidObjectSetDefinition)
 	default:
-		return nil, fmt.Errorf("unknown objectSet type: %q", def.Type)
+		// Round 37: caller supplied an unknown type. User-side bug.
+		return nil, fmt.Errorf("%w: unknown objectSet type: %q",
+			ErrInvalidObjectSetDefinition, def.Type)
 	}
 }
 
@@ -548,13 +556,18 @@ func (e *Executor) executeFilter(ctx context.Context, def *Definition) (*Result,
 		return nil, fmt.Errorf("execute filter base: %w", err)
 	}
 
-	// Parse the where clause
+	// Parse the where clause. Bad JSON is user-side; wrap with the
+	// round-37 sentinel so the handler routes to 400 InvalidObjectSet
+	// rather than 500.
 	var clause where.WhereClause
 	if err := json.Unmarshal(def.Where, &clause); err != nil {
-		return nil, fmt.Errorf("parse where clause: %w", err)
+		return nil, fmt.Errorf("%w: parse where clause: %w", ErrInvalidObjectSetDefinition, err)
 	}
 
-	// Convert to Bleve query
+	// Convert to Bleve query. The converter already wraps its errors
+	// with where.ErrInvalidWhereClause (round 36); just chain via %w
+	// so the handler's errors.Is at the handler boundary still sees
+	// the sentinel.
 	bleveQuery, err := where.ConvertToBleveQuery(&clause)
 	if err != nil {
 		return nil, fmt.Errorf("convert where clause: %w", err)
