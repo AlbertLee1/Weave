@@ -78,7 +78,16 @@ func (h *Handler) InferSchema(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var req InferRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Inline P2A-30x ambiguous-JSON hardening: we keep the 8 MiB
+	// MaxInferenceRequestBytes cap that httputil.ReadJSON's 1 MiB
+	// default cannot accommodate (Foundry-style schema inference
+	// has to be able to swallow a few MB of inline CSV / JSON
+	// samples). The single-value check below mirrors what
+	// httputil.ReadJSON does — reject smuggled trailing JSON so
+	// audit pipelines can't see a different inference target than
+	// what landed in storage.
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			apierror.WriteJSON(w, apierror.NewInvalidParameter("SampleTooLarge", map[string]string{
@@ -88,6 +97,13 @@ func (h *Handler) InferSchema(w http.ResponseWriter, r *http.Request) {
 		}
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
 			"reason": err.Error(),
+		}))
+		return
+	}
+	var extra interface{}
+	if err := dec.Decode(&extra); err != io.EOF {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": "request body must contain a single JSON value",
 		}))
 		return
 	}
