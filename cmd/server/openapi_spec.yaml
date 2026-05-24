@@ -5764,6 +5764,52 @@ paths:
                       $ref: "#/components/schemas/ValueType"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/getByRidBatch:
+    post:
+      operationId: getSharedPropertyTypesByRidBatch
+      summary: Batch lookup shared property types by RIDs (round 85)
+      description: |
+        Extends the batch-get-by-RID convention beyond the five core
+        metadata kinds (objectTypes + actionTypes + linkTypes round-79
+        + interfaceTypes round-81 + valueTypes round-83) to
+        SharedPropertyTypes — the reusable property definitions
+        consumed by Interfaces and as an include-pool for ObjectType
+        properties. Property editors and interface designers rendering
+        many shared-property metadatas no longer need N round-trips.
+        Missing RIDs are silently skipped — matches the established
+        convention so partial-render logic stays portable across all
+        batch surfaces.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of SharedProperty RIDs to look up.
+      responses:
+        "200":
+          description: Batch shared property type list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SharedProperty"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}:
     get:
       operationId: getActionType

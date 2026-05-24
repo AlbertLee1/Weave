@@ -272,6 +272,37 @@ func (h *OMSHandler) GetActionTypesByRidBatchV2(w http.ResponseWriter, r *http.R
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
 }
 
+// GetSharedPropertyTypesByRidBatchV2 handles POST /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/getByRidBatch.
+// Round 85 extends the batch-get-by-RID convention beyond the five
+// core metadata kinds (objectTypes / actionTypes / linkTypes /
+// interfaceTypes / valueTypes) to SharedPropertyTypes — the
+// reusable property definitions used by Interfaces and as an
+// include-pool for ObjectType properties. Property editors and
+// interface designers rendering many shared-property metadatas
+// no longer need N round-trips. Reuses shared getByRidBatchRequest.
+// Missing RIDs silently skipped (same convention). SharedProperty
+// serialises directly via the JSON encoder — no ToWireJSON helper.
+func (h *OMSHandler) GetSharedPropertyTypesByRidBatchV2(w http.ResponseWriter, r *http.Request) {
+	var req getByRidBatchRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	out := make([]*SharedProperty, 0, len(req.RIDs))
+	for _, rid := range req.RIDs {
+		sp, err := h.repo.GetSharedProperty(r.Context(), rid)
+		if err != nil {
+			continue
+		}
+		out = append(out, sp)
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": out})
+}
+
 // GetValueTypesByRidBatchV2 handles POST /api/v2/ontologies/{ontologyApiName}/valueTypes/getByRidBatch.
 // Round 83 closes the batch-get symmetry across all five metadata
 // kinds (objectTypes + actionTypes + linkTypes round-79 +
