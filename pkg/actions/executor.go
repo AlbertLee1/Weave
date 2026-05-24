@@ -13,6 +13,7 @@ import (
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
+	"github.com/liyang/weave/pkg/metrics"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/tracing"
 	"github.com/liyang/weave/pkg/types"
@@ -1120,8 +1121,20 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 	)
 	defer span.End()
 
+	// Gap-O1 round 41: emit weave_actions_applied_total + weave_actions
+	// _duration_seconds. Histogram + counter were registered in
+	// pkg/metrics but no caller fired them until this round. Label by
+	// actionName (api name) — cardinality bounded by the number of
+	// declared action types in the ontology, no PII risk.
+	applyStart := time.Now()
+	var applyErr error
+	defer func() {
+		metrics.ActionApplied(actionName, applyErr, time.Since(applyStart))
+	}()
+
 	prep, err := e.Prepare(ctx, ontologyRID, req)
 	if err != nil {
+		applyErr = err
 		return nil, err
 	}
 
@@ -1133,6 +1146,7 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 	// rather than the pure request → edits transform.
 	if hasOptimisticLockOptions(req.Options) {
 		if err := e.checkExpectedVersions(ctx, ontologyRID, prep.Edits, req.Options); err != nil {
+			applyErr = err
 			return nil, err
 		}
 	}
@@ -1147,6 +1161,7 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 
 	br, err := e.CommitBatch(ctx, ontologyRID, []*PreparedAction{prep})
 	if err != nil {
+		applyErr = err
 		// Unwrap a *BatchError so the legacy Apply caller sees a plain
 		// string-shaped error (preserves wire compatibility with callers
 		// that predate BatchError).
