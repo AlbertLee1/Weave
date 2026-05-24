@@ -455,6 +455,32 @@ class AsyncOntologiesBatchByRidRound86Tests(unittest.IsolatedAsyncioTestCase):
                 result = await c.ontologies.get_type_groups_by_rid_batch("nw", [])
         self.assertEqual(result, [])
 
+    async def test_get_query_types_by_rid_batch_round90(self):
+        # Round 90 — async mirror of round-89 backend. Closes the
+        # SDK 8-of-8 batch parity with the backend's 8-of-8.
+        resp = json.dumps({"data": [
+            {"rid": "qt-1", "apiName": "topCustomers", "status": "ACTIVE"},
+            {"rid": "qt-2", "apiName": "openOrders", "status": "ACTIVE"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/queryTypes/getByRidBatch":
+                  (200, resp)}
+        with _StubServer(routes) as srv:
+            async with WeaveAsyncClient(srv.url, access_token="t") as c:
+                result = await c.ontologies.get_query_types_by_rid_batch(
+                    "nw", ["qt-1", "qt-2"])
+                sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"rids": ["qt-1", "qt-2"]})
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["apiName"], "topCustomers")
+
+    async def test_get_query_types_by_rid_batch_empty_data_round90(self):
+        routes = {"POST /api/v2/ontologies/nw/queryTypes/getByRidBatch":
+                  (200, '{"data":[]}')}
+        with _StubServer(routes) as srv:
+            async with WeaveAsyncClient(srv.url, access_token="t") as c:
+                result = await c.ontologies.get_query_types_by_rid_batch("nw", [])
+        self.assertEqual(result, [])
+
 
 if __name__ == "__main__":
     unittest.main()

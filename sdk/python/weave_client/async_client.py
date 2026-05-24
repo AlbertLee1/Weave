@@ -354,6 +354,16 @@ class AsyncOntologiesAPI:
         )
         return (body or {}).get("data", [])
 
+    async def get_query_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        body = await self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/queryTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
     async def get_action_type_full_metadata(
         self, ontology: str, action_type: str
     ) -> Dict[str, Any]:

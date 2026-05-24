@@ -430,6 +430,42 @@ class BatchByRidRound84Tests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["rid"], "tg-1")
 
+    # ---- round 90 — queryTypes batch wrapper (closes 8-of-8) ----------
+
+    def test_get_query_types_by_rid_batch_posts_rids(self):
+        # Round 90 mirrors round-89 backend on the sync SDK surface.
+        # 8-of-8 sync helpers in lockstep with 8-of-8 backend.
+        resp = json.dumps({"data": [
+            {"rid": "qt-1", "apiName": "topCustomers", "displayName": "Top Customers",
+             "status": "ACTIVE"},
+            {"rid": "qt-2", "apiName": "openOrders", "displayName": "Open Orders",
+             "status": "ACTIVE"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/queryTypes/getByRidBatch":
+                  (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_query_types_by_rid_batch(
+                "nw", ["qt-1", "qt-2"])
+            sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"rids": ["qt-1", "qt-2"]})
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["apiName"], "topCustomers")
+        self.assertEqual(result[1]["status"], "ACTIVE")
+
+    def test_get_query_types_by_rid_batch_partial_resolve(self):
+        resp = json.dumps({"data": [
+            {"rid": "qt-1", "apiName": "topCustomers", "status": "ACTIVE"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/queryTypes/getByRidBatch":
+                  (200, resp)}
+        with _StubServer(routes) as srv:
+            c = Client(srv.url, access_token="t")
+            result = c.ontologies.get_query_types_by_rid_batch(
+                "nw", ["qt-1", "ghost-99"])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["rid"], "qt-1")
+
 
 if __name__ == "__main__":
     unittest.main()
