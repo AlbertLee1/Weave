@@ -49,9 +49,20 @@ type Definition struct {
 	// setting both. A list with a single entry is allowed and behaves
 	// identically to the singular form.
 	PropertyIdentifiers []PropertyIdentifier `json:"propertyIdentifiers,omitempty"`
-	NumNeighbors        *int                 `json:"numNeighbors,omitempty"`
-	SimilarityThreshold *float64             `json:"similarityThreshold,omitempty"`
-	Query               *NNQuery             `json:"query,omitempty"`
+	// FusionStrategy (Gap-Q4 follow-up, round 50) selects how
+	// multi-column NN matches are combined. Allowed values:
+	//   - ""    — defaults to "min" (backwards-compat with round 49)
+	//   - "min" — keep minimum distance per primary key, sort ascending
+	//   - "rrf" — Reciprocal Rank Fusion (Cormack et al., k=60):
+	//             score(pk) = sum_c 1 / (60 + rank_c(pk))
+	//             ranks start at 1, absent PKs contribute 0,
+	//             sort by score descending.
+	// Ignored on single-column queries (no fusion needed). Unknown
+	// values are rejected at Validate().
+	FusionStrategy      string   `json:"fusionStrategy,omitempty"`
+	NumNeighbors        *int     `json:"numNeighbors,omitempty"`
+	SimilarityThreshold *float64 `json:"similarityThreshold,omitempty"`
+	Query               *NNQuery `json:"query,omitempty"`
 
 	// For "withProperties"
 	Properties []string `json:"properties,omitempty"`
@@ -202,6 +213,12 @@ func (d *Definition) Validate() error {
 		}
 		if !hasSingular && !hasPlural {
 			return fmt.Errorf("nearestNeighbors requires propertyIdentifier or propertyIdentifiers")
+		}
+		switch d.FusionStrategy {
+		case "", "min", "rrf":
+			// accepted
+		default:
+			return fmt.Errorf("nearestNeighbors: unknown fusionStrategy %q (allowed: \"\" / \"min\" / \"rrf\")", d.FusionStrategy)
 		}
 	case "withProperties":
 		if d.ObjectSet == nil {

@@ -130,10 +130,10 @@ func (e *Executor) executeNearestNeighbors(ctx context.Context, def *Definition)
 		}, nil
 	}
 
-	// Multi-column path: one store call per column, then fuse by
-	// keeping the minimum distance per PK. A PK that ranks well on
-	// any single column will float to the top of the fused list.
-	bestDistance := make(map[string]float32, len(inner.PrimaryKeys))
+	// Multi-column path: one store call per column. The per-column
+	// match lists are kept so the chosen fusion strategy can score
+	// them (min-distance discards ranks; RRF needs them).
+	perColumn := make([][]NearestNeighborMatch, 0, len(propAPINames))
 	for _, prop := range propAPINames {
 		q := baseQ
 		q.PropertyAPIName = prop
@@ -141,19 +141,40 @@ func (e *Executor) executeNearestNeighbors(ctx context.Context, def *Definition)
 		if err != nil {
 			return nil, fmt.Errorf("nearestNeighbors store (column %q): %w", prop, err)
 		}
+		perColumn = append(perColumn, matches)
+	}
+
+	var fusedPKs []string
+	switch def.FusionStrategy {
+	case "rrf":
+		fusedPKs = fuseRRF(perColumn, k)
+	default: // "" and "min"
+		fusedPKs = fuseMinDistance(perColumn, k)
+	}
+
+	return &Result{
+		ObjectType:  inner.ObjectType,
+		PrimaryKeys: fusedPKs,
+		Truncated:   inner.Truncated,
+	}, nil
+}
+
+// fuseMinDistance combines per-column NN results by keeping the
+// smallest distance per primary key, sorts ascending, breaks ties on
+// PK for determinism, then truncates to k.
+func fuseMinDistance(perColumn [][]NearestNeighborMatch, k int) []string {
+	best := make(map[string]float32)
+	for _, matches := range perColumn {
 		for _, m := range matches {
-			if prev, seen := bestDistance[m.PrimaryKey]; !seen || m.Distance < prev {
-				bestDistance[m.PrimaryKey] = m.Distance
+			if prev, seen := best[m.PrimaryKey]; !seen || m.Distance < prev {
+				best[m.PrimaryKey] = m.Distance
 			}
 		}
 	}
-
-	fused := make([]NearestNeighborMatch, 0, len(bestDistance))
-	for pk, d := range bestDistance {
+	fused := make([]NearestNeighborMatch, 0, len(best))
+	for pk, d := range best {
 		fused = append(fused, NearestNeighborMatch{PrimaryKey: pk, Distance: d})
 	}
-	// Ascending distance — lower is closer. Ties broken on PK so the
-	// ordering is deterministic across runs.
 	sort.Slice(fused, func(i, j int) bool {
 		if fused[i].Distance != fused[j].Distance {
 			return fused[i].Distance < fused[j].Distance
@@ -163,16 +184,55 @@ func (e *Executor) executeNearestNeighbors(ctx context.Context, def *Definition)
 	if len(fused) > k {
 		fused = fused[:k]
 	}
-
 	pks := make([]string, 0, len(fused))
 	for _, m := range fused {
 		pks = append(pks, m.PrimaryKey)
 	}
-	return &Result{
-		ObjectType:  inner.ObjectType,
-		PrimaryKeys: pks,
-		Truncated:   inner.Truncated,
-	}, nil
+	return pks
+}
+
+// rrfK is the smoothing constant from the original RRF paper (Cormack
+// et al., 2009). 60 is the de-facto industry default — small enough
+// that top-ranked items still dominate, large enough that absent or
+// late-ranked items don't get zeroed out completely.
+const rrfK = 60.0
+
+// fuseRRF implements Reciprocal Rank Fusion across per-column NN
+// results. Each PK's score is the sum of 1/(rrfK+rank) across the
+// columns where it appears (rank starts at 1; absent PKs contribute
+// 0). Sort descending by score, break ties on PK for determinism,
+// truncate to k. RRF rewards PKs that appear in multiple columns —
+// the property min-distance fusion cannot express.
+func fuseRRF(perColumn [][]NearestNeighborMatch, k int) []string {
+	score := make(map[string]float64)
+	for _, matches := range perColumn {
+		for rank, m := range matches {
+			// rank is 0-based in range; the RRF formula uses 1-based.
+			score[m.PrimaryKey] += 1.0 / (rrfK + float64(rank+1))
+		}
+	}
+	type rrfRow struct {
+		PK    string
+		Score float64
+	}
+	rows := make([]rrfRow, 0, len(score))
+	for pk, s := range score {
+		rows = append(rows, rrfRow{PK: pk, Score: s})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Score != rows[j].Score {
+			return rows[i].Score > rows[j].Score
+		}
+		return rows[i].PK < rows[j].PK
+	})
+	if len(rows) > k {
+		rows = rows[:k]
+	}
+	pks := make([]string, 0, len(rows))
+	for _, r := range rows {
+		pks = append(pks, r.PK)
+	}
+	return pks
 }
 
 // nnPropertyAPINames resolves the per-column dispatch list from either
