@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oss/aggregation"
 	"github.com/liyang/weave/pkg/oss/where"
@@ -207,7 +208,7 @@ func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req aggregation.AggregationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidAggregationRequest", map[string]string{
 			"reason": err.Error(),
 		}))

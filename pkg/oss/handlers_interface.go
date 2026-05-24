@@ -119,7 +119,7 @@ func (h *Handler) InterfaceAggregateObjects(w http.ResponseWriter, r *http.Reque
 	}
 
 	var req aggregation.AggregationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidAggregationRequest", map[string]string{
 			"reason": err.Error(),
 		}))
