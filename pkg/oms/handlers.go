@@ -431,6 +431,53 @@ func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Reques
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
 }
 
+// ListIncomingLinkTypes handles GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/incomingLinkTypes.
+// Round 77: closes the symmetry gap with ListOutgoingLinkTypes. Returns
+// every LinkType whose TargetObjectType matches the resolved ObjectType
+// (i.e. the links pointing INTO this type). The repo method existed
+// long ago with PG impl + mocks; previously no HTTP endpoint surfaced
+// it, so the ObjectType detail page had to scan every ObjectType and
+// call the outgoing direction N times to render the "incoming links"
+// panel.
+func (h *OMSHandler) ListIncomingLinkTypes(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	apiName := chi.URLParam(r, "objectTypeApiName")
+
+	ot, err := repo.GetObjectTypeByAPIName(r.Context(), ontologyRID, apiName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
+				"objectTypeApiName": apiName,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectTypeFailed", nil))
+		return
+	}
+
+	list, err := repo.ListIncomingLinkTypes(r.Context(), ot.RID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListIncomingLinkTypesFailed", nil))
+		return
+	}
+
+	wireList := make([]json.RawMessage, 0, len(list))
+	for i := range list {
+		data, err := list[i].ToWireJSON()
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
+			return
+		}
+		wireList = append(wireList, json.RawMessage(data))
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
+}
+
 // ListActionTypes handles GET /api/v2/ontologies/{ontologyApiName}/actionTypes.
 func (h *OMSHandler) ListActionTypes(w http.ResponseWriter, r *http.Request) {
 	repo, ok := h.resolveRepo(w, r)

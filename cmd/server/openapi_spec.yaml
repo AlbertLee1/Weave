@@ -5370,6 +5370,32 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/incomingLinkTypes:
+    get:
+      operationId: listIncomingLinkTypes
+      summary: List incoming link types for an object type (round 77)
+      description: |
+        Returns every LinkType whose TargetObjectType matches the
+        resolved ObjectType — the links pointing INTO this type.
+        Mirror of the outgoingLinkTypes surface; closes the
+        symmetry gap so the ObjectType detail page can render
+        "incoming links" without scanning every ObjectType in the
+        ontology and calling outgoingLinkTypes N times.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectTypeApiName"
+      responses:
+        "200":
+          description: Incoming link type list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/resolved:
     get:
       operationId: getObjectTypeResolved
