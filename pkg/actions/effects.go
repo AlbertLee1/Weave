@@ -2,12 +2,26 @@ package actions
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
+
+// sideEffectTracerName is the instrumentation library name for the
+// outbound side-effect dispatcher. Dashboards can group spans by this
+// name to isolate webhook traffic from the function-dispatcher spans
+// (round 52) that share the same package.
+const sideEffectTracerName = "github.com/liyang/weave/pkg/actions/sideeffects"
 
 // SideEffect defines an effect triggered after successful action execution.
 type SideEffect struct {
@@ -104,6 +118,15 @@ func ExecuteSideEffects(effectsJSON json.RawMessage, result ActionResult) error 
 	return err
 }
 
+// ExecuteSideEffectsCtx is the context-aware companion of
+// ExecuteSideEffects (round 53). New callers should prefer this form
+// so the outbound webhook span attaches under the upstream action
+// span and the receiver sees a connected trace.
+func ExecuteSideEffectsCtx(ctx context.Context, effectsJSON json.RawMessage, result ActionResult) error {
+	_, _, err := ExecuteSideEffectsWithOutcomesCtx(ctx, effectsJSON, result)
+	return err
+}
+
 // ExecuteSideEffectsWithOutcomes is the structured-outcome variant of
 // ExecuteSideEffects. It returns one SideEffectOutcome per declared
 // effect AND the parsed []SideEffect slice (so callers that need the
@@ -122,6 +145,18 @@ func ExecuteSideEffects(effectsJSON json.RawMessage, result ActionResult) error 
 // effects[i] and outcomes[i] are index-aligned: callers can use the
 // same index to attribute an outcome back to its source SideEffect.
 func ExecuteSideEffectsWithOutcomes(effectsJSON json.RawMessage, result ActionResult) ([]SideEffectOutcome, []SideEffect, error) {
+	return ExecuteSideEffectsWithOutcomesCtx(context.Background(), effectsJSON, result)
+}
+
+// ExecuteSideEffectsWithOutcomesCtx is the context-aware companion
+// of ExecuteSideEffectsWithOutcomes (round 53). It threads ctx into
+// the webhook dispatcher so the outbound HTTP attempt uses
+// NewRequestWithContext (inherits cancellation from the calling
+// action) and the global propagator injects the active span's
+// TraceContext into the outbound headers. Legacy callers without a
+// context can still use ExecuteSideEffectsWithOutcomes; that shim
+// passes context.Background and the webhook spans become root spans.
+func ExecuteSideEffectsWithOutcomesCtx(ctx context.Context, effectsJSON json.RawMessage, result ActionResult) ([]SideEffectOutcome, []SideEffect, error) {
 	if len(effectsJSON) == 0 || string(effectsJSON) == "null" || string(effectsJSON) == "[]" {
 		return nil, nil, nil
 	}
@@ -142,7 +177,7 @@ func ExecuteSideEffectsWithOutcomes(effectsJSON json.RawMessage, result ActionRe
 
 	outcomes := make([]SideEffectOutcome, 0, len(effects))
 	for _, e := range effects {
-		outcome := dispatchSingleEffect(e, result)
+		outcome := dispatchSingleEffectCtx(ctx, e, result)
 		outcomes = append(outcomes, outcome)
 		if outcome.Status != SideEffectStatusSuccess {
 			log.Printf("side effect %q %s (attempts=%d): %s",
@@ -161,7 +196,7 @@ func ExecuteSideEffectsWithOutcomes(effectsJSON json.RawMessage, result ActionRe
 // action_logs.side_effect_status + DLQ writer code paths can record
 // the result.
 func ReplaySideEffect(e SideEffect, result ActionResult) SideEffectOutcome {
-	return dispatchSingleEffect(e, result)
+	return dispatchSingleEffectCtx(context.Background(), e, result)
 }
 
 // dispatchSingleEffect runs a single effect and returns its outcome.
@@ -169,12 +204,20 @@ func ReplaySideEffect(e SideEffect, result ActionResult) SideEffectOutcome {
 // returned as a Go error, because the caller's per-effect isolation
 // guarantee depends on this method being non-panicking.
 func dispatchSingleEffect(e SideEffect, result ActionResult) SideEffectOutcome {
+	return dispatchSingleEffectCtx(context.Background(), e, result)
+}
+
+// dispatchSingleEffectCtx is the ctx-aware dispatch path used by the
+// round-53 tracing wiring. The ctx flows into the webhook attempt
+// loop so each outbound HTTP call uses NewRequestWithContext and the
+// active span's TraceContext is propagated.
+func dispatchSingleEffectCtx(ctx context.Context, e SideEffect, result ActionResult) SideEffectOutcome {
 	started := time.Now()
 	out := SideEffectOutcome{Type: e.Type}
 
 	switch e.Type {
 	case "webhook":
-		attempts, classification, err := executeWebhookEffectTracked(e.Config, result)
+		attempts, classification, err := executeWebhookEffectTrackedCtx(ctx, e.Config, result)
 		out.Attempts = attempts
 		out.Status = classification
 		if err != nil {
@@ -207,6 +250,14 @@ func executeWebhookEffect(configJSON json.RawMessage, result ActionResult) error
 	return err
 }
 
+// executeWebhookEffectTrackedCtx is the ctx-aware variant the round-
+// 53 dispatcher uses. The ctx flows into doWebhookAttempt so the
+// outbound HTTP request inherits cancellation AND carries the active
+// span's W3C TraceContext.
+func executeWebhookEffectTrackedCtx(ctx context.Context, configJSON json.RawMessage, result ActionResult) (int, string, error) {
+	return executeWebhookEffectTrackedImpl(ctx, configJSON, result)
+}
+
 // executeWebhookEffectTracked runs the webhook retry loop and returns
 // (attempts, status, err). status is one of:
 //
@@ -220,6 +271,15 @@ func executeWebhookEffect(configJSON json.RawMessage, result ActionResult) error
 // surface as attempts=0 status=non_retryable — these block dispatch
 // before any HTTP call.
 func executeWebhookEffectTracked(configJSON json.RawMessage, result ActionResult) (int, string, error) {
+	return executeWebhookEffectTrackedImpl(context.Background(), configJSON, result)
+}
+
+// executeWebhookEffectTrackedImpl is the shared retry-loop body. ctx
+// is threaded into each attempt so doWebhookAttempt can both bind
+// the per-attempt request to ctx (inherits cancellation) AND let the
+// global propagator inject the active span's TraceContext into the
+// outbound headers.
+func executeWebhookEffectTrackedImpl(ctx context.Context, configJSON json.RawMessage, result ActionResult) (int, string, error) {
 	var cfg webhookConfig
 	if err := json.Unmarshal(configJSON, &cfg); err != nil {
 		return 0, SideEffectStatusNonRetryable, fmt.Errorf("webhook: invalid config: %w", err)
@@ -266,7 +326,7 @@ func executeWebhookEffectTracked(configJSON json.RawMessage, result ActionResult
 		}
 
 		attemptsMade++
-		statusCode, attemptErr := doWebhookAttempt(client, cfg, body)
+		statusCode, attemptErr := doWebhookAttemptCtx(ctx, client, cfg, body, attemptsMade)
 		if attemptErr == nil {
 			return attemptsMade, SideEffectStatusSuccess, nil
 		}
@@ -285,23 +345,72 @@ func executeWebhookEffectTracked(configJSON json.RawMessage, result ActionResult
 
 // doWebhookAttempt makes one HTTP call. Returns (statusCode, error).
 // statusCode is 0 when the request failed before getting a response
-// (network error / timeout) — treated as retryable.
+// (network error / timeout) — treated as retryable. Legacy ctx-less
+// shim retained so older tests / call sites that don't have a context
+// keep compiling; it delegates to doWebhookAttemptCtx with
+// context.Background and attempt=1.
 func doWebhookAttempt(client *http.Client, cfg webhookConfig, body []byte) (int, error) {
-	req, err := http.NewRequest(http.MethodPost, cfg.URL, bytes.NewReader(body))
+	return doWebhookAttemptCtx(context.Background(), client, cfg, body, 1)
+}
+
+// doWebhookAttemptCtx is the ctx-aware single-attempt dispatcher.
+// Round 53 added it so the per-attempt request can:
+//   - be built via http.NewRequestWithContext (inherits cancellation
+//     from the caller's ctx, e.g. action-level deadline),
+//   - have the active span's W3C TraceContext injected into outbound
+//     headers AFTER caller-supplied Headers (so callers cannot
+//     accidentally clobber traceparent),
+//   - run inside a per-attempt client-kind span named
+//     "sideeffect.webhook" with http.method / http.url /
+//     http.status_code / sideeffect.attempt attributes — letting
+//     dashboards count attempts and flag retry storms.
+//
+// attempt is 1-based so the attribute matches how operators count
+// (i.e. "the 3rd attempt failed", not "attempt 2").
+func doWebhookAttemptCtx(ctx context.Context, client *http.Client, cfg webhookConfig, body []byte, attempt int) (int, error) {
+	tracer := otel.GetTracerProvider().Tracer(sideEffectTracerName)
+	spanCtx, span := tracer.Start(ctx, "sideeffect.webhook",
+		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
+		oteltrace.WithAttributes(
+			attribute.String("http.method", http.MethodPost),
+			attribute.String("http.url", cfg.URL),
+			attribute.Int("sideeffect.attempt", attempt),
+		),
+	)
+	defer span.End()
+
+	req, err := http.NewRequestWithContext(spanCtx, http.MethodPost, cfg.URL, bytes.NewReader(body))
 	if err != nil {
+		span.SetStatus(codes.Error, "build request")
+		span.RecordError(err)
 		return 0, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range cfg.Headers {
 		req.Header.Set(k, v)
 	}
+	// Inject AFTER caller-supplied headers so traceparent always
+	// reflects the live span context — matches the round-52
+	// HTTPDispatcher invariant.
+	otel.GetTextMapPropagator().Inject(spanCtx, propagation.HeaderCarrier(req.Header))
+
 	resp, err := client.Do(req)
 	if err != nil {
+		span.SetStatus(codes.Error, "transport")
+		span.RecordError(err)
 		// Transport-level error — no status code yet. Always retryable.
 		return 0, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	span.SetAttributes(attribute.String("http.status_code", strconv.Itoa(resp.StatusCode)))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// 5xx / 408 / 429 are the transient set that retries will
+		// likely fix — still report Error on the span so head-based
+		// samplers keep the failing attempt visible. 4xx caller bugs
+		// stay Unset per OTel semantic conventions.
+		if resp.StatusCode >= 500 {
+			span.SetStatus(codes.Error, http.StatusText(resp.StatusCode))
+		}
 		return resp.StatusCode, fmt.Errorf("non-2xx response: %d", resp.StatusCode)
 	}
 	return resp.StatusCode, nil

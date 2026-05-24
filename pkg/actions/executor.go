@@ -1039,7 +1039,7 @@ func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prep
 	// 2nd attempt" without scraping logs. Gap-A4 round 32 wiring; round
 	// 33 also routes failed outcomes to the side-effect DLQ.
 	for i, p := range prepared {
-		outcomes, effects, _ := ExecuteSideEffectsWithOutcomes(p.ActionType.SideEffects, ActionResult{
+		outcomes, effects, _ := ExecuteSideEffectsWithOutcomesCtx(ctx, p.ActionType.SideEffects, ActionResult{
 			ActionRID: p.ActionType.RID,
 			BatchID:   batch.ID,
 			Edits:     result.Results[i].Edits,
