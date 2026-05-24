@@ -6,6 +6,7 @@ either spelling.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 try:
@@ -158,3 +159,16 @@ class LoginResponse(_CamelModel):
     token_type: str
     expires_in: int
     user: LoginUser
+
+
+class TimeSeriesPoint(_CamelModel):
+    """One sample on a TimeSeriesProperty / TimeSeriesValueBank.
+
+    The server emits ``{"time": "<RFC3339>", "value": <any>}``. Pydantic
+    parses ``time`` into a ``datetime`` (UTC) so callers can use it
+    directly in arithmetic without an extra parse step. ``value`` stays
+    ``Any`` because the schema varies per series (float for sensor
+    readings, string for state codes, bool for flags, etc.).
+    """
+    time: datetime
+    value: Any

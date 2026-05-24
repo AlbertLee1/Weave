@@ -49,6 +49,7 @@ class Client:
         from .objects import ObjectsAPI
         from .objectsets import ObjectSetsAPI
         from .ontologies import OntologiesAPI
+        from .timeseries import TimeSeriesAPI
         from .vertex import VertexAPI
 
         self.ontologies = OntologiesAPI(self)
@@ -56,6 +57,7 @@ class Client:
         self.actions = ActionsAPI(self)
         self.objectsets = ObjectSetsAPI(self)
         self.functions = FunctionsAPI(self)
+        self.timeseries = TimeSeriesAPI(self)
         self.vertex = VertexAPI(self)
 
     @property

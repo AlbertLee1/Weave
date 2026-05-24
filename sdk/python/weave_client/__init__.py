@@ -61,6 +61,7 @@ from .types import (
     ObjectType,
     Ontology,
     QueryType,
+    TimeSeriesPoint,
     ValueType,
     WireObject,
 )
@@ -98,6 +99,7 @@ __all__ = [
     "ValueType",
     "QueryType",
     "CountResponse",
+    "TimeSeriesPoint",
 ]
 
 __version__ = "0.1.0"
