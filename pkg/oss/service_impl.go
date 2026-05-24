@@ -515,6 +515,12 @@ func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*Wir
 
 // ListObjects lists objects of a given type with pagination.
 func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (*ObjectPage, error) {
+	ctx, span := tracing.StartSpan(ctx, "oss.ListObjects",
+		attribute.String("ontology.rid", req.OntologyRID),
+		attribute.String("object_type.api_name", req.ObjectType),
+	)
+	defer span.End()
+
 	ot, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType)
 	if err != nil {
 		return nil, err
@@ -599,6 +605,12 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 
 // SearchObjects searches objects using a where clause with pagination.
 func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsRequest) (*ObjectPage, error) {
+	ctx, span := tracing.StartSpan(ctx, "oss.SearchObjects",
+		attribute.String("ontology.rid", req.OntologyRID),
+		attribute.String("object_type.api_name", req.ObjectType),
+	)
+	defer span.End()
+
 	ot, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType)
 	if err != nil {
 		return nil, err
@@ -785,6 +797,13 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 //     filtered count short-circuit through DocCount, or a user with
 //     a restricting policy will over-count rows they cannot see.
 func (s *ServiceImpl) CountObjects(ctx context.Context, req CountObjectsRequest) (*CountObjectsResponse, error) {
+	ctx, span := tracing.StartSpan(ctx, "oss.CountObjects",
+		attribute.String("ontology.rid", req.OntologyRID),
+		attribute.String("object_type.api_name", req.ObjectType),
+		attribute.Bool("filter.where", req.Where != nil),
+	)
+	defer span.End()
+
 	ot, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType)
 	if err != nil {
 		return nil, err
@@ -907,6 +926,15 @@ func parseOrderBy(orderBy string) []string {
 // means the caller's req.ObjectType is the link's declared *target* and the
 // returned objects are instances of the link's declared *source*.
 func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRequest) (*ObjectPage, error) {
+	ctx, span := tracing.StartSpan(ctx, "oss.ListLinkedObjects",
+		attribute.String("ontology.rid", req.OntologyRID),
+		attribute.String("object_type.api_name", req.ObjectType),
+		attribute.String("object.primary_key", req.PrimaryKey),
+		attribute.String("link_type.api_name", req.LinkType),
+		attribute.String("link.direction", req.Direction),
+	)
+	defer span.End()
+
 	dir, err := links.ParseDirection(req.Direction)
 	if err != nil {
 		return nil, err
@@ -1085,6 +1113,16 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 // It verifies the target PK is actually linked via the specified link type before
 // returning it, returning ErrNotFound if the target is not linked.
 func (s *ServiceImpl) GetLinkedObject(ctx context.Context, req GetLinkedObjectRequest) (*WireObject, error) {
+	ctx, span := tracing.StartSpan(ctx, "oss.GetLinkedObject",
+		attribute.String("ontology.rid", req.OntologyRID),
+		attribute.String("object_type.api_name", req.ObjectType),
+		attribute.String("object.primary_key", req.PrimaryKey),
+		attribute.String("link_type.api_name", req.LinkType),
+		attribute.String("linked_object.primary_key", req.LinkedObjectPrimaryKey),
+		attribute.String("link.direction", req.Direction),
+	)
+	defer span.End()
+
 	dir, err := links.ParseDirection(req.Direction)
 	if err != nil {
 		return nil, err
