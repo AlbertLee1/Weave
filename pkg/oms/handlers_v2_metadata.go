@@ -272,6 +272,36 @@ func (h *OMSHandler) GetActionTypesByRidBatchV2(w http.ResponseWriter, r *http.R
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
 }
 
+// GetInterfaceTypesByRidBatchV2 handles POST /api/v2/ontologies/{ontologyApiName}/interfaceTypes/getByRidBatch.
+// Round 81 closes the batch-get symmetry across all four metadata
+// kinds (objectTypes + actionTypes + linkTypes round-79 + this).
+// SDK callers rendering many interface metadatas previously needed
+// N round-trips. Reuses shared getByRidBatchRequest. Missing RIDs
+// silently skipped (matches the established convention across the
+// other three surfaces). Interface struct serialises directly via
+// the JSON encoder — no ToWireJSON helper needed because Interface
+// has no signature-style fields requiring re-marshalling.
+func (h *OMSHandler) GetInterfaceTypesByRidBatchV2(w http.ResponseWriter, r *http.Request) {
+	var req getByRidBatchRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	out := make([]*Interface, 0, len(req.RIDs))
+	for _, rid := range req.RIDs {
+		iface, err := h.repo.GetInterface(r.Context(), rid)
+		if err != nil {
+			continue
+		}
+		out = append(out, iface)
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": out})
+}
+
 // GetLinkTypesByRidBatchV2 handles POST /api/v2/ontologies/{ontologyApiName}/linkTypes/getByRidBatch.
 // Batch lookup of LinkTypes by their RIDs. Round 79 closes the
 // symmetry gap with GetObjectTypesByRidBatchV2 + GetActionTypesByRid

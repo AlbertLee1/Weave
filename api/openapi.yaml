@@ -5677,6 +5677,49 @@ paths:
                 $ref: "#/components/schemas/LinkTypeListResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/interfaceTypes/getByRidBatch:
+    post:
+      operationId: getInterfaceTypesByRidBatch
+      summary: Batch lookup interface types by RIDs (round 81)
+      description: |
+        Completes the batch-get-by-RID symmetry across all four
+        OMS metadata kinds (objectTypes + actionTypes + linkTypes
+        round-79 + this). SDK callers rendering many interface
+        metadatas previously needed N round-trips. Missing RIDs
+        are silently skipped — matches the established convention
+        so partial-render logic stays portable across all four
+        batch surfaces.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of InterfaceType RIDs to look up.
+      responses:
+        "200":
+          description: Batch interface type list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Interface"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}:
     get:
       operationId: getActionType
