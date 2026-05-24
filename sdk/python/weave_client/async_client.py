@@ -97,6 +97,7 @@ class WeaveAsyncClient:
         self.actions = AsyncActionsAPI(self)
         self.objectsets = AsyncObjectSetsAPI(self)
         self.functions = AsyncFunctionsAPI(self)
+        self.transactions = AsyncTransactionsAPI(self)
 
     @property
     def token(self) -> str:
@@ -805,6 +806,60 @@ async def _consume_ndjson_async(
         yield obj
 
 
+class AsyncTransactionsAPI:
+    """Async mirror of TransactionsAPI (round 61, PRD-V2 Transaction
+    preview). Wraps the three OntologyTransaction preview endpoints
+    (POST .../edits, GET .../{id}, DELETE .../{id}) and attaches the
+    mandatory ?preview=true flag automatically so async callers don't
+    have to remember it. Returns the same dataclasses as the sync
+    sibling so application code can swap clients without touching
+    response handling.
+    """
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def append_edits(
+        self,
+        ontology: str,
+        transaction_id: str,
+        edits: List[Dict[str, Any]],
+    ) -> "TransactionAppendResponse":
+        from .transactions import TransactionAppendResponse
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/transactions/{quote_path(transaction_id)}/edits?preview=true"
+        )
+        resp = await self._client._request("POST", path, json_body={"edits": edits})
+        return TransactionAppendResponse(
+            transaction_id=str(resp.get("transactionId") or transaction_id),
+            appended_edits=int(resp.get("appendedEdits") or 0),
+            total_edits=int(resp.get("totalEdits") or 0),
+        )
+
+    async def get(self, ontology: str, transaction_id: str) -> "Transaction":
+        from .transactions import Transaction
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/transactions/{quote_path(transaction_id)}?preview=true"
+        )
+        resp = await self._client._request("GET", path)
+        edits = resp.get("edits") or []
+        return Transaction(
+            transaction_id=str(resp.get("transactionId") or transaction_id),
+            total_edits=int(resp.get("totalEdits") or 0),
+            edits=list(edits),
+        )
+
+    async def abort(self, ontology: str, transaction_id: str) -> None:
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/transactions/{quote_path(transaction_id)}?preview=true"
+        )
+        await self._client._request("DELETE", path)
+        return None
+
+
 __all__ = [
     "WeaveAsyncClient",
     "AsyncOntologiesAPI",
@@ -812,4 +867,5 @@ __all__ = [
     "AsyncActionsAPI",
     "AsyncObjectSetsAPI",
     "AsyncFunctionsAPI",
+    "AsyncTransactionsAPI",
 ]
