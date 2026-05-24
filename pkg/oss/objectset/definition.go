@@ -39,10 +39,19 @@ type Definition struct {
 	Reference string `json:"reference,omitempty"` // for "reference" — stored objectSet ID
 
 	// For "nearestNeighbors"
-	PropertyIdentifier  *PropertyIdentifier `json:"propertyIdentifier,omitempty"`
-	NumNeighbors        *int                `json:"numNeighbors,omitempty"`
-	SimilarityThreshold *float64            `json:"similarityThreshold,omitempty"`
-	Query               *NNQuery            `json:"query,omitempty"`
+	PropertyIdentifier *PropertyIdentifier `json:"propertyIdentifier,omitempty"`
+	// PropertyIdentifiers (Gap-Q4) enumerates multiple vector columns
+	// to run KNN against in parallel. The executor dispatches one
+	// store call per column and fuses the per-column matches by
+	// keeping the minimum distance per primary key, so a PK that is
+	// "close" on any single column floats to the top. Mutually
+	// exclusive with PropertyIdentifier (singular) — Validate rejects
+	// setting both. A list with a single entry is allowed and behaves
+	// identically to the singular form.
+	PropertyIdentifiers []PropertyIdentifier `json:"propertyIdentifiers,omitempty"`
+	NumNeighbors        *int                 `json:"numNeighbors,omitempty"`
+	SimilarityThreshold *float64             `json:"similarityThreshold,omitempty"`
+	Query               *NNQuery             `json:"query,omitempty"`
 
 	// For "withProperties"
 	Properties []string `json:"properties,omitempty"`
@@ -186,8 +195,13 @@ func (d *Definition) Validate() error {
 		if d.ObjectSet == nil {
 			return fmt.Errorf("nearestNeighbors requires objectSet")
 		}
-		if d.PropertyIdentifier == nil {
-			return fmt.Errorf("nearestNeighbors requires propertyIdentifier")
+		hasSingular := d.PropertyIdentifier != nil
+		hasPlural := len(d.PropertyIdentifiers) > 0
+		if hasSingular && hasPlural {
+			return fmt.Errorf("nearestNeighbors: propertyIdentifier and propertyIdentifiers are mutually exclusive")
+		}
+		if !hasSingular && !hasPlural {
+			return fmt.Errorf("nearestNeighbors requires propertyIdentifier or propertyIdentifiers")
 		}
 	case "withProperties":
 		if d.ObjectSet == nil {

@@ -3,6 +3,7 @@ package objectset
 import (
 	"context"
 	"fmt"
+	"sort"
 )
 
 // NNVectorQuery is the request the executor passes to a NNVectorStore. It
@@ -95,27 +96,76 @@ func (e *Executor) executeNearestNeighbors(ctx context.Context, def *Definition)
 		model = e.embedProvider.Model()
 	}
 
-	var propAPIName string
-	if def.PropertyIdentifier != nil {
-		propAPIName = def.PropertyIdentifier.Property.APIName
+	// Build the per-column dispatch list. The singular field and
+	// plural list are mutually exclusive (enforced by Validate) and
+	// at least one must be set, so this list has 1+ entries.
+	propAPINames := nnPropertyAPINames(def)
+
+	baseQ := NNVectorQuery{
+		Ontology:     OntologyScopeFromContextOrEmpty(ctx),
+		ObjectType:   inner.ObjectType,
+		QueryVector:  queryVec,
+		K:            k,
+		CandidatePKs: inner.PrimaryKeys,
+		Model:        model,
 	}
 
-	q := NNVectorQuery{
-		Ontology:        OntologyScopeFromContextOrEmpty(ctx),
-		ObjectType:      inner.ObjectType,
-		PropertyAPIName: propAPIName,
-		QueryVector:     queryVec,
-		K:               k,
-		CandidatePKs:    inner.PrimaryKeys,
-		Model:           model,
-	}
-	matches, err := e.vectorStore.FindNearestNeighbors(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("nearestNeighbors store: %w", err)
+	// Single-column fast path preserves byte-for-byte the legacy
+	// behaviour — same store call shape, same ordering.
+	if len(propAPINames) == 1 {
+		q := baseQ
+		q.PropertyAPIName = propAPINames[0]
+		matches, err := e.vectorStore.FindNearestNeighbors(ctx, q)
+		if err != nil {
+			return nil, fmt.Errorf("nearestNeighbors store: %w", err)
+		}
+		pks := make([]string, 0, len(matches))
+		for _, m := range matches {
+			pks = append(pks, m.PrimaryKey)
+		}
+		return &Result{
+			ObjectType:  inner.ObjectType,
+			PrimaryKeys: pks,
+			Truncated:   inner.Truncated,
+		}, nil
 	}
 
-	pks := make([]string, 0, len(matches))
-	for _, m := range matches {
+	// Multi-column path: one store call per column, then fuse by
+	// keeping the minimum distance per PK. A PK that ranks well on
+	// any single column will float to the top of the fused list.
+	bestDistance := make(map[string]float32, len(inner.PrimaryKeys))
+	for _, prop := range propAPINames {
+		q := baseQ
+		q.PropertyAPIName = prop
+		matches, err := e.vectorStore.FindNearestNeighbors(ctx, q)
+		if err != nil {
+			return nil, fmt.Errorf("nearestNeighbors store (column %q): %w", prop, err)
+		}
+		for _, m := range matches {
+			if prev, seen := bestDistance[m.PrimaryKey]; !seen || m.Distance < prev {
+				bestDistance[m.PrimaryKey] = m.Distance
+			}
+		}
+	}
+
+	fused := make([]NearestNeighborMatch, 0, len(bestDistance))
+	for pk, d := range bestDistance {
+		fused = append(fused, NearestNeighborMatch{PrimaryKey: pk, Distance: d})
+	}
+	// Ascending distance — lower is closer. Ties broken on PK so the
+	// ordering is deterministic across runs.
+	sort.Slice(fused, func(i, j int) bool {
+		if fused[i].Distance != fused[j].Distance {
+			return fused[i].Distance < fused[j].Distance
+		}
+		return fused[i].PrimaryKey < fused[j].PrimaryKey
+	})
+	if len(fused) > k {
+		fused = fused[:k]
+	}
+
+	pks := make([]string, 0, len(fused))
+	for _, m := range fused {
 		pks = append(pks, m.PrimaryKey)
 	}
 	return &Result{
@@ -123,6 +173,24 @@ func (e *Executor) executeNearestNeighbors(ctx context.Context, def *Definition)
 		PrimaryKeys: pks,
 		Truncated:   inner.Truncated,
 	}, nil
+}
+
+// nnPropertyAPINames resolves the per-column dispatch list from either
+// the singular PropertyIdentifier or the plural PropertyIdentifiers.
+// Validate guarantees exactly one is populated; this helper just
+// normalises both into a slice the executor can iterate over.
+func nnPropertyAPINames(def *Definition) []string {
+	if len(def.PropertyIdentifiers) > 0 {
+		out := make([]string, 0, len(def.PropertyIdentifiers))
+		for _, pi := range def.PropertyIdentifiers {
+			out = append(out, pi.Property.APIName)
+		}
+		return out
+	}
+	if def.PropertyIdentifier != nil {
+		return []string{def.PropertyIdentifier.Property.APIName}
+	}
+	return nil
 }
 
 // resolveNNQuery returns the float32 query vector for the given NNQuery.

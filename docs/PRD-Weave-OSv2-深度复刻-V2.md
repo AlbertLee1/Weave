@@ -95,7 +95,7 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 | OSS | Linked Objects (FK / M2M) | 🟢 | 🟢 | 🟡 | **80%** | FK forward+reverse 均 OK，M2M join_table OK。**M2M 在 ObjectSet 内部 searchAround 仍待验证** |
 | OSS | Aggregation | 🟢 | 🟢 Bleve facet | 🟢 | **95%** | count/sum/avg/min/max/stddev/variance/approxDistinct/approxPercentile + 5 种 groupBy；**Phase 6 Gate**: 多层 groupBy 稳定性 + ACCURATE/APPROXIMATE accuracy badge 覆盖 (US-039 + Playwright `aggregation-multi-groupby.spec.ts`) |
 | OSS | withProperties (derived) | 🟢 | n/a | 🟢 | **90%** | **Phase 6 Gate**: count/sum/avg/min/max 全端到端通过 (US-003, US-004, US-005, US-040)；composite-cursor 分页稳定性锁定；Playwright `withproperties-derived.spec.ts` 绿 |
-| OSS | nearestNeighbors (KNN) | 🟢 | 🟢 pgvector | 🟡 | **60%** | 单 PropertyIdentifier 字段、无混合搜索、无 reranking |
+| OSS | nearestNeighbors (KNN) | 🟢 | 🟢 pgvector | 🟡 | **75%** | 单字段+多字段（min-distance 融合）；仍无混合搜索（BM25+vector）、无 reranking |
 | OSS | Interface 多态 Load | 🟢 | 🟢 | 🟢 | **90%** | **Phase 6 Gate**: 多态 Load + composite/multi-type cursor + heap merge 全绿 (US-006..US-008, US-041)；Playwright `interface-multitype-paging.spec.ts` 驱动 3-type Northwind HasOwner interface paging |
 | OSS | ObjectSet 持久化 | 🟢 | 🟢 PG `saved_object_sets` | 🟢 | **85%** | temporary TTL 通过 store；`createTemporary` 已接入 |
 | Actions | 参数 / 规则 / 编辑生成 | 🟢 | 🟢 | 🟡 | **80%** | 规则引擎能 run；**submission criteria 表达力浅**，无内嵌脚本 |
@@ -241,10 +241,10 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 影响：可能导致数字悄悄错误。
 - 建议：加一套基准数据（Northwind orders by {country, quarter, priceBucket}）作为回归。
 
-**Gap-Q4 — nearestNeighbors 仅单字段**
-- 现状：NN 只接受一个 `PropertyIdentifier`，无法在多个 vector column 间组合，也无 "filter + KNN" 的 hybrid。
-- 影响：Foundry 的 "find similar employees in marketing dept" 写法不支持。
-- 建议：先支持 "filter then KNN"（把 Where 子句用 Bleve pre-filter，再对候选集做 pgvector 查询）。
+**Gap-Q4 — nearestNeighbors 多字段 / 混合搜索**
+- 现状：✅ "filter then KNN" 已支持（CandidatePKs 路由）；✅ 多 vector column（`PropertyIdentifiers []PropertyIdentifier`）已支持（round 49），每列单独 KNN 后按最小距离融合排序。
+- 仍缺：BM25 + vector 的真·混合检索；reranking（权重加权 / RRF / cross-encoder）。
+- 影响：当前已能支持 "find similar employees in marketing dept" 与 "搜两列向量取最近" 这两类 Foundry 写法；缺的混合检索属于 Foundry SHOULD 层，不阻塞 MUST 对齐。
 
 **Gap-Q5 — ObjectSet 跨 ontology 不支持**
 - 现状：Definition 里没有 ontology 字段，单一执行上下文。
