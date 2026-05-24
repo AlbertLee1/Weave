@@ -51,6 +51,7 @@ from .types import (
     ActionResults,
     ActionType,
     ApplyActionResponse,
+    Attachment,
     BatchApplyActionResponse,
     CountResponse,
     Edit,
@@ -100,6 +101,7 @@ __all__ = [
     "QueryType",
     "CountResponse",
     "TimeSeriesPoint",
+    "Attachment",
 ]
 
 __version__ = "0.1.0"

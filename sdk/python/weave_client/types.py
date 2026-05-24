@@ -172,3 +172,21 @@ class TimeSeriesPoint(_CamelModel):
     """
     time: datetime
     value: Any
+
+
+class Attachment(_CamelModel):
+    """Metadata for one blob in the attachment store (round 45).
+
+    Server emits camelCase; the SDK exposes both snake_case (via
+    Pydantic field alias) and the wire names. ``linked`` flips to
+    True the first time the blob is referenced from an attachment-
+    property value on a persisted object — a GC pass can safely
+    delete orphan blobs without losing user uploads that just
+    haven't been wired to an object yet.
+    """
+    rid: str
+    filename: str = ""
+    size_bytes: int = Field(default=0, alias="sizeBytes")
+    media_type: str = Field(default="", alias="mediaType")
+    created_at: Optional[datetime] = Field(default=None, alias="createdAt")
+    linked: bool = False

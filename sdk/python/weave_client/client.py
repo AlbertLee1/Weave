@@ -45,6 +45,7 @@ class Client:
 
         # Lazy import to avoid circular references at module-import time.
         from .actions import ActionsAPI
+        from .attachments import AttachmentsAPI
         from .functions import FunctionsAPI
         from .objects import ObjectsAPI
         from .objectsets import ObjectSetsAPI
@@ -58,6 +59,7 @@ class Client:
         self.objectsets = ObjectSetsAPI(self)
         self.functions = FunctionsAPI(self)
         self.timeseries = TimeSeriesAPI(self)
+        self.attachments = AttachmentsAPI(self)
         self.vertex = VertexAPI(self)
 
     @property
@@ -110,6 +112,60 @@ class Client:
             json_body=json_body,
         )
         return self._handle(resp)
+
+    def _upload_binary(
+        self,
+        method: str,
+        path: str,
+        *,
+        body: bytes,
+        content_type: str,
+        extra_headers: Optional[dict] = None,
+    ) -> Any:
+        """Send a raw-bytes request body and decode the JSON response.
+
+        Used by round-45 attachment uploads — the server's
+        ``/attachments/upload`` endpoint streams the request body
+        verbatim into the BlobStore. ``content_type`` is mandatory
+        because the server uses it to populate ``Attachment.media_type``
+        on the persisted blob.
+        """
+        url = self.base_url + path
+        headers = self._headers()
+        headers["Content-Type"] = content_type
+        if extra_headers:
+            headers = {**headers, **extra_headers}
+        resp = self._transport.request(
+            method, url, headers=headers, raw_body=body,
+        )
+        return self._handle(resp)
+
+    def _download_binary(
+        self,
+        method: str,
+        path: str,
+        *,
+        extra_headers: Optional[dict] = None,
+    ) -> bytes:
+        """Fetch a binary response body.
+
+        Returns the raw bytes; the caller is responsible for
+        interpreting them (e.g. image / archive payloads). On a
+        non-2xx the standard JSON error envelope path runs unchanged —
+        exceptions surface via ``_handle`` as usual.
+        """
+        url = self.base_url + path
+        headers = self._headers()
+        if extra_headers:
+            headers = {**headers, **extra_headers}
+        resp = self._transport.request(
+            method, url, headers=headers, accept_binary=True,
+        )
+        if 200 <= resp.status_code < 300:
+            return resp.body_bytes or b""
+        # Reuse the standard error-handling path on non-2xx.
+        self._handle(resp)
+        return b""  # unreachable; _handle raises
 
     @staticmethod
     def _handle(resp: HTTPResponse) -> Any:
