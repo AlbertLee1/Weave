@@ -107,7 +107,7 @@ func (h *datasetHistoryHandler) History(w http.ResponseWriter, r *http.Request) 
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("DatasetHistoryFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("DatasetHistoryFailed", map[string]string{
 			"rid":   rid,
 			"error": err.Error(),
 		}))
@@ -124,7 +124,7 @@ func (h *datasetHistoryHandler) History(w http.ResponseWriter, r *http.Request) 
 	const historyCap = 1000
 	rows, err := h.store.ListByOntology(r.Context(), ont.APIName, historyCap+1)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("DatasetHistoryFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("DatasetHistoryFailed", map[string]string{
 			"rid":   rid,
 			"error": err.Error(),
 		}))
