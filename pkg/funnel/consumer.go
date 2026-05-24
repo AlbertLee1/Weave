@@ -487,6 +487,34 @@ func (c *Consumer) LastOffset() uint64 {
 	return c.lastOffset.Load()
 }
 
+// Lag returns how many messages the consumer is behind the JetStream
+// stream tip on the OBJECT_EDITS stream. A return value of 0 means the
+// consumer is fully caught up or the stream is empty. The error path
+// returns a non-nil err when the JetStream context is not wired (the
+// consumer was never started) or when StreamInfo cannot reach the broker
+// — callers SHOULD propagate that error upward rather than treating it
+// as "zero lag", because a probe that cannot read the stream cannot
+// honestly assert the consumer is caught up. PRD-V2 §4.6 Gap-O4 wires
+// this into /health/ready via *ServerDeps.ProbeFunnel.
+func (c *Consumer) Lag() (uint64, error) {
+	if c == nil || c.js == nil {
+		return 0, fmt.Errorf("funnel consumer: jetstream not wired")
+	}
+	info, err := c.js.StreamInfo(StreamName)
+	if err != nil {
+		return 0, fmt.Errorf("funnel consumer: stream info %s: %w", StreamName, err)
+	}
+	if info == nil {
+		return 0, nil
+	}
+	tip := info.State.LastSeq
+	last := c.lastOffset.Load()
+	if tip <= last {
+		return 0, nil
+	}
+	return tip - last, nil
+}
+
 func (c *Consumer) handleMessage(msg *nats.Msg) {
 	meta, metaErr := msg.Metadata()
 	haveMeta := metaErr == nil

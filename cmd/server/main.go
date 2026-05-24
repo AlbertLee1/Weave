@@ -529,6 +529,40 @@ func (d *ServerDeps) ProbeBleve() error {
 	return nil
 }
 
+// DefaultFunnelLagThreshold is the maximum number of unprocessed messages
+// the JetStream edit consumer is allowed to fall behind the stream tip
+// before /health/ready flips status=degraded. Set to a value that catches
+// real backpressure (1k+ unprocessed messages) without flapping during
+// normal burst-write windows. Operators can override at boot via the
+// WEAVE_FUNNEL_LAG_THRESHOLD environment variable (parsed by config).
+const DefaultFunnelLagThreshold uint64 = 1000
+
+// ProbeFunnel satisfies HealthProbes. Returns:
+//
+//   - ErrProbeUnconfigured when no consumer is wired (degraded-mode boot
+//     with no NATS connection — the readiness handler records "skipped");
+//   - wrapped ErrFunnelLagDegraded when the consumer is more than
+//     DefaultFunnelLagThreshold messages behind the stream tip (the
+//     readiness handler flips overall status to "degraded" but keeps
+//     HTTP 200 so k8s doesn't pull the pod);
+//   - the underlying StreamInfo error when JetStream is unreachable (hard
+//     probe failure → status=unready → HTTP 503).
+//
+// nil = the consumer is caught up (lag == 0) or within threshold.
+func (d *ServerDeps) ProbeFunnel(_ context.Context) error {
+	if d == nil || d.FunnelConsumer == nil {
+		return ErrProbeUnconfigured
+	}
+	lag, err := d.FunnelConsumer.Lag()
+	if err != nil {
+		return err
+	}
+	if lag > DefaultFunnelLagThreshold {
+		return fmt.Errorf("%w: lag=%d threshold=%d", ErrFunnelLagDegraded, lag, DefaultFunnelLagThreshold)
+	}
+	return nil
+}
+
 func buildScenarioRunService(deps *ServerDeps) *scenarioruns.Service {
 	if deps.ScenarioRunService != nil {
 		return deps.ScenarioRunService

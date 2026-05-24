@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -14,12 +15,36 @@ import (
 // running without PG / NATS / Bleve is still considered ready.
 var ErrProbeUnconfigured = errors.New("probe: dependency not configured")
 
+// ErrFunnelLagDegraded is the dedicated sentinel returned by ProbeFunnel
+// when the NATS JetStream consumer's last-applied offset is more than the
+// operator-configured threshold behind the stream tip. The readiness
+// handler treats this as a SOFT degradation (HTTP 200, status=degraded)
+// rather than a hard failure (HTTP 503, status=unready), because lag is a
+// steady-state backpressure signal — pulling the pod out of rotation
+// would only make the backlog worse. PRD-V2 §4.6 Gap-O4 calls this out
+// explicitly: the SPA renders a degraded banner and oncall correlates
+// read-side staleness with ingest backlog, but k8s readiness stays green.
+//
+// Probes SHOULD wrap this sentinel with fmt.Errorf so the human-readable
+// lag count survives onto the response body:
+//
+//	return fmt.Errorf("%w: lag=%d threshold=%d", ErrFunnelLagDegraded, lag, threshold)
+var ErrFunnelLagDegraded = errors.New("funnel: lag exceeds threshold")
+
 // HealthProbes is the surface ReadinessHandler depends on. It is satisfied by
 // *ServerDeps in production and by test fakes in unit tests.
 type HealthProbes interface {
 	ProbePG(ctx context.Context) error
 	ProbeNATS() error
 	ProbeBleve() error
+	// ProbeFunnel reports the lag of the NATS JetStream edit consumer.
+	// Return ErrProbeUnconfigured when no consumer is wired in (degraded
+	// mode), ErrFunnelLagDegraded — typically wrapped via fmt.Errorf to
+	// preserve the lag count — when the consumer falls more than the
+	// operator-configured number of messages behind the stream tip, nil
+	// when the consumer is caught up, or any other error to report a
+	// hard probe failure (e.g. JetStream StreamInfo call failed).
+	ProbeFunnel(ctx context.Context) error
 }
 
 // Server lifecycle states reported by /healthz/ready (US-446). The default
@@ -128,9 +153,10 @@ func ReadinessHandlerWithState(deps HealthProbes, state *ServerState) http.Handl
 
 		checks := map[string]string{}
 		ready := true
+		degraded := false
 
 		if deps == nil {
-			writeReadiness(w, true, checks)
+			writeReadiness(w, true, false, checks)
 			return
 		}
 
@@ -167,17 +193,57 @@ func ReadinessHandlerWithState(deps HealthProbes, state *ServerState) http.Handl
 			checks["bleve"] = "ok"
 		}
 
-		writeReadiness(w, ready, checks)
+		// PRD-V2 §4.6 Gap-O4: surface NATS JetStream consumer lag without
+		// tripping k8s readiness. ErrFunnelLagDegraded → checks.funnel
+		// carries the wrapped reason and the overall status flips to
+		// "degraded" (still HTTP 200). Any other error is a hard probe
+		// failure (e.g. StreamInfo RPC failed) and dominates over lag.
+		if err := deps.ProbeFunnel(r.Context()); err != nil {
+			switch {
+			case errors.Is(err, ErrProbeUnconfigured):
+				checks["funnel"] = "skipped"
+			case errors.Is(err, ErrFunnelLagDegraded):
+				// Re-stamp the wire shape with a clean "degraded: ..."
+				// prefix so SPAs and dashboards can do simple
+				// strings.HasPrefix(checks.funnel, "degraded") without
+				// having to know about the wrapped sentinel chain.
+				// The trimmed remainder still carries the lag count and
+				// threshold for operator triage.
+				detail := strings.TrimPrefix(err.Error(), ErrFunnelLagDegraded.Error()+": ")
+				if detail == err.Error() {
+					detail = err.Error()
+				}
+				checks["funnel"] = "degraded: " + detail
+				degraded = true
+			default:
+				checks["funnel"] = err.Error()
+				ready = false
+			}
+		} else {
+			checks["funnel"] = "ok"
+		}
+
+		writeReadiness(w, ready, degraded, checks)
 	})
 }
 
-func writeReadiness(w http.ResponseWriter, ready bool, checks map[string]string) {
+func writeReadiness(w http.ResponseWriter, ready bool, degraded bool, checks map[string]string) {
 	w.Header().Set("Content-Type", "application/json")
 	status := "ready"
 	code := http.StatusOK
-	if !ready {
+	switch {
+	case !ready:
+		// Hard failure on a probed dependency wins over a soft degraded
+		// signal: k8s should pull a 503 pod out of rotation even if it
+		// happens to ALSO be lagging on the funnel.
 		status = "unready"
 		code = http.StatusServiceUnavailable
+	case degraded:
+		// PRD-V2 §4.6 Gap-O4: lag is a steady-state backpressure signal,
+		// not a "this pod is broken" signal — keep HTTP 200 so k8s
+		// readiness stays green; SPA + monitoring read status=degraded
+		// to surface a banner / alert.
+		status = "degraded"
 	}
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]any{
