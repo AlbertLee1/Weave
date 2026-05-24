@@ -164,6 +164,30 @@ class OntologiesAPI:
         )
         return _validate(InterfaceType, body)
 
+    def get_interface_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """POST batch-fetch interface types by their RIDs (round 81)."""
+        body = self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/interfaceTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
+    # ---- link types ---------------------------------------------------------
+
+    def get_link_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """POST batch-fetch link types by their RIDs (round 79)."""
+        body = self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/linkTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
     # ---- value types --------------------------------------------------------
 
     def list_value_types(self, ontology: str) -> List[ValueType]:
@@ -182,6 +206,17 @@ class OntologiesAPI:
             f"/api/v2/ontologies/{quote_path(ontology)}/valueTypes/{quote_path(value_type)}",
         )
         return _validate(ValueType, body)
+
+    def get_value_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """POST batch-fetch value types by their RIDs (round 83)."""
+        body = self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/valueTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
 
     # ---- query types --------------------------------------------------------
 
