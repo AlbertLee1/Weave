@@ -69,6 +69,13 @@ type Repository interface {
 	ListSharedProperties(ctx context.Context, ontologyRID string) ([]SharedProperty, error)
 	UpdateSharedProperty(ctx context.Context, sp *SharedProperty) error
 	DeleteSharedProperty(ctx context.Context, rid string) error
+	// CountPropertiesUsingSharedProperty returns the number of Property
+	// rows whose SharedPropertyRID equals spRID. Round 54 added it so
+	// the DeleteSharedProperty admin handler can refuse to drop a
+	// SharedProperty that downstream ObjectTypes still reference
+	// (Foundry-style 409 SharedPropertyInUse instead of leaving
+	// orphaned RID strings on consumer Properties).
+	CountPropertiesUsingSharedProperty(ctx context.Context, spRID string) (int, error)
 
 	// TypeGroup
 	CreateTypeGroup(ctx context.Context, tg *TypeGroup) error

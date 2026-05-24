@@ -512,6 +512,9 @@ func (r *inMemoryOmsRepo) UpdateSharedProperty(_ context.Context, _ *oms.SharedP
 	return nil
 }
 func (r *inMemoryOmsRepo) DeleteSharedProperty(_ context.Context, _ string) error { return nil }
+func (r *inMemoryOmsRepo) CountPropertiesUsingSharedProperty(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
 
 // TypeGroup stubs
 func (r *inMemoryOmsRepo) CreateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }

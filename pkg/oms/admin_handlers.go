@@ -2267,8 +2267,29 @@ func (h *OMSHandler) UpdateSharedProperty(w http.ResponseWriter, r *http.Request
 }
 
 // DeleteSharedProperty handles DELETE /api/admin/shared-properties/{sharedPropertyRid}.
+//
+// Round 54: refuses 409 SharedPropertyInUse when downstream Properties
+// still reference the SharedProperty (Foundry parity — silently leaving
+// orphaned SharedPropertyRID strings is the worst failure mode because
+// loads succeed but the references no longer resolve to anything).
+// Admins are expected to clear consumers before retrying; a future
+// round may add a "?cascade=true" override that detaches the
+// SharedPropertyRID on consumers in the same transaction.
 func (h *OMSHandler) DeleteSharedProperty(w http.ResponseWriter, r *http.Request) {
 	spRID := chi.URLParam(r, "sharedPropertyRid")
+
+	count, err := h.repo.CountPropertiesUsingSharedProperty(r.Context(), spRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("DeleteSharedPropertyFailed", nil))
+		return
+	}
+	if count > 0 {
+		apierror.WriteJSON(w, apierror.NewConflict("SharedPropertyInUse", map[string]string{
+			"sharedPropertyRid": spRID,
+			"usageCount":        strconv.Itoa(count),
+		}))
+		return
+	}
 
 	if err := h.repo.DeleteSharedProperty(r.Context(), spRID); err != nil {
 		if errors.Is(err, ErrNotFound) {

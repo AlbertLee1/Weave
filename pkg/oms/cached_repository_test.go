@@ -234,6 +234,9 @@ func (*noopRepo) ListSharedProperties(context.Context, string) ([]oms.SharedProp
 }
 func (*noopRepo) UpdateSharedProperty(context.Context, *oms.SharedProperty) error { return nil }
 func (*noopRepo) DeleteSharedProperty(context.Context, string) error              { return nil }
+func (*noopRepo) CountPropertiesUsingSharedProperty(context.Context, string) (int, error) {
+	return 0, nil
+}
 func (*noopRepo) CreateTypeGroup(context.Context, *oms.TypeGroup) error           { return nil }
 func (*noopRepo) GetTypeGroup(context.Context, string) (*oms.TypeGroup, error) {
 	return nil, nil

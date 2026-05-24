@@ -1078,6 +1078,24 @@ func (r *PGRepository) DeleteSharedProperty(ctx context.Context, rid string) err
 	return nil
 }
 
+// CountPropertiesUsingSharedProperty returns the number of properties
+// rows whose shared_property_rid column matches spRID. A pre-delete
+// guard in the admin handler uses this to refuse Conflict (HTTP 409)
+// when downstream consumers exist; an empty spRID returns 0 without
+// touching the DB so callers don't have to special-case it.
+func (r *PGRepository) CountPropertiesUsingSharedProperty(ctx context.Context, spRID string) (int, error) {
+	if spRID == "" {
+		return 0, nil
+	}
+	var count int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM properties WHERE shared_property_rid = $1`, spRID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // --- TypeGroup ---
 
 func (r *PGRepository) CreateTypeGroup(ctx context.Context, tg *TypeGroup) error {

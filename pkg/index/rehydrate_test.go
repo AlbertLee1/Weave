@@ -145,6 +145,9 @@ func (s *stubRehydrateRepo) UpdateSharedProperty(context.Context, *oms.SharedPro
 	return nil
 }
 func (s *stubRehydrateRepo) DeleteSharedProperty(context.Context, string) error { return nil }
+func (s *stubRehydrateRepo) CountPropertiesUsingSharedProperty(context.Context, string) (int, error) {
+	return 0, nil
+}
 func (s *stubRehydrateRepo) CreateTypeGroup(context.Context, *oms.TypeGroup) error {
 	return nil
 }

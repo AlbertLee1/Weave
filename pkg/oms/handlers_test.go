@@ -60,6 +60,10 @@ type mockRepo struct {
 	updateErr error
 	deleteErr error
 
+	// CountPropertiesUsingSharedProperty call tracking — round 54.
+	countSharedPropertyUsesCalls int
+	countSharedPropertyUsesErr   error
+
 	// Version tracking
 	ontologyVersion int
 }
@@ -464,6 +468,20 @@ func (m *mockRepo) UpdateSharedProperty(_ context.Context, sp *oms.SharedPropert
 	}
 	return oms.ErrNotFound
 }
+func (m *mockRepo) CountPropertiesUsingSharedProperty(_ context.Context, spRID string) (int, error) {
+	m.countSharedPropertyUsesCalls++
+	if m.countSharedPropertyUsesErr != nil {
+		return 0, m.countSharedPropertyUsesErr
+	}
+	n := 0
+	for _, p := range m.properties {
+		if p.SharedPropertyRID == spRID {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (m *mockRepo) DeleteSharedProperty(_ context.Context, rid string) error {
 	if m.deleteErr != nil {
 		return m.deleteErr

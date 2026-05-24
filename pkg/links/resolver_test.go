@@ -144,6 +144,9 @@ func (m *mockRepo) ListSharedProperties(context.Context, string) ([]oms.SharedPr
 }
 func (m *mockRepo) UpdateSharedProperty(context.Context, *oms.SharedProperty) error { return nil }
 func (m *mockRepo) DeleteSharedProperty(context.Context, string) error              { return nil }
+func (m *mockRepo) CountPropertiesUsingSharedProperty(context.Context, string) (int, error) {
+	return 0, nil
+}
 
 // TypeGroup stubs
 func (m *mockRepo) CreateTypeGroup(context.Context, *oms.TypeGroup) error           { return nil }
