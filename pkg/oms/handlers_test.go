@@ -64,6 +64,10 @@ type mockRepo struct {
 	countSharedPropertyUsesCalls int
 	countSharedPropertyUsesErr   error
 
+	// CountObjectTypesInTypeGroup call tracking — round 58.
+	countTypeGroupAssignmentsCalls int
+	countTypeGroupAssignmentsErr   error
+
 	// Version tracking
 	ontologyVersion int
 }
@@ -593,6 +597,22 @@ func (m *mockRepo) ListTypeGroupsForObjectType(_ context.Context, objectTypeRID 
 		}
 	}
 	return out, nil
+}
+
+func (m *mockRepo) CountObjectTypesInTypeGroup(_ context.Context, tgRID string) (int, error) {
+	m.countTypeGroupAssignmentsCalls++
+	if m.countTypeGroupAssignmentsErr != nil {
+		return 0, m.countTypeGroupAssignmentsErr
+	}
+	n := 0
+	for _, assigned := range m.typeGroupAssignments {
+		for _, t := range assigned {
+			if t == tgRID {
+				n++
+			}
+		}
+	}
+	return n, nil
 }
 
 // ValueType methods

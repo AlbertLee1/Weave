@@ -166,6 +166,9 @@ func (s *stubRehydrateRepo) RemoveTypeGroup(context.Context, string, string) err
 func (s *stubRehydrateRepo) ListTypeGroupsForObjectType(context.Context, string) ([]oms.TypeGroup, error) {
 	return nil, nil
 }
+func (s *stubRehydrateRepo) CountObjectTypesInTypeGroup(context.Context, string) (int, error) {
+	return 0, nil
+}
 func (s *stubRehydrateRepo) CreateValueType(context.Context, *oms.ValueType) error {
 	return nil
 }

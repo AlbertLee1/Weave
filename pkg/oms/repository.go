@@ -86,6 +86,12 @@ type Repository interface {
 	AssignTypeGroup(ctx context.Context, objectTypeRID, typeGroupRID string) error
 	RemoveTypeGroup(ctx context.Context, objectTypeRID, typeGroupRID string) error
 	ListTypeGroupsForObjectType(ctx context.Context, objectTypeRID string) ([]TypeGroup, error)
+	// CountObjectTypesInTypeGroup returns the number of object_type_groups
+	// assignment rows pointing at tgRID. Round 58 added it so
+	// DeleteTypeGroup can refuse 409 TypeGroupInUse when ObjectTypes are
+	// still assigned (mirror of round-54 SharedProperty guard — same
+	// dangling-reference failure mode, same Foundry parity contract).
+	CountObjectTypesInTypeGroup(ctx context.Context, tgRID string) (int, error)
 
 	// ValueType
 	CreateValueType(ctx context.Context, vt *ValueType) error

@@ -159,6 +159,9 @@ func (m *mockRepo) RemoveTypeGroup(context.Context, string, string) error       
 func (m *mockRepo) ListTypeGroupsForObjectType(context.Context, string) ([]oms.TypeGroup, error) {
 	return nil, nil
 }
+func (m *mockRepo) CountObjectTypesInTypeGroup(context.Context, string) (int, error) {
+	return 0, nil
+}
 
 // ValueType stubs
 func (m *mockRepo) CreateValueType(context.Context, *oms.ValueType) error        { return nil }

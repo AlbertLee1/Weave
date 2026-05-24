@@ -1175,6 +1175,25 @@ func (r *PGRepository) DeleteTypeGroup(ctx context.Context, rid string) error {
 	return nil
 }
 
+// CountObjectTypesInTypeGroup returns the number of object_type_groups
+// assignment rows that reference tgRID. The DeleteTypeGroup admin
+// handler uses this for the pre-delete guard so a TypeGroup with
+// active assignments returns 409 TypeGroupInUse rather than silently
+// leaving dangling assignment rows. Empty tgRID short-circuits to 0
+// without touching the DB.
+func (r *PGRepository) CountObjectTypesInTypeGroup(ctx context.Context, tgRID string) (int, error) {
+	if tgRID == "" {
+		return 0, nil
+	}
+	var count int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM object_type_groups WHERE type_group_rid = $1`, tgRID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (r *PGRepository) AssignTypeGroup(ctx context.Context, objectTypeRID, typeGroupRID string) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO object_type_groups (object_type_rid, type_group_rid)

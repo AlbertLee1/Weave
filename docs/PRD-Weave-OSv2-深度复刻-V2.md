@@ -88,7 +88,7 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 |---|---|:---:|:---:|:---:|:---:|---|
 | OMS | 元数据 CRUD | 🟢 | 🟢 PG + 缓存 | 🟢 | **95%** | Ontology/ObjectType/LinkType/ActionType/Interface/ValueType/QueryType 全 CRUD |
 | OMS | Snapshot / 版本 | 🟢 | 🟢 | 🟡 | **70%** | 无分支、RID 不含 version、无 version diff |
-| OMS | SharedProperty / TypeGroup | 🟢 | 🟢 | 🟢 | **85%** | 表与 CRUD 在；round 54 补齐 DeleteSharedProperty 在使用中拒绝 (409 SharedPropertyInUse + usageCount) 防止悬空 SharedPropertyRID；round 55 CreateProperty 新增 `sharedPropertyTypeApiName` 字段并强校验 baseType / isArray 必须与 SharedProperty 一致（400 SharedPropertyTypeMismatch 含双向 diff）；仍未对 Interface 自动属性 / Search analyzer 联动 |
+| OMS | SharedProperty / TypeGroup | 🟢 | 🟢 | 🟢 | **90%** | 表与 CRUD 在；round 54 DeleteSharedProperty 在使用中拒绝 (409 SharedPropertyInUse + usageCount)；round 55 CreateProperty 新增 `sharedPropertyTypeApiName` + baseType/isArray 强校验（400 SharedPropertyTypeMismatch 含双向 diff）；round 58 DeleteTypeGroup 在使用中拒绝 (409 TypeGroupInUse + usageCount) 镜像 round-54 防悬空 object_type_groups assignment 行；仍未对 Interface 自动属性 / Search analyzer 联动 |
 | OSS | Where DSL | 🟢 | n/a | 🟢 | **90%** | 15+ 子句类型，Bleve query compile |
 | OSS | ObjectSet 15 变体 | 🟢 | n/a | 🟡 | **70%** | base/filter/union/intersect/subtract/searchAround/static/reference/nearestNeighbors/asType/asBaseObjectTypes/interfaceBase/withProperties/interfaceLinkSearchAround/methodInput 路由就位；**深度不一** |
 | OSS | Search / Load / Count | 🟢 | 🟢 Bleve | 🟢 | **90%** | select 强制、cursor 分页 |

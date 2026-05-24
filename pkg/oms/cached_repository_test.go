@@ -251,6 +251,9 @@ func (*noopRepo) RemoveTypeGroup(context.Context, string, string) error { return
 func (*noopRepo) ListTypeGroupsForObjectType(context.Context, string) ([]oms.TypeGroup, error) {
 	return nil, nil
 }
+func (*noopRepo) CountObjectTypesInTypeGroup(context.Context, string) (int, error) {
+	return 0, nil
+}
 func (*noopRepo) CreateValueType(context.Context, *oms.ValueType) error { return nil }
 func (*noopRepo) GetValueType(context.Context, string) (*oms.ValueType, error) {
 	return nil, nil

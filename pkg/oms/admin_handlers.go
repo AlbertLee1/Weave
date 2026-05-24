@@ -2526,8 +2526,27 @@ func (h *OMSHandler) UpdateTypeGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteTypeGroup handles DELETE /api/admin/type-groups/{typeGroupRid}.
+//
+// Round 58: refuses 409 TypeGroupInUse when ObjectTypes are still
+// assigned via the object_type_groups join table. Mirror of round-
+// 54 SharedProperty guard — same dangling-reference failure mode
+// (assignment rows resolve to a non-existent typeGroupRid),
+// same Foundry parity contract.
 func (h *OMSHandler) DeleteTypeGroup(w http.ResponseWriter, r *http.Request) {
 	tgRID := chi.URLParam(r, "typeGroupRid")
+
+	count, err := h.repo.CountObjectTypesInTypeGroup(r.Context(), tgRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("DeleteTypeGroupFailed", nil))
+		return
+	}
+	if count > 0 {
+		apierror.WriteJSON(w, apierror.NewConflict("TypeGroupInUse", map[string]string{
+			"typeGroupRid": tgRID,
+			"usageCount":   strconv.Itoa(count),
+		}))
+		return
+	}
 
 	if err := h.repo.DeleteTypeGroup(r.Context(), tgRID); err != nil {
 		if errors.Is(err, ErrNotFound) {

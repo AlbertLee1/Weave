@@ -528,6 +528,9 @@ func (r *inMemoryOmsRepo) RemoveTypeGroup(_ context.Context, _, _ string) error 
 func (r *inMemoryOmsRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]oms.TypeGroup, error) {
 	return nil, nil
 }
+func (r *inMemoryOmsRepo) CountObjectTypesInTypeGroup(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
 
 // ValueType stubs
 func (r *inMemoryOmsRepo) CreateValueType(_ context.Context, _ *oms.ValueType) error { return nil }
