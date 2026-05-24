@@ -101,6 +101,7 @@ class WeaveAsyncClient:
         self.reactions = AsyncReactionsAPI(self)
         self.notifications = AsyncNotificationsAPI(self)
         self.dashboards = AsyncDashboardsAPI(self)
+        self.permissionrequests = AsyncPermissionRequestsAPI(self)
 
     @property
     def token(self) -> str:
@@ -1030,6 +1031,81 @@ class AsyncDashboardsAPI:
         return _parse_dashboard(resp or {})
 
 
+class AsyncPermissionRequestsAPI:
+    """Async mirror of PermissionRequestsAPI (round 82). Wraps the
+    six permission-requests endpoints (5 from VTX-339 + round-63
+    Cancel). Reuses PermissionRequest + PermissionRequestList
+    dataclasses from the sync module via lazy import.
+
+    Same approve/reject _decide helper that omits body when note is
+    empty — server's readOptionalJSON accepts that path.
+    """
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def create(self, target_rid: str, reason: str = "") -> "PermissionRequest":
+        from .permissionrequests import _parse_request
+        body = {"targetRid": target_rid, "reason": reason}
+        resp = await self._client._request("POST", "/api/v2/permission-requests", json_body=body)
+        return _parse_request(resp or {})
+
+    async def list(
+        self,
+        status: Optional[str] = None,
+        requested_by: Optional[str] = None,
+        target_rid: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> "PermissionRequestList":
+        from .permissionrequests import PermissionRequestList, _parse_request
+        params: dict = {}
+        if status is not None:
+            params["status"] = status
+        if requested_by is not None:
+            params["requestedBy"] = requested_by
+        if target_rid is not None:
+            params["targetRid"] = target_rid
+        if limit is not None:
+            params["limit"] = str(limit)
+        if offset is not None:
+            params["offset"] = str(offset)
+        path = "/api/v2/permission-requests" + build_query_string(params)
+        resp = await self._client._request("GET", path)
+        envelope = resp or {}
+        rows = envelope.get("requests") or []
+        return PermissionRequestList(
+            requests=[_parse_request(r) for r in rows],
+            total=int(envelope.get("total") or 0),
+            limit=int(envelope.get("limit") or 0),
+            offset=int(envelope.get("offset") or 0),
+        )
+
+    async def get(self, request_id: str) -> "PermissionRequest":
+        from .permissionrequests import _parse_request
+        path = "/api/v2/permission-requests/" + quote_path(request_id)
+        resp = await self._client._request("GET", path)
+        return _parse_request(resp or {})
+
+    async def approve(self, request_id: str, note: str = "") -> "PermissionRequest":
+        return await self._decide(request_id, "approve", note)
+
+    async def reject(self, request_id: str, note: str = "") -> "PermissionRequest":
+        return await self._decide(request_id, "reject", note)
+
+    async def cancel(self, request_id: str) -> None:
+        path = "/api/v2/permission-requests/" + quote_path(request_id)
+        await self._client._request("DELETE", path)
+        return None
+
+    async def _decide(self, request_id: str, verb: str, note: str) -> "PermissionRequest":
+        from .permissionrequests import _parse_request
+        path = "/api/v2/permission-requests/" + quote_path(request_id) + "/" + verb
+        body = {"note": note} if note else None
+        resp = await self._client._request("POST", path, json_body=body)
+        return _parse_request(resp or {})
+
+
 __all__ = [
     "WeaveAsyncClient",
     "AsyncOntologiesAPI",
@@ -1041,4 +1117,5 @@ __all__ = [
     "AsyncReactionsAPI",
     "AsyncNotificationsAPI",
     "AsyncDashboardsAPI",
+    "AsyncPermissionRequestsAPI",
 ]
