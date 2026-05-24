@@ -68,6 +68,10 @@ type mockRepo struct {
 	countTypeGroupAssignmentsCalls int
 	countTypeGroupAssignmentsErr   error
 
+	// CountNotifications call tracking — round 66.
+	countNotificationsCalls           int
+	countNotificationsLastUnreadOnly  bool
+
 	// Version tracking
 	ontologyVersion int
 }

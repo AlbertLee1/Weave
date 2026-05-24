@@ -8276,6 +8276,33 @@ paths:
                       $ref: "#/components/schemas/Notification"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v2/notifications/unread-count:
+    get:
+      operationId: getNotificationsUnreadCount
+      summary: Lightweight unread-count badge for the navbar
+      description: |
+        Round 66 (PRD-V2 上层体验). Returns the authenticated user's
+        unread-notification count without loading any rows. The Foundry
+        navbar polls this every few seconds; backing it via a dedicated
+        COUNT(*) over the existing idx_notifications_user_unread partial
+        index keeps the request O(returned-count) regardless of table
+        size. The response carries `count` only — there is intentionally
+        no `data` array so the badge poll stays bandwidth-cheap.
+      tags: [Notifications]
+      responses:
+        "200":
+          description: The unread count.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count]
+                properties:
+                  count:
+                    type: integer
+                    minimum: 0
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v2/notifications/read-all:
     post:
       operationId: markAllNotificationsRead

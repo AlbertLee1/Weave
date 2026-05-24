@@ -245,6 +245,13 @@ type Repository interface {
 	CreateNotification(ctx context.Context, n *Notification) error
 	ListNotifications(ctx context.Context, userID string, unreadOnly bool) ([]Notification, error)
 	MarkNotificationRead(ctx context.Context, id string) error
+	// CountNotifications returns the number of rows belonging to
+	// userID matching the unreadOnly filter. Round 66 added it to
+	// back the GET /api/v2/notifications/unread-count badge endpoint
+	// — the Foundry navbar polls this every few seconds and the SPA
+	// previously had to load + JSON-decode the entire unread list
+	// just to render an integer.
+	CountNotifications(ctx context.Context, userID string, unreadOnly bool) (int, error)
 
 	// OntologyProposal (US-117)
 	CreateProposal(ctx context.Context, p *OntologyProposal) error

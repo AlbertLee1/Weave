@@ -236,8 +236,9 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/resume", omsHandler.ResumeAutomationRule)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions", omsHandler.ListExecutions)
 
-	// Notifications (US-130, US-343)
+	// Notifications (US-130, US-343, round 66 unread-count)
 	r.Get("/api/v2/notifications", omsHandler.ListNotifications)
+	r.Get("/api/v2/notifications/unread-count", omsHandler.GetNotificationsUnreadCount)
 	r.Post("/api/v2/notifications/read-all", omsHandler.MarkAllNotificationsRead)
 	r.Post("/api/v2/notifications/{notificationId}/read", omsHandler.MarkNotificationRead)
 

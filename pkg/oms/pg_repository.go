@@ -3321,6 +3321,23 @@ func (r *PGRepository) ListNotifications(ctx context.Context, userID string, unr
 	return result, nil
 }
 
+// CountNotifications returns the row count for userID, optionally
+// scoped to unread-only. When unreadOnly is true the query benefits
+// from the partial index idx_notifications_user_unread defined in
+// migration 000028 (WHERE read = false), so the navbar polling
+// path stays O(returned-count) rather than O(table-size).
+func (r *PGRepository) CountNotifications(ctx context.Context, userID string, unreadOnly bool) (int, error) {
+	query := `SELECT COUNT(*) FROM notifications WHERE user_id = $1`
+	if unreadOnly {
+		query += ` AND read = false`
+	}
+	var count int
+	if err := r.pool.QueryRow(ctx, query, userID).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (r *PGRepository) MarkNotificationRead(ctx context.Context, id string) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE notifications SET read = true WHERE id = $1`, id)

@@ -372,6 +372,9 @@ func (s *stubRehydrateRepo) ListNotifications(context.Context, string, bool) ([]
 	return nil, nil
 }
 func (s *stubRehydrateRepo) MarkNotificationRead(context.Context, string) error { return nil }
+func (s *stubRehydrateRepo) CountNotifications(context.Context, string, bool) (int, error) {
+	return 0, nil
+}
 
 // --- Tests ---
 
