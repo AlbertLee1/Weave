@@ -249,6 +249,11 @@ type CreateActionTypeRequest struct {
 	Status      string          `json:"status"`
 	Parameters  json.RawMessage `json:"parameters"`
 	Rules       json.RawMessage `json:"rules"`
+	// SubmissionCriteria (round 135) is the criteria JSON evaluated by
+	// pkg/actions.EvaluateCriteria at apply time. When a criteriaValidator
+	// is wired the handler statically validates structure before persisting
+	// so authoring mistakes surface as 422 instead of as runtime errors.
+	SubmissionCriteria json.RawMessage `json:"submissionCriteria,omitempty"`
 	// ImplementsMethodRID (US-214) optionally binds this ActionType to an
 	// InterfaceMethod signature. When set the create handler validates that
 	// the referenced method exists in the same ontology.
@@ -1112,6 +1117,19 @@ func (h *OMSHandler) CreateActionType(w http.ResponseWriter, r *http.Request) {
 		status = "ACTIVE"
 	}
 
+	// Round 135: structurally validate submissionCriteria before persistence
+	// so authoring mistakes (unknown type, missing field, malformed group)
+	// surface as 422 here instead of as runtime errors at first apply.
+	if h.criteriaValidator != nil && len(req.SubmissionCriteria) > 0 {
+		if err := h.criteriaValidator(req.SubmissionCriteria); err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:submissionCriteria", map[string]string{
+				"parameter": "submissionCriteria",
+				"reason":    err.Error(),
+			}))
+			return
+		}
+	}
+
 	at := &ActionType{
 		RID:                 rid.NewActionTypeRID(),
 		OntologyRID:         ontologyRID,
@@ -1121,6 +1139,7 @@ func (h *OMSHandler) CreateActionType(w http.ResponseWriter, r *http.Request) {
 		Status:              status,
 		Parameters:          req.Parameters,
 		Rules:               req.Rules,
+		SubmissionCriteria:  req.SubmissionCriteria,
 		ImplementsMethodRID: req.ImplementsMethodRID,
 		CompensateActionRID: req.CompensateActionRID,
 		ParameterSchema:     req.ParameterSchema,
@@ -1196,6 +1215,20 @@ func (h *OMSHandler) UpdateActionType(w http.ResponseWriter, r *http.Request) {
 		}
 		apierror.WriteJSON(w, apierror.NewInternal("GetActionTypeFailed", nil))
 		return
+	}
+
+	// Round 135: structurally validate submissionCriteria before persistence
+	// (Update path mirrors Create). Validator runs only when the request
+	// actually carried a non-empty criteria payload so omitting the field
+	// to preserve existing criteria still works.
+	if h.criteriaValidator != nil && len(req.SubmissionCriteria) > 0 {
+		if err := h.criteriaValidator(req.SubmissionCriteria); err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidParameter:submissionCriteria", map[string]string{
+				"parameter": "submissionCriteria",
+				"reason":    err.Error(),
+			}))
+			return
+		}
 	}
 
 	// Build updated copy (leave existing intact for branch before-state)

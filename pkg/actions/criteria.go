@@ -169,6 +169,116 @@ func evaluateSingleCriteria(c SubmissionCriteria, ctx ActionContext) error {
 	}
 }
 
+// ValidateCriteriaSchema walks a SubmissionCriteria JSON payload
+// and verifies that its STRUCTURE is well-formed — without
+// evaluating against any parameters. Intended for the admin
+// CreateActionType / UpdateActionType handlers so authoring
+// mistakes surface as 422 at save time instead of as
+// "submission criteria not met: unknown type X" hours later when
+// the first apply lands.
+//
+// Empty / null / `[]` criteria are valid (matches
+// EvaluateCriteria's short-circuit). Groups recurse so deeply
+// nested authoring mistakes surface with the inner-most error.
+// PRD-V2 Gap-A3 round 135.
+func ValidateCriteriaSchema(criteriaJSON json.RawMessage) error {
+	if len(criteriaJSON) == 0 || string(criteriaJSON) == "null" || string(criteriaJSON) == "[]" {
+		return nil
+	}
+
+	if criteriaJSON[0] == '[' {
+		var arr []SubmissionCriteria
+		if err := json.Unmarshal(criteriaJSON, &arr); err != nil {
+			return fmt.Errorf("submission criteria: invalid JSON: %w", err)
+		}
+		for i, c := range arr {
+			if err := validateSingleCriteriaSchema(c); err != nil {
+				return fmt.Errorf("submission criteria[%d]: %w", i, err)
+			}
+		}
+		return nil
+	}
+
+	var single SubmissionCriteria
+	if err := json.Unmarshal(criteriaJSON, &single); err != nil {
+		return fmt.Errorf("submission criteria: invalid JSON: %w", err)
+	}
+	return validateSingleCriteriaSchema(single)
+}
+
+func validateSingleCriteriaSchema(c SubmissionCriteria) error {
+	switch c.Type {
+	case "always", "":
+		return nil
+
+	case "parameterMatch":
+		var cfg parameterMatchValue
+		if err := json.Unmarshal(c.Value, &cfg); err != nil {
+			return fmt.Errorf("parameterMatch: invalid config: %w", err)
+		}
+		if cfg.Parameter == "" {
+			return fmt.Errorf("parameterMatch: parameter is required")
+		}
+		if err := validateOperator(cfg.Operator); err != nil {
+			return fmt.Errorf("parameterMatch: %w", err)
+		}
+		return nil
+
+	case "parameterCompare":
+		var cfg parameterCompareValue
+		if err := json.Unmarshal(c.Value, &cfg); err != nil {
+			return fmt.Errorf("parameterCompare: invalid config: %w", err)
+		}
+		if cfg.LeftParameter == "" {
+			return fmt.Errorf("parameterCompare: leftParameter is required")
+		}
+		if cfg.RightParameter == "" {
+			return fmt.Errorf("parameterCompare: rightParameter is required")
+		}
+		if err := validateOperator(cfg.Operator); err != nil {
+			return fmt.Errorf("parameterCompare: %w", err)
+		}
+		return nil
+
+	case "group":
+		var cfg groupValue
+		if err := json.Unmarshal(c.Value, &cfg); err != nil {
+			return fmt.Errorf("group: invalid config: %w", err)
+		}
+		op := strings.ToLower(cfg.Operator)
+		switch op {
+		case "and", "or":
+			// any number of children allowed (including zero)
+		case "not":
+			if len(cfg.Criteria) != 1 {
+				return fmt.Errorf("group NOT requires exactly one child, got %d",
+					len(cfg.Criteria))
+			}
+		default:
+			return fmt.Errorf("group: unknown operator %q (want and|or|not)",
+				cfg.Operator)
+		}
+		for i, child := range cfg.Criteria {
+			if err := validateSingleCriteriaSchema(child); err != nil {
+				return fmt.Errorf("group child[%d]: %w", i, err)
+			}
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("unknown submission criteria type: %q", c.Type)
+	}
+}
+
+func validateOperator(op string) error {
+	switch op {
+	case "eq", "neq", "gt", "lt", "gte", "lte", "":
+		return nil
+	default:
+		return fmt.Errorf("unknown operator %q (want eq|neq|gt|lt|gte|lte)", op)
+	}
+}
+
 func evaluateGroupCriteria(cfg groupValue, ctx ActionContext) error {
 	op := strings.ToLower(cfg.Operator)
 	switch op {

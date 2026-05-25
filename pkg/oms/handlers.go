@@ -37,11 +37,28 @@ type OMSHandler struct {
 	commitJobStore            CommitJobStore
 	commitJobRunner           CommitJobRunner
 	indexBootstrapper         IndexBootstrapper
+	// criteriaValidator (round 135) statically validates an ActionType's
+	// submissionCriteria JSON at save time so authoring mistakes surface
+	// as 422 instead of as runtime errors at first apply. Wired by
+	// cmd/server to actions.ValidateCriteriaSchema; a nil validator
+	// disables enforcement (degraded-mode test routers preserve legacy
+	// behavior).
+	criteriaValidator func(json.RawMessage) error
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.
 func NewOMSHandler(repo Repository) *OMSHandler {
 	return &OMSHandler{repo: repo}
+}
+
+// SetCriteriaValidator wires a static validator for the
+// submissionCriteria JSON sent on Create/Update ActionType. The
+// validator runs BEFORE persistence so authoring mistakes surface
+// as 422 at save time. A nil validator disables enforcement
+// (matches the legacy unguarded behavior; useful for tests).
+// Round 135 (PRD-V2 Gap-A3).
+func (h *OMSHandler) SetCriteriaValidator(fn func(json.RawMessage) error) {
+	h.criteriaValidator = fn
 }
 
 // SetQueryExecutor wires an optional QueryExecutor for function-backed query

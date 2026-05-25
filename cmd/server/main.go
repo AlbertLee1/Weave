@@ -1093,6 +1093,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.IndexMgr != nil {
 				omsHandler.SetIndexBootstrapper(newIndexBootstrapAdapter(deps.IndexMgr))
 			}
+			// Round 135 (PRD-V2 Gap-A3): static validation of
+			// submissionCriteria on admin Create/Update ActionType so
+			// authoring mistakes (unknown type, missing field, malformed
+			// group) surface as 400 InvalidParameter at save time
+			// instead of as confusing runtime errors at first apply.
+			omsHandler.SetCriteriaValidator(actions.ValidateCriteriaSchema)
 			RegisterRoutes(api, omsHandler)
 		}
 

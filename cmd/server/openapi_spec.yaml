@@ -642,6 +642,15 @@ components:
           items:
             type: object
             additionalProperties: true
+        submissionCriteria:
+          description: "Round 135: submission criteria evaluated by EvaluateCriteria at apply time. Structure is validated at save time (400 InvalidParameter on unknown type / unknown operator / malformed group)."
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: array
+              items:
+                type: object
+                additionalProperties: true
         implementsMethodRid:
           description: "US-214: RID of an InterfaceMethod this ActionType implements."
           type: string
