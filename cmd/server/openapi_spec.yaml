@@ -4476,6 +4476,63 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/me:
+    get:
+      operationId: getOntologyMe
+      summary: Return the caller's scope on one specific ontology (round 95)
+      description: |
+        Returns the caller's resolved per-ontology role and effective
+        permission set for ONE specific ontology — narrower than
+        /api/v2/me, which exposes the full per-ontology role map. The
+        SPA uses this shape to gate UI affordances on a page that has
+        already scoped itself to an ontology ("can I see the Create
+        button on THIS ontology?") without parsing the global
+        OntologyRoles map client-side. Foundry-parity sibling.
+      tags: [Auth]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Caller's scope on this ontology.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyRid, ontologyApiName, role, permissions, markings]
+                properties:
+                  ontologyRid:
+                    type: string
+                    description: RID of the ontology.
+                  ontologyApiName:
+                    type: string
+                    description: API name of the ontology (echoed).
+                  role:
+                    type: string
+                    description: |
+                      Scoped per-ontology role for this caller. Empty
+                      string when the caller has no per-ontology grant
+                      (they still get permissions from their global
+                      roles).
+                  permissions:
+                    type: array
+                    items:
+                      type: string
+                    description: |
+                      Effective permission set for this caller on this
+                      ontology — union of global roles + the one
+                      scoped role for this ontology. Always an array,
+                      never null.
+                  markings:
+                    type: array
+                    items:
+                      type: string
+                    description: |
+                      Caller's marking set (same source as /api/v2/me).
+                      Always an array, never null.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies:
     get:
       operationId: listOntologies

@@ -892,6 +892,17 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// Current-user endpoint (RBAC Phase 1)
 		api.Method(http.MethodGet, "/api/v2/me", auth.MeHandler())
 
+		// Round 95: per-ontology /me — caller's resolved role +
+		// effective permissions for ONE specific ontology. Mounted
+		// only when the OMS repo is available (it resolves
+		// ontologyApiName -> RID via the omsOntologyResolver
+		// adapter that bridges pkg/auth and pkg/oms without taking
+		// an import cycle).
+		if deps.OmsRepo != nil {
+			api.Method(http.MethodGet, "/api/v2/ontologies/{ontologyApiName}/me",
+				auth.OntologyMeHandler(&omsOntologyResolver{repo: deps.OmsRepo}))
+		}
+
 		// US-254: active-session inventory. Mounted inside the auth group so
 		// only authenticated callers can enumerate/revoke their own sessions.
 		// When SessionStore is nil (degraded mode / tests) the routes are
