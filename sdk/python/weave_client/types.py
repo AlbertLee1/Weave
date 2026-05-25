@@ -232,6 +232,30 @@ class ObjectCheckBatchResponse(_CamelModel):
     results: List[ObjectCheckBatchEntry] = Field(default_factory=list)
 
 
+class ActionCheckBatchEntry(_CamelModel):
+    """One row in the round-110 bulk action check response — mirror
+    of round-108 ObjectCheckBatchEntry but for actions.
+
+    ``found`` is the discriminator: True when the action exists,
+    False when removed/renamed. found=False entries always carry
+    can_apply=False regardless of caller perms so the SPA never
+    shows an Apply button for a missing action.
+    """
+    action_type_api_name: str = Field(alias="actionTypeApiName")
+    found: bool = False
+    action_type_rid: str = Field(default="", alias="actionTypeRid")
+    can_apply: bool = Field(default=False, alias="canApply")
+
+
+class ActionCheckBatchResponse(_CamelModel):
+    """Round-110 SDK mirror of round-109 backend
+    ActionCheckBatchResponse. results preserves input order so
+    callers can correlate row N → row N without a name→row map.
+    """
+    ontology_api_name: str = Field(alias="ontologyApiName")
+    results: List[ActionCheckBatchEntry] = Field(default_factory=list)
+
+
 class ActionCheckResponse(_CamelModel):
     """Round-104 SDK mirror of round-103 backend ActionCheckResponse.
 

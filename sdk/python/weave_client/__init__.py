@@ -93,6 +93,8 @@ from .permissions import PermissionsAPI
 from .rid import InvalidRidError, Rid, format_rid, parse_rid
 from .sessions import SessionsAPI
 from .types import (
+    ActionCheckBatchEntry,
+    ActionCheckBatchResponse,
     ActionCheckResponse,
     ActionResults,
     ActionType,
@@ -200,6 +202,8 @@ __all__ = [
     "RevokeOthersResponse",
     "SessionsAPI",
     "ActionCheckResponse",
+    "ActionCheckBatchEntry",
+    "ActionCheckBatchResponse",
     "ObjectCheckResponse",
     "ObjectCheckBatchEntry",
     "ObjectCheckBatchResponse",
