@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from typing import List
+
 from ._http import quote_path
-from .types import QueryCheckResponse
+from .types import QueryCheckBatchResponse, QueryCheckResponse
 
 if TYPE_CHECKING:
     from .client import Client
@@ -23,11 +25,42 @@ def _validate_query_check(payload):
     return QueryCheckResponse(**(payload or {}))
 
 
+def _validate_query_check_batch(payload):
+    if hasattr(QueryCheckBatchResponse, "model_validate"):
+        return QueryCheckBatchResponse.model_validate(payload or {})
+    return QueryCheckBatchResponse(**(payload or {}))
+
+
 class QueriesAPI:
     """Wraps ``/api/v2/ontologies/{ontology}/queryTypes/.../check``."""
 
     def __init__(self, client: "Client"):
         self._client = client
+
+    def check_batch(
+        self,
+        ontology: str,
+        query_types: List[str],
+    ) -> QueryCheckBatchResponse:
+        """Bulk-probe N queries on one ontology (round 116).
+
+        Mirrors round-115 backend POST /api/v2/me/checks/queryTypes.
+        Completes the SDK three-axis bulk parity — with
+        c.objects.check_batch + c.actions.check_batch a freshly-
+        loaded SPA page resolves its full per-resource gating in
+        THREE round-trips.
+
+        Each result entry carries .found discriminator. found=False
+        entries always have can_execute=False regardless of caller
+        perms. Empty query_types raises WeaveError (server 400).
+        """
+        body = {
+            "ontologyApiName": ontology,
+            "queryTypeApiNames": query_types,
+        }
+        resp = self._client._request(
+            "POST", "/api/v2/me/checks/queryTypes", json_body=body)
+        return _validate_query_check_batch(resp)
 
     def check(self, ontology: str, query_type: str) -> QueryCheckResponse:
         """Probe whether the caller can execute a named query (round 114).

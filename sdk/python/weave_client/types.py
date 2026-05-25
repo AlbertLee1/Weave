@@ -192,6 +192,28 @@ class Attachment(_CamelModel):
     linked: bool = False
 
 
+class QueryCheckBatchEntry(_CamelModel):
+    """One row in the round-116 bulk query check response. Same
+    found:bool discriminator as r108 OT and r110 action entries.
+    found=False entries always carry can_execute=False regardless
+    of caller perms so the SPA never shows a Run-Query button for
+    a deleted/renamed query.
+    """
+    query_type_api_name: str = Field(alias="queryTypeApiName")
+    found: bool = False
+    query_type_rid: str = Field(default="", alias="queryTypeRid")
+    can_execute: bool = Field(default=False, alias="canExecute")
+
+
+class QueryCheckBatchResponse(_CamelModel):
+    """Round-116 SDK mirror of round-115 backend
+    QueryCheckBatchResponse. results preserves input order so
+    callers correlate row N → row N without a name→row map.
+    """
+    ontology_api_name: str = Field(alias="ontologyApiName")
+    results: List[QueryCheckBatchEntry] = Field(default_factory=list)
+
+
 class QueryCheckResponse(_CamelModel):
     """Round-114 SDK mirror of round-113 backend QueryCheckResponse.
 

@@ -116,6 +116,8 @@ from .types import (
     Ontology,
     OntologyMe,
     PermissionsCheckResponse,
+    QueryCheckBatchEntry,
+    QueryCheckBatchResponse,
     QueryCheckResponse,
     QueryType,
     RevokeOthersResponse,
@@ -210,6 +212,8 @@ __all__ = [
     "ObjectCheckBatchEntry",
     "ObjectCheckBatchResponse",
     "QueryCheckResponse",
+    "QueryCheckBatchEntry",
+    "QueryCheckBatchResponse",
     "QueriesAPI",
 ]
 

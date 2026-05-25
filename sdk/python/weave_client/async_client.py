@@ -1236,8 +1236,8 @@ class AsyncPermissionRequestsAPI:
 
 
 class AsyncQueriesAPI:
-    """Async mirror of QueriesAPI (round 114). Wraps round-113
-    GET /api/v2/ontologies/{ont}/queryTypes/{qt}/check."""
+    """Async mirror of QueriesAPI (round 114 + round 116). Wraps
+    round-113 single + round-115 bulk query check."""
 
     def __init__(self, client: "WeaveAsyncClient") -> None:
         self._client = client
@@ -1250,6 +1250,20 @@ class AsyncQueriesAPI:
         )
         resp = await self._client._request("GET", path)
         return _validate(QueryCheckResponse, resp or {})
+
+    async def check_batch(
+        self,
+        ontology: str,
+        query_types: List[str],
+    ) -> "QueryCheckBatchResponse":
+        from .types import QueryCheckBatchResponse
+        body = {
+            "ontologyApiName": ontology,
+            "queryTypeApiNames": query_types,
+        }
+        resp = await self._client._request(
+            "POST", "/api/v2/me/checks/queryTypes", json_body=body)
+        return _validate(QueryCheckBatchResponse, resp or {})
 
 
 class AsyncSessionsAPI:

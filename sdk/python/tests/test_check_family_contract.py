@@ -63,6 +63,7 @@ _SDK_SURFACE = [
     ("objects", "check", ObjectsAPI, AsyncObjectsAPI),
     ("objects", "check_batch", ObjectsAPI, AsyncObjectsAPI),
     ("queries", "check", QueriesAPI, AsyncQueriesAPI),
+    ("queries", "check_batch", QueriesAPI, AsyncQueriesAPI),
 ]
 
 
@@ -166,6 +167,9 @@ _WIRE_CASES = [
     ("actions.check_batch", "POST", "/api/v2/me/checks/actionTypes",
      ("nw", ["createCustomer"]),
      {"ontologyApiName": "nw", "actionTypeApiNames": ["createCustomer"]}),
+    ("queries.check_batch", "POST", "/api/v2/me/checks/queryTypes",
+     ("nw", ["topCustomers"]),
+     {"ontologyApiName": "nw", "queryTypeApiNames": ["topCustomers"]}),
 ]
 
 
@@ -206,6 +210,8 @@ class WireShapeContractTests(unittest.TestCase):
                 "ontologyApiName": "nw", "queryTypeApiName": "topCustomers",
                 "queryTypeRid": "ri.qt", "canExecute": True,
             })
+        if sync_dotted == "queries.check_batch":
+            return json.dumps({"ontologyApiName": "nw", "results": []})
         if sync_dotted == "objects.check_batch":
             return json.dumps({"ontologyApiName": "nw", "results": []})
         if sync_dotted == "actions.check_batch":
