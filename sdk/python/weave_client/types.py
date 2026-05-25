@@ -97,6 +97,24 @@ class BuildInfo(_CamelModel):
     build_time: str = Field(default="unknown", alias="buildTime")
 
 
+class Dependency(_CamelModel):
+    """Round-126 SDK mirror of one row from
+    GET /api/v2/build-info/dependencies (round-125 backend).
+
+    path + version always populated; sum + replace optional.
+    `replace` is populated only when a go.mod replace directive
+    applies — surfaces "we pinned this from upstream to our fork"
+    without forcing callers to diff version strings. `version`
+    always carries the effective version (post-replace if a replace
+    applies, upstream otherwise) per round-125's flatten-Replace
+    wire design.
+    """
+    path: str
+    version: str
+    sum: str = ""
+    replace: str = ""
+
+
 class TypeGroup(_CamelModel):
     """Round-122 SDK mirror of pkg/oms.TypeGroup wire shape — the
     navigation-pane categorisation primitive (per round 87/88)."""

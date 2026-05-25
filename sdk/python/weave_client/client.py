@@ -23,7 +23,9 @@ from .exceptions import (
     WeaveNotFoundError,
     WeaveVersionedLookupError,
 )
-from .types import BuildInfo, LoginResponse
+from typing import List
+
+from .types import BuildInfo, Dependency, LoginResponse
 
 
 class Client:
@@ -266,3 +268,19 @@ class Client:
         if hasattr(BuildInfo, "model_validate"):
             return BuildInfo.model_validate(body or {})
         return BuildInfo(**(body or {}))
+
+    def build_info_dependencies(self) -> List[Dependency]:
+        """Fetch the server's Go module dependency inventory (round 126).
+
+        Mirrors round-125 backend GET /api/v2/build-info/dependencies.
+        Returns typed Dependency entries (path / version / sum /
+        replace). Empty list when the backend has no embedded build
+        info (defensive: backend guarantees `[]` not null). Same
+        anonymous public access as ``build_info()``.
+        """
+        body = self._request(
+            "GET", "/api/v2/build-info/dependencies", anonymous=True)
+        items = (body or {}).get("dependencies", []) if isinstance(body, dict) else []
+        if hasattr(Dependency, "model_validate"):
+            return [Dependency.model_validate(d) for d in items]
+        return [Dependency(**d) for d in items]

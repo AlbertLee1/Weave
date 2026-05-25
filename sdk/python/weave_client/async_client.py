@@ -194,6 +194,16 @@ class WeaveAsyncClient:
             return BuildInfo.model_validate(body or {})
         return BuildInfo(**(body or {}))
 
+    async def build_info_dependencies(self) -> "List[Dependency]":
+        """Async mirror of Client.build_info_dependencies — round 126."""
+        from .types import Dependency
+        body = await self._request(
+            "GET", "/api/v2/build-info/dependencies", anonymous=True)
+        items = (body or {}).get("dependencies", []) if isinstance(body, dict) else []
+        if hasattr(Dependency, "model_validate"):
+            return [Dependency.model_validate(d) for d in items]
+        return [Dependency(**d) for d in items]
+
 
 def _handle(resp: HTTPResponse) -> Any:
     """Translate an HTTPResponse into either a Python value or a typed exception.

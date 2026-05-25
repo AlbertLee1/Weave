@@ -105,6 +105,7 @@ from .types import (
     BatchApplyActionResponse,
     BuildInfo,
     CountResponse,
+    Dependency,
     Edit,
     InterfaceType,
     LinkType,
@@ -223,6 +224,7 @@ __all__ = [
     "SharedPropertyType",
     "TypeGroup",
     "BuildInfo",
+    "Dependency",
 ]
 
 __version__ = "0.1.0"
