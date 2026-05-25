@@ -7,6 +7,7 @@ from ._http import quote_path
 from .types import (
     ActionType,
     InterfaceType,
+    MeOntologiesEntry,
     ObjectType,
     Ontology,
     OntologyMe,
@@ -274,6 +275,22 @@ class OntologiesAPI:
             f"/api/v2/ontologies/{quote_path(ontology)}/queryTypes/{quote_path(query_type)}",
         )
         return _validate(QueryType, body)
+
+    # ---- caller-scoped ontology inventory (round 100) -----------------------
+
+    def list_me(self) -> List[MeOntologiesEntry]:
+        """List ontologies where the caller has a scoped per-ontology role.
+
+        Mirrors round-99 backend GET /api/v2/me/ontologies. Returns an
+        empty list when the caller has only global roles or no roles
+        at all — never None, so callers can iterate without nil-checks.
+        Each entry carries rid + api_name + display_name + role (the
+        backend guarantees role is non-empty since entries are
+        filtered to ontologies where role is non-empty).
+        """
+        body = self._client._request("GET", "/api/v2/me/ontologies") or {}
+        items = body.get("ontologies", []) if isinstance(body, dict) else []
+        return [_validate(MeOntologiesEntry, item) for item in items]
 
     # ---- per-ontology caller-scope (round 96) -------------------------------
 

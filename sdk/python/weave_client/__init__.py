@@ -102,6 +102,7 @@ from .types import (
     InterfaceType,
     LinkType,
     LoginResponse,
+    MeOntologiesEntry,
     ObjectPage,
     ObjectType,
     Ontology,
@@ -187,6 +188,7 @@ __all__ = [
     "OntologyMe",
     "PermissionsCheckResponse",
     "PermissionsAPI",
+    "MeOntologiesEntry",
 ]
 
 __version__ = "0.1.0"

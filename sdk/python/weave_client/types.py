@@ -192,6 +192,17 @@ class Attachment(_CamelModel):
     linked: bool = False
 
 
+class MeOntologiesEntry(_CamelModel):
+    """One row from GET /api/v2/me/ontologies — round-100 SDK mirror
+    of round-99 backend MeOntologiesResponse. Always carries a
+    non-empty role (the backend filters entries where role=='').
+    """
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(alias="displayName")
+    role: str
+
+
 class PermissionsCheckResponse(_CamelModel):
     """Granted/denied partition of an input permission set —
     round-98 SDK mirror of round-97 backend POST

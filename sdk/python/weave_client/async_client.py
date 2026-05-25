@@ -38,6 +38,7 @@ from .types import (
     BatchApplyActionResponse,
     InterfaceType,
     LoginResponse,
+    MeOntologiesEntry,
     ObjectPage,
     ObjectType,
     Ontology,
@@ -434,6 +435,12 @@ class AsyncOntologiesAPI:
             f"/api/v2/ontologies/{quote_path(ontology)}/me",
         )
         return _validate(OntologyMe, body or {})
+
+    async def list_me(self) -> List[MeOntologiesEntry]:
+        """Async mirror of OntologiesAPI.list_me — round-100."""
+        body = await self._client._request("GET", "/api/v2/me/ontologies") or {}
+        items = body.get("ontologies", []) if isinstance(body, dict) else []
+        return [_validate(MeOntologiesEntry, item) for item in items]
 
 
 class AsyncObjectsAPI:
