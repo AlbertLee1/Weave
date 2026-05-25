@@ -696,6 +696,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	// rebuilding or grepping go.sum.
 	r.Method(http.MethodGet, "/api/v2/build-info/dependencies",
 		buildinfo.DependenciesHandler())
+	// Round 127: capability discovery — SPA/SDK detects which
+	// optional features the server has wired without poking
+	// endpoints for 404s. Registry populated below from deps state.
+	r.Method(http.MethodGet, "/api/v2/build-info/features",
+		buildinfo.FeaturesHandler())
+	buildinfo.SetFeatures(detectFeatures(deps))
 
 	// MCP server (public JSON-RPC 2.0 endpoint for AI agents).
 	//

@@ -4587,6 +4587,67 @@ paths:
                       (in which case all sessions were revoked).
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/build-info/features:
+    get:
+      operationId: getBuildInfoFeatures
+      summary: Server capability discovery (round 127)
+      description: |
+        Returns the running server's feature manifest — which
+        optional capabilities are wired and which are disabled,
+        with a Reason field explaining why disabled ones aren't
+        active. The SPA reads this at page-load to decide which
+        routes / affordances to render, instead of poking each
+        endpoint for a 404.
+
+        Sibling of /api/v2/build-info (round 123) and
+        /api/v2/build-info/dependencies (round 125); same public
+        unauthenticated convention. Capability flags are not
+        secrets and the SPA needs them before any auth handshake
+        completes.
+
+        Stable-sorted by name. enabled=true entries omit `reason`
+        via json:omitempty. The cmd/server/features_detect.go
+        wiring builds the list at boot from ServerDeps state, so
+        a degraded boot (no PG) surfaces disabled features with
+        actionable reasons like "SessionStore not configured (no
+        PG)".
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: Feature manifest snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [features]
+                properties:
+                  features:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, enabled]
+                      properties:
+                        name:
+                          type: string
+                          description: |
+                            Stable feature identifier (e.g.
+                            "rid-versioning", "sessions", "mcp").
+                        enabled:
+                          type: boolean
+                          description: |
+                            Whether the feature is wired and
+                            available on this server.
+                        description:
+                          type: string
+                          description: |
+                            Human-readable description for the SPA
+                            settings page.
+                        reason:
+                          type: string
+                          description: |
+                            Why enabled=false. Omitted entirely
+                            when enabled=true.
   /api/v2/build-info/dependencies:
     get:
       operationId: getBuildInfoDependencies
