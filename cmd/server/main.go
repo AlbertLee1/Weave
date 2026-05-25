@@ -710,6 +710,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	// boot has a clean reference point.
 	serverinfo.SetStartedAt(time.Now())
 	r.Method(http.MethodGet, "/api/v2/server-info", serverinfo.Handler())
+	// Round 131: PG pool + NATS connection state snapshot. Provider
+	// closure in cmd/server/connections_provider.go reads live
+	// pgxpool.Stat + nats.Conn.Status — pkg/serverinfo stays free
+	// of pgx/nats imports.
+	serverinfo.SetStatsProvider(connectionsProvider(deps))
+	r.Method(http.MethodGet, "/api/v2/server-info/connections",
+		serverinfo.ConnectionsHandler())
 
 	// MCP server (public JSON-RPC 2.0 endpoint for AI agents).
 	//

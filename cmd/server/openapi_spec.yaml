@@ -4587,6 +4587,82 @@ paths:
                       (in which case all sessions were revoked).
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/server-info/connections:
+    get:
+      operationId: getServerInfoConnections
+      summary: PG pool + NATS connection state (round 131)
+      description: |
+        Returns the server's live connection-pool snapshot — PG
+        acquired/idle/total/max conns, NATS connection status +
+        in/out message counters. On-call answers "is the DB pool
+        healthy? is NATS still connected?" without a Prometheus
+        scrape.
+
+        Sibling of /api/v2/server-info (round 129); same public
+        unauthenticated convention. Per-service nullability lets a
+        partial boot (PG up, NATS down) surface accurately:
+        degraded boot emits {"postgres": null, "nats": null} so
+        the SPA renders "service not configured" instead of
+        crashing on missing fields.
+
+        Provider invoked at request time so successive calls show
+        the latest counter values.
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: Connection state snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [postgres, nats]
+                properties:
+                  postgres:
+                    nullable: true
+                    type: object
+                    required: [acquiredConns, idleConns, totalConns,
+                               maxConns, newConnsCount,
+                               maxLifetimeDestroyCount, maxIdleDestroyCount]
+                    properties:
+                      acquiredConns:
+                        type: integer
+                      idleConns:
+                        type: integer
+                      totalConns:
+                        type: integer
+                      maxConns:
+                        type: integer
+                      newConnsCount:
+                        type: integer
+                        format: int64
+                      maxLifetimeDestroyCount:
+                        type: integer
+                        format: int64
+                      maxIdleDestroyCount:
+                        type: integer
+                        format: int64
+                  nats:
+                    nullable: true
+                    type: object
+                    required: [status, inMsgs, outMsgs, reconnects]
+                    properties:
+                      status:
+                        type: string
+                        description: |
+                          One of CONNECTED / RECONNECTING /
+                          CLOSED / etc. (nats.Status.String()).
+                      serverUrl:
+                        type: string
+                      inMsgs:
+                        type: integer
+                        format: int64
+                      outMsgs:
+                        type: integer
+                        format: int64
+                      reconnects:
+                        type: integer
+                        format: int64
   /api/v2/server-info:
     get:
       operationId: getServerInfo
