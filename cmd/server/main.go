@@ -931,6 +931,11 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Method(http.MethodGet,
 				"/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/check",
 				auth.ObjectCheckHandler(resolver, resolver))
+			// Round 107: bulk OT batch probe — same {resolver, resolver}
+			// pair, one round-trip for N object types.
+			api.Method(http.MethodPost,
+				"/api/v2/me/checks/objectTypes",
+				auth.ObjectCheckBatchHandler(resolver, resolver))
 		}
 
 		// US-254: active-session inventory. Mounted inside the auth group so

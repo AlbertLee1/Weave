@@ -4629,6 +4629,78 @@ paths:
                             to ontologies where role is non-empty).
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/me/checks/objectTypes:
+    post:
+      operationId: checkObjectTypesBatch
+      summary: Bulk object-type applicability probe (round 107)
+      description: |
+        Resolves read/write permissions for N object types on ONE
+        ontology in a single round-trip. The common SPA page-load
+        pattern is "this page renders rows for K object types; tell
+        me the read/write matrix for all K at once", which would
+        otherwise require K parallel GETs against
+        /api/v2/ontologies/{ont}/objectTypes/{ot}/check (round 105).
+
+        Each result carries `found:bool` so the SPA can distinguish
+        "object type doesn't exist" (deleted/renamed in config) from
+        "exists but no permission" — the round-105 single endpoint
+        expressed this with HTTP 404, but a batch endpoint can't
+        404 per-entry, so the discriminator moves into the payload.
+
+        results preserves the input order: row N of the response
+        corresponds to row N of the request without a name→row map.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ontologyApiName, objectTypeApiNames]
+              properties:
+                ontologyApiName:
+                  type: string
+                objectTypeApiNames:
+                  type: array
+                  items:
+                    type: string
+                  description: |
+                    Non-empty list of object-type API names. An empty
+                    array returns 400 — likely a client coding error.
+      responses:
+        "200":
+          description: Bulk applicability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyApiName, results]
+                properties:
+                  ontologyApiName:
+                    type: string
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [objectTypeApiName, found, canRead, canWrite]
+                      properties:
+                        objectTypeApiName:
+                          type: string
+                        found:
+                          type: boolean
+                        objectTypeRid:
+                          type: string
+                          description: Empty when found is false.
+                        canRead:
+                          type: boolean
+                        canWrite:
+                          type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/me/permissions/check:
     post:
       operationId: checkMyPermissions
