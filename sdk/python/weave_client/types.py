@@ -130,6 +130,23 @@ class Feature(_CamelModel):
     reason: str = ""
 
 
+class ServerInfo(_CamelModel):
+    """Round-130 SDK mirror of round-129 backend
+    GET /api/v2/server-info response. LIVE runtime stats — uptime,
+    goroutine count, memory, GC cycles.
+
+    Sibling of BuildInfo: where BuildInfo is compile-time identity
+    (immutable across requests), ServerInfo is live state (mutates
+    per call). On-call pairs the two for full debug context.
+    """
+    started_at: str = Field(default="", alias="startedAt")
+    uptime_seconds: int = Field(default=0, alias="uptimeSeconds")
+    goroutine_count: int = Field(default=0, alias="goroutineCount")
+    memory_alloc_bytes: int = Field(default=0, alias="memoryAllocBytes")
+    memory_sys_bytes: int = Field(default=0, alias="memorySysBytes")
+    gc_cycles: int = Field(default=0, alias="gcCycles")
+
+
 class TypeGroup(_CamelModel):
     """Round-122 SDK mirror of pkg/oms.TypeGroup wire shape — the
     navigation-pane categorisation primitive (per round 87/88)."""

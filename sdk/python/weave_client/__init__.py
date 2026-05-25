@@ -125,6 +125,7 @@ from .types import (
     QueryCheckResponse,
     QueryType,
     RevokeOthersResponse,
+    ServerInfo,
     Session,
     SharedPropertyType,
     TimeSeriesPoint,
@@ -227,6 +228,7 @@ __all__ = [
     "BuildInfo",
     "Dependency",
     "Feature",
+    "ServerInfo",
 ]
 
 __version__ = "0.1.0"

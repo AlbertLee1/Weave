@@ -25,7 +25,7 @@ from .exceptions import (
 )
 from typing import List
 
-from .types import BuildInfo, Dependency, Feature, LoginResponse
+from .types import BuildInfo, Dependency, Feature, LoginResponse, ServerInfo
 
 
 class Client:
@@ -300,3 +300,20 @@ class Client:
         if hasattr(Feature, "model_validate"):
             return [Feature.model_validate(f) for f in items]
         return [Feature(**f) for f in items]
+
+    def server_info(self) -> ServerInfo:
+        """Fetch live runtime stats — uptime, goroutines, memory (round 130).
+
+        Mirrors round-129 backend GET /api/v2/server-info. Returns
+        typed ServerInfo. Sibling of ``build_info()``: build_info
+        is compile-time identity (stable across requests),
+        server_info is live state (mutates per call). On-call
+        pairs the two for full debug context.
+
+        Same anonymous public access as the rest of the
+        server-observability family (rounds 124/126/128).
+        """
+        body = self._request("GET", "/api/v2/server-info", anonymous=True)
+        if hasattr(ServerInfo, "model_validate"):
+            return ServerInfo.model_validate(body or {})
+        return ServerInfo(**(body or {}))
