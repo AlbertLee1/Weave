@@ -915,9 +915,17 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// when the OMS repo is available because we need to list
 		// ontologies. The same adapter struct doubles as the
 		// OntologyLister (cmd/server/ontology_me_resolver.go).
+		//
+		// Round 103: same adapter now also implements
+		// auth.ActionTypeResolver for the action-check handler —
+		// single struct, four interfaces.
 		if deps.OmsRepo != nil {
+			resolver := &omsOntologyResolver{repo: deps.OmsRepo}
 			api.Method(http.MethodGet, "/api/v2/me/ontologies",
-				auth.MeOntologiesHandler(&omsOntologyResolver{repo: deps.OmsRepo}))
+				auth.MeOntologiesHandler(resolver))
+			api.Method(http.MethodGet,
+				"/api/v2/ontologies/{ontologyApiName}/actions/{actionApiName}/check",
+				auth.ActionCheckHandler(resolver, resolver))
 		}
 
 		// US-254: active-session inventory. Mounted inside the auth group so

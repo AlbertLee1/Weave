@@ -4690,6 +4690,55 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/actions/{actionApiName}/check:
+    get:
+      operationId: checkAction
+      summary: Foundry-parity action applicability probe (round 103)
+      description: |
+        Returns whether the caller can apply the named action on the
+        named ontology. The SPA uses this to disable per-row "Apply
+        Action" buttons without round-tripping a real apply call.
+
+        Distinct from POST /api/v2/me/permissions/check:
+          1. Validates that the action exists (404 ActionTypeNotFound
+             when missing) — a raw permission probe always returns
+             granted/denied regardless of whether the action is real.
+          2. Single GET — fits row-render code where POST+body is
+             awkward.
+
+        canApply reflects the caller's effective role set on this
+        ontology (global ∪ scoped role). False does NOT imply 403;
+        the response is informational and always returns 200 with
+        a boolean so the SPA can use it for UI gating.
+      tags: [Auth]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: actionApiName
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Action applicability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyApiName, actionApiName, actionRid, canApply]
+                properties:
+                  ontologyApiName:
+                    type: string
+                  actionApiName:
+                    type: string
+                  actionRid:
+                    type: string
+                  canApply:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/me:
     get:
       operationId: getOntologyMe

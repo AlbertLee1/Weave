@@ -28,6 +28,21 @@ func (r *omsOntologyResolver) GetOntology(ctx context.Context, apiNameOrRID stri
 	return &auth.ResolvedOntology{RID: o.RID, APIName: o.APIName, DisplayName: o.DisplayName}, nil
 }
 
+// GetActionType implements auth.ActionTypeResolver for the round-103
+// action-check handler. Same adapter struct now serves four interfaces
+// — single resolution, listing, and action lookup — so cmd/server
+// keeps the auth ↔ oms bridge to one struct.
+func (r *omsOntologyResolver) GetActionType(ctx context.Context, ontologyRID, apiNameOrRID string) (*auth.ResolvedActionType, error) {
+	at, err := r.repo.GetActionTypeByAPIName(ctx, ontologyRID, apiNameOrRID)
+	if err != nil {
+		if errors.Is(err, oms.ErrNotFound) {
+			return nil, auth.ErrActionTypeNotFound
+		}
+		return nil, err
+	}
+	return &auth.ResolvedActionType{RID: at.RID, APIName: at.APIName}, nil
+}
+
 // ListOntologies implements auth.OntologyLister for the round-99
 // /api/v2/me/ontologies handler. Same adapter struct serves both
 // the single-lookup and list paths so cmd/server stays free of
