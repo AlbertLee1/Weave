@@ -192,6 +192,20 @@ class Attachment(_CamelModel):
     linked: bool = False
 
 
+class PermissionsCheckResponse(_CamelModel):
+    """Granted/denied partition of an input permission set —
+    round-98 SDK mirror of round-97 backend POST
+    /api/v2/me/permissions/check.
+
+    The two list fields always exactly partition the input
+    permissions (no overlap, no missing entries). Default-empty
+    lists mean callers can do ``for p in resp.granted`` without
+    nil-checks even when the server returns ``{"granted":[]}``.
+    """
+    granted: List[str] = Field(default_factory=list)
+    denied: List[str] = Field(default_factory=list)
+
+
 class OntologyMe(_CamelModel):
     """Caller's scope on ONE specific ontology — round 96 mirror of
     round-95 backend ``GET /api/v2/ontologies/{ontologyApiName}/me``.

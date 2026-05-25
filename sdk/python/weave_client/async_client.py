@@ -103,6 +103,7 @@ class WeaveAsyncClient:
         self.notifications = AsyncNotificationsAPI(self)
         self.dashboards = AsyncDashboardsAPI(self)
         self.permissionrequests = AsyncPermissionRequestsAPI(self)
+        self.permissions = AsyncPermissionsAPI(self)
 
     @property
     def token(self) -> str:
@@ -1175,6 +1176,28 @@ class AsyncPermissionRequestsAPI:
         return _parse_request(resp or {})
 
 
+class AsyncPermissionsAPI:
+    """Async mirror of PermissionsAPI (round 98). Wraps the
+    round-97 POST /api/v2/me/permissions/check probe so the async
+    client has full parity with the sync surface."""
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def check(
+        self,
+        permissions: List[str],
+        ontology: Optional[str] = None,
+    ) -> "PermissionsCheckResponse":
+        from .types import PermissionsCheckResponse
+        body: Dict[str, Any] = {"permissions": permissions}
+        if ontology is not None:
+            body["ontology"] = ontology
+        resp = await self._client._request(
+            "POST", "/api/v2/me/permissions/check", json_body=body)
+        return _validate(PermissionsCheckResponse, resp or {})
+
+
 __all__ = [
     "WeaveAsyncClient",
     "AsyncOntologiesAPI",
@@ -1187,4 +1210,5 @@ __all__ = [
     "AsyncNotificationsAPI",
     "AsyncDashboardsAPI",
     "AsyncPermissionRequestsAPI",
+    "AsyncPermissionsAPI",
 ]

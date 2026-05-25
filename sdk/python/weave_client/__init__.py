@@ -89,6 +89,7 @@ from .transactions import (
     TransactionAppendResponse,
     TransactionsAPI,
 )
+from .permissions import PermissionsAPI
 from .rid import InvalidRidError, Rid, format_rid, parse_rid
 from .types import (
     ActionResults,
@@ -105,6 +106,7 @@ from .types import (
     ObjectType,
     Ontology,
     OntologyMe,
+    PermissionsCheckResponse,
     QueryType,
     TimeSeriesPoint,
     ValueType,
@@ -183,6 +185,8 @@ __all__ = [
     "parse_rid",
     "format_rid",
     "OntologyMe",
+    "PermissionsCheckResponse",
+    "PermissionsAPI",
 ]
 
 __version__ = "0.1.0"
