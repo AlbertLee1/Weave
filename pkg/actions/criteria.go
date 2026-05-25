@@ -3,6 +3,7 @@ package actions
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // SubmissionCriteria defines a condition that must be met before an action can execute.
@@ -15,12 +16,16 @@ import (
 //     other: leftParameter <op> rightParameter (PRD-V2 Gap-A3
 //     round 40; closes the "参数 A > 参数 B" example without a
 //     full DSL)
+//   - "group" — composite AND/OR/NOT over nested criteria
+//     (PRD-V2 Gap-A3 round 133; Foundry submissionCriteriaConjunction
+//     parity, closes the "either A or B" / "C must NOT hold" gap
+//     without a full expression DSL)
 //
-// Multiple criteria in an array are AND-ed (all must pass). A
-// full mini-expression DSL (CEL-lite / Goja) is deferred to a
+// Multiple criteria in a top-level array are AND-ed (all must pass).
+// A full mini-expression DSL (CEL-lite / Goja) is deferred to a
 // future round.
 type SubmissionCriteria struct {
-	Type  string          `json:"type"`  // "always", "parameterMatch", "parameterCompare"
+	Type  string          `json:"type"`
 	Value json.RawMessage `json:"value,omitempty"`
 }
 
@@ -29,6 +34,28 @@ type parameterMatchValue struct {
 	Parameter string      `json:"parameter"`
 	Operator  string      `json:"operator"` // "eq", "neq", "gt", "lt", "gte", "lte"
 	Value     interface{} `json:"value"`
+}
+
+// groupValue is the config for the "group" composite criterion
+// (Gap-A3 round 133). Operator is one of "and" / "or" / "not"
+// (case-insensitive). Children may themselves be groups, enabling
+// arbitrary nesting.
+//
+// Semantics:
+//   - "and" — every child must pass; first failure returned
+//             (matches the existing top-level array AND).
+//             Zero children is vacuously true.
+//   - "or"  — first passing child short-circuits; if none pass,
+//             returns an aggregated "submission criteria not met"
+//             error that mentions every child's failure so action
+//             authors can debug all branches at once. Zero children
+//             is vacuously false.
+//   - "not" — exactly one child required; passes iff the child
+//             FAILS. Empty or >1 children rejected as config error
+//             so authoring mistakes surface loudly.
+type groupValue struct {
+	Operator string               `json:"operator"`
+	Criteria []SubmissionCriteria `json:"criteria"`
 }
 
 // parameterCompareValue is the config for the "parameterCompare"
@@ -130,8 +157,57 @@ func evaluateSingleCriteria(c SubmissionCriteria, ctx ActionContext) error {
 		}
 		return nil
 
+	case "group":
+		var cfg groupValue
+		if err := json.Unmarshal(c.Value, &cfg); err != nil {
+			return fmt.Errorf("criteria group: invalid config: %w", err)
+		}
+		return evaluateGroupCriteria(cfg, ctx)
+
 	default:
 		return fmt.Errorf("unknown submission criteria type: %q", c.Type)
+	}
+}
+
+func evaluateGroupCriteria(cfg groupValue, ctx ActionContext) error {
+	op := strings.ToLower(cfg.Operator)
+	switch op {
+	case "and":
+		for _, child := range cfg.Criteria {
+			if err := evaluateSingleCriteria(child, ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	case "or":
+		if len(cfg.Criteria) == 0 {
+			return fmt.Errorf("submission criteria not met: empty OR group has no satisfiable children")
+		}
+		var failures []string
+		for _, child := range cfg.Criteria {
+			if err := evaluateSingleCriteria(child, ctx); err == nil {
+				return nil
+			} else {
+				failures = append(failures, err.Error())
+			}
+		}
+		return fmt.Errorf("submission criteria not met: no OR child passed: [%s]",
+			strings.Join(failures, " | "))
+
+	case "not":
+		if len(cfg.Criteria) != 1 {
+			return fmt.Errorf("criteria group: NOT requires exactly one child, got %d",
+				len(cfg.Criteria))
+		}
+		if err := evaluateSingleCriteria(cfg.Criteria[0], ctx); err == nil {
+			return fmt.Errorf("submission criteria not met: NOT child unexpectedly passed")
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("criteria group: unknown operator %q (want and|or|not)",
+			cfg.Operator)
 	}
 }
 
