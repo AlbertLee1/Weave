@@ -93,6 +93,7 @@ from .permissions import PermissionsAPI
 from .rid import InvalidRidError, Rid, format_rid, parse_rid
 from .sessions import SessionsAPI
 from .types import (
+    ActionCheckResponse,
     ActionResults,
     ActionType,
     ApplyActionResponse,
@@ -195,6 +196,7 @@ __all__ = [
     "Session",
     "RevokeOthersResponse",
     "SessionsAPI",
+    "ActionCheckResponse",
 ]
 
 __version__ = "0.1.0"

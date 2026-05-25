@@ -192,6 +192,20 @@ class Attachment(_CamelModel):
     linked: bool = False
 
 
+class ActionCheckResponse(_CamelModel):
+    """Round-104 SDK mirror of round-103 backend ActionCheckResponse.
+
+    Wire field can_apply uses snake_case via Pydantic alias to match
+    the backend's canApply camelCase (Foundry-parity external name).
+    Always carries the four fields: caller-side gating logic can rely
+    on every field being present without nil-checks.
+    """
+    ontology_api_name: str = Field(alias="ontologyApiName")
+    action_api_name: str = Field(alias="actionApiName")
+    action_rid: str = Field(alias="actionRid")
+    can_apply: bool = Field(alias="canApply")
+
+
 class Session(_CamelModel):
     """One active session row from GET /api/auth/sessions (US-254).
 

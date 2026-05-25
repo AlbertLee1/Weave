@@ -4,7 +4,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ._http import quote_path
-from .types import ApplyActionResponse, BatchApplyActionResponse
+from .types import ActionCheckResponse, ApplyActionResponse, BatchApplyActionResponse
+
+
+def _validate_check(payload: Any) -> ActionCheckResponse:
+    if hasattr(ActionCheckResponse, "model_validate"):
+        return ActionCheckResponse.model_validate(payload or {})
+    return ActionCheckResponse(**(payload or {}))
 
 if TYPE_CHECKING:
     from .client import Client
@@ -104,3 +110,19 @@ class ActionsAPI:
         )
         resp = self._client._request("POST", path, json_body=body)
         return resp or {}
+
+    def check(self, ontology: str, action_type: str) -> ActionCheckResponse:
+        """Probe whether the caller can apply a named action (round 104).
+
+        Mirrors round-103 backend GET /api/v2/ontologies/{ontology}/
+        actions/{action}/check. Returns a typed ActionCheckResponse;
+        always 200 with canApply boolean (never 403 — the probe is
+        informational for SPA UI gating). 404 ActionTypeNotFound when
+        the action does not exist (distinguishes "no" from "missing").
+        """
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/actions/{quote_path(action_type)}/check"
+        )
+        resp = self._client._request("GET", path)
+        return _validate_check(resp)

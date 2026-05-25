@@ -33,6 +33,7 @@ from ._retry import RetryPolicy
 from .exceptions import WeaveAuthError, WeaveError, WeaveNotFoundError
 from .subscriptions import Subscription, WebSocketTransport
 from .types import (
+    ActionCheckResponse,
     ActionType,
     ApplyActionResponse,
     BatchApplyActionResponse,
@@ -691,6 +692,15 @@ class AsyncActionsAPI:
         )
         resp = await self._client._request("POST", path, json_body=body)
         return resp or {}
+
+    async def check(self, ontology: str, action_type: str) -> ActionCheckResponse:
+        """Async mirror of ActionsAPI.check — round 104."""
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/actions/{quote_path(action_type)}/check"
+        )
+        resp = await self._client._request("GET", path)
+        return _validate(ActionCheckResponse, resp or {})
 
 
 class AsyncObjectSetsAPI:
