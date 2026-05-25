@@ -90,6 +90,7 @@ from .transactions import (
     TransactionAppendResponse,
     TransactionsAPI,
 )
+from . import criteria
 from .permissions import PermissionsAPI
 from .queries import QueriesAPI
 from .rid import InvalidRidError, Rid, format_rid, parse_rid
@@ -235,6 +236,7 @@ __all__ = [
     "ConnectionStats",
     "PostgresStats",
     "NATSStats",
+    "criteria",
 ]
 
 __version__ = "0.1.0"
