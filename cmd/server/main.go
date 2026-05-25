@@ -942,6 +942,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Method(http.MethodPost,
 				"/api/v2/me/checks/actionTypes",
 				auth.ActionCheckBatchHandler(resolver, resolver))
+			// Round 113: third axis of the per-resource check
+			// family — query-type execution gating. Same resolver
+			// struct (6th interface implementation).
+			api.Method(http.MethodGet,
+				"/api/v2/ontologies/{ontologyApiName}/queryTypes/{queryTypeApiName}/check",
+				auth.QueryCheckHandler(resolver, resolver))
 		}
 
 		// US-254: active-session inventory. Mounted inside the auth group so

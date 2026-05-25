@@ -35,9 +35,10 @@ func TestContract_CheckFamilyEndpoints(t *testing.T) {
 		{Method: "POST", Path: "/api/v2/me/permissions/check"},
 		{Method: "GET", Path: "/api/v2/me/ontologies"},
 		{Method: "POST", Path: "/api/auth/sessions/revoke-others"},
-		// Per-resource single check (rounds 103, 105)
+		// Per-resource single check (rounds 103, 105, 113)
 		{Method: "GET", Path: "/api/v2/ontologies/{ontologyApiName}/actions/{actionApiName}/check"},
 		{Method: "GET", Path: "/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/check"},
+		{Method: "GET", Path: "/api/v2/ontologies/{ontologyApiName}/queryTypes/{queryTypeApiName}/check"},
 		// Bulk check pair (rounds 107, 109)
 		{Method: "POST", Path: "/api/v2/me/checks/objectTypes"},
 		{Method: "POST", Path: "/api/v2/me/checks/actionTypes"},
@@ -125,6 +126,11 @@ func TestContract_CheckFamilyMethodDiscipline(t *testing.T) {
 		},
 		{
 			path:       "/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/check",
+			wantMethod: "GET",
+			forbidden:  []string{"POST", "PUT", "DELETE", "PATCH"},
+		},
+		{
+			path:       "/api/v2/ontologies/{ontologyApiName}/queryTypes/{queryTypeApiName}/check",
 			wantMethod: "GET",
 			forbidden:  []string{"POST", "PUT", "DELETE", "PATCH"},
 		},

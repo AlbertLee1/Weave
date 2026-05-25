@@ -4835,6 +4835,57 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/queryTypes/{queryTypeApiName}/check:
+    get:
+      operationId: checkQueryType
+      summary: Foundry-parity query applicability probe (round 113)
+      description: |
+        Returns whether the caller can execute the named query type
+        on the named ontology. Third axis of the per-resource check
+        family (after round-103 actions and round-105 object-types).
+        SPA uses this to gate per-query "Run Query" affordances.
+
+        canExecute checks PermQueryTypeRead — Weave query types are
+        read-only computed views so the read permission gates
+        execution. The wire field stays `canExecute` matching
+        Foundry's external naming; same convention as round-103's
+        canApply↔action.execute mapping.
+
+        Always returns 200 with the boolean when (ontology,
+        queryType) pair exists — probe is informational, never 403.
+        404 OntologyNotFound when ontology missing, 404
+        QueryTypeNotFound when query missing — the distinction lets
+        the SPA respond differently to missing-config vs
+        missing-permission.
+      tags: [Auth]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: queryTypeApiName
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Query applicability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyApiName, queryTypeApiName, queryTypeRid, canExecute]
+                properties:
+                  ontologyApiName:
+                    type: string
+                  queryTypeApiName:
+                    type: string
+                  queryTypeRid:
+                    type: string
+                  canExecute:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/check:
     get:
       operationId: checkObjectType
