@@ -30,7 +30,12 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from ._async_http import AsyncTransport
 from ._http import HTTPResponse, build_query_string, quote_path
 from ._retry import RetryPolicy
-from .exceptions import WeaveAuthError, WeaveError, WeaveNotFoundError
+from .exceptions import (
+    WeaveAuthError,
+    WeaveError,
+    WeaveNotFoundError,
+    WeaveVersionedLookupError,
+)
 from .subscriptions import Subscription, WebSocketTransport
 from .types import (
     ActionCheckBatchResponse,
@@ -213,6 +218,10 @@ def _handle(resp: HTTPResponse) -> Any:
         raise WeaveAuthError(**kwargs)
     if resp.status_code == 404:
         raise WeaveNotFoundError(**kwargs)
+    # Round 118: parity with sync Client._handle.
+    if (resp.status_code == 501 and
+            kwargs["error_name"] == "VersionedLookupNotSupported"):
+        raise WeaveVersionedLookupError(**kwargs)
     raise WeaveError(**kwargs)
 
 

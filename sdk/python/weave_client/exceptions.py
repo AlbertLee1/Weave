@@ -48,3 +48,29 @@ class WeaveAuthError(WeaveError):
 
 class WeaveNotFoundError(WeaveError):
     """Raised on HTTP 404 responses."""
+
+
+class WeaveVersionedLookupError(WeaveError):
+    """Raised on HTTP 501 + errorName=VersionedLookupNotSupported.
+
+    Round 118 SDK mirror of round-117 backend pilot. The backend
+    returns this when the caller passes a versioned RID (e.g.
+    ``ri.ontology.main.object-type.{uuid}@v3``) to a Get endpoint
+    that doesn't yet support snapshot lookups. Catching this
+    specifically lets callers retry without the @vN suffix or
+    surface a 'version pin not yet supported' UI banner — rather
+    than treating it as a generic 501.
+
+    Other 501 responses (different errorName) still raise plain
+    WeaveError so this narrow typed branch doesn't capture
+    unrelated 501s the backend may add later.
+    """
+
+    @property
+    def version(self) -> str:
+        """The version digits parsed by the backend rid.Parse,
+        extracted from ``parameters['version']``. Returns ``""`` when
+        the backend omits the field (defensive default — callers
+        never see a KeyError)."""
+        v = self.parameters.get("version", "")
+        return v if isinstance(v, str) else ""

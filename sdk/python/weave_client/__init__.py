@@ -49,6 +49,7 @@ from .builders import (
     variance,
 )
 from .client import Client
+from .exceptions import WeaveVersionedLookupError  # noqa: F401  re-export
 from .exceptions import (
     WeaveAuthError,
     WeaveError,
@@ -154,6 +155,7 @@ __all__ = [
     "WeaveError",
     "WeaveAuthError",
     "WeaveNotFoundError",
+    "WeaveVersionedLookupError",
     "ChangeEvent",
     "Subscription",
     "WeaveOutOfDate",

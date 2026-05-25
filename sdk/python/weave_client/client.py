@@ -17,7 +17,12 @@ from typing import Any, Optional
 
 from ._http import HTTPResponse, Transport
 from ._retry import RetryPolicy
-from .exceptions import WeaveAuthError, WeaveError, WeaveNotFoundError
+from .exceptions import (
+    WeaveAuthError,
+    WeaveError,
+    WeaveNotFoundError,
+    WeaveVersionedLookupError,
+)
 from .types import LoginResponse
 
 
@@ -213,6 +218,14 @@ class Client:
             raise WeaveAuthError(**kwargs)
         if resp.status_code == 404:
             raise WeaveNotFoundError(**kwargs)
+        # Round 118: narrow-typed 501 dispatch for the round-117
+        # backend pilot. Only the VersionedLookupNotSupported
+        # variant gets the typed exception; other 501s fall through
+        # to plain WeaveError so future unrelated 501 surfaces
+        # aren't auto-captured by this branch.
+        if (resp.status_code == 501 and
+                kwargs["error_name"] == "VersionedLookupNotSupported"):
+            raise WeaveVersionedLookupError(**kwargs)
         raise WeaveError(**kwargs)
 
     # ---- top-level convenience --------------------------------------------
