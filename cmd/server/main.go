@@ -898,10 +898,18 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// ontologyApiName -> RID via the omsOntologyResolver
 		// adapter that bridges pkg/auth and pkg/oms without taking
 		// an import cycle).
+		var ontologyResolverForAuth auth.OntologyResolver
 		if deps.OmsRepo != nil {
+			ontologyResolverForAuth = &omsOntologyResolver{repo: deps.OmsRepo}
 			api.Method(http.MethodGet, "/api/v2/ontologies/{ontologyApiName}/me",
-				auth.OntologyMeHandler(&omsOntologyResolver{repo: deps.OmsRepo}))
+				auth.OntologyMeHandler(ontologyResolverForAuth))
 		}
+
+		// Round 97: Foundry-parity fine-grained permission probe.
+		// Always mounted (works in degraded mode with nil resolver
+		// — refuses `ontology` field but still serves global checks).
+		api.Method(http.MethodPost, "/api/v2/me/permissions/check",
+			auth.PermissionsCheckHandler(ontologyResolverForAuth))
 
 		// US-254: active-session inventory. Mounted inside the auth group so
 		// only authenticated callers can enumerate/revoke their own sessions.

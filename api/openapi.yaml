@@ -4476,6 +4476,67 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/me/permissions/check:
+    post:
+      operationId: checkMyPermissions
+      summary: Foundry-parity fine-grained permission probe (round 97)
+      description: |
+        Given a list of permission names, returns which the caller
+        holds (granted) and which they lack (denied). Optionally
+        scoped to one ontology so per-ontology roles count without
+        leaking other-ontology grants. The SPA uses this for
+        batch-gating dynamic UI ("for each row in this table, can
+        the user run THIS action?") without N round-trips to
+        /api/v2/me + client-side filtering.
+
+        granted ∪ denied always partitions the input permission set
+        exactly: no overlap, no missing entries, no duplicates.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [permissions]
+              properties:
+                permissions:
+                  type: array
+                  items:
+                    type: string
+                  description: |
+                    Non-empty list of permission names to check.
+                    An empty array returns 400 InvalidRequestBody —
+                    likely a client coding error.
+                ontology:
+                  type: string
+                  description: |
+                    When set, narrows the caller's effective role set
+                    to (global roles ∪ this ontology's scoped role).
+                    Mirrors round-95 OntologyMeHandler scoping.
+      responses:
+        "200":
+          description: Granted/denied partition of the input permission set.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [granted, denied]
+                properties:
+                  granted:
+                    type: array
+                    items:
+                      type: string
+                  denied:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/me:
     get:
       operationId: getOntologyMe
