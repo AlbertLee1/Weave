@@ -186,6 +186,14 @@ class WeaveAsyncClient:
         await self._request("POST", "/api/auth/logout", json_body=body, anonymous=True)
         self.access_token = None
 
+    async def build_info(self) -> "BuildInfo":
+        """Async mirror of Client.build_info — round 124."""
+        from .types import BuildInfo
+        body = await self._request("GET", "/api/v2/build-info", anonymous=True)
+        if hasattr(BuildInfo, "model_validate"):
+            return BuildInfo.model_validate(body or {})
+        return BuildInfo(**(body or {}))
+
 
 def _handle(resp: HTTPResponse) -> Any:
     """Translate an HTTPResponse into either a Python value or a typed exception.

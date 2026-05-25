@@ -23,7 +23,7 @@ from .exceptions import (
     WeaveNotFoundError,
     WeaveVersionedLookupError,
 )
-from .types import LoginResponse
+from .types import BuildInfo, LoginResponse
 
 
 class Client:
@@ -252,3 +252,17 @@ class Client:
         body = {"refresh_token": refresh_token} if refresh_token else None
         self._request("POST", "/api/auth/logout", json_body=body, anonymous=True)
         self.access_token = None
+
+    def build_info(self) -> BuildInfo:
+        """Fetch the server's build metadata (round 124).
+
+        Mirrors round-123 backend GET /api/v2/build-info. Returns a
+        typed BuildInfo (version / commit / go_version / build_time).
+        Endpoint is public — no Authorization header is attached
+        even when the client has credentials, mirroring the
+        backend's security:[] declaration.
+        """
+        body = self._request("GET", "/api/v2/build-info", anonymous=True)
+        if hasattr(BuildInfo, "model_validate"):
+            return BuildInfo.model_validate(body or {})
+        return BuildInfo(**(body or {}))

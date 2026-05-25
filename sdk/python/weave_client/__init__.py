@@ -103,6 +103,7 @@ from .types import (
     ApplyActionResponse,
     Attachment,
     BatchApplyActionResponse,
+    BuildInfo,
     CountResponse,
     Edit,
     InterfaceType,
@@ -221,6 +222,7 @@ __all__ = [
     "QueriesAPI",
     "SharedPropertyType",
     "TypeGroup",
+    "BuildInfo",
 ]
 
 __version__ = "0.1.0"

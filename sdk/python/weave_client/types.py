@@ -81,6 +81,22 @@ class SharedPropertyType(_CamelModel):
     is_array: bool = Field(default=False, alias="isArray")
 
 
+class BuildInfo(_CamelModel):
+    """Round-124 SDK mirror of round-123 backend
+    GET /api/v2/build-info response. Public unauthenticated
+    endpoint — caller-side gating not needed.
+
+    All fields default to "unknown" so callers can construct a
+    sentinel BuildInfo locally without runtime errors. The backend
+    itself defaults to "unknown" when ldflags are not applied
+    during build, matching the wire contract exactly.
+    """
+    version: str = "unknown"
+    commit: str = "unknown"
+    go_version: str = Field(default="unknown", alias="goVersion")
+    build_time: str = Field(default="unknown", alias="buildTime")
+
+
 class TypeGroup(_CamelModel):
     """Round-122 SDK mirror of pkg/oms.TypeGroup wire shape — the
     navigation-pane categorisation primitive (per round 87/88)."""
