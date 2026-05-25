@@ -4587,6 +4587,64 @@ paths:
                       (in which case all sessions were revoked).
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/build-info/dependencies:
+    get:
+      operationId: getBuildInfoDependencies
+      summary: Server dependency inventory (round 125)
+      description: |
+        Returns the server's third-party Go module dependencies as
+        embedded in the binary by the Go toolchain
+        (runtime/debug.ReadBuildInfo). On-call answers "which
+        version of pgx do we have running?" without rebuilding or
+        grepping go.sum.
+
+        Sibling of /api/v2/build-info (round 123); same public
+        unauthenticated convention. Module names + versions are not
+        secrets and the on-call shouldn't need a token to triage.
+
+        Per-entry shape mirrors runtime/debug.Module but flattens
+        Replace into a sibling field: `version` always carries the
+        EFFECTIVE version (post-replace) so wire consumers don't
+        walk a recursive linked list; `replace` is populated only
+        when a go.mod replace directive applies. Sorted by `path`
+        for stable diff between two snapshots.
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: Dependency inventory snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [dependencies]
+                properties:
+                  dependencies:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, version]
+                      properties:
+                        path:
+                          type: string
+                          description: Module import path (e.g. github.com/go-chi/chi/v5).
+                        version:
+                          type: string
+                          description: |
+                            Effective version (post-replace if a
+                            replace directive applies, upstream
+                            otherwise).
+                        sum:
+                          type: string
+                          description: |
+                            H1 module checksum from go.sum. Empty
+                            for modules without a go.sum entry.
+                        replace:
+                          type: string
+                          description: |
+                            Path of the replacement module when a
+                            go.mod replace directive applies. Empty
+                            otherwise.
   /api/v2/build-info:
     get:
       operationId: getBuildInfo

@@ -691,6 +691,11 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	// the on-call can answer "which commit is this?" without a
 	// token. ldflags-overridable package vars in pkg/buildinfo.
 	r.Method(http.MethodGet, "/api/v2/build-info", buildinfo.Handler())
+	// Round 125: dependency inventory from runtime/debug.ReadBuildInfo
+	// — on-call answers "which version of pgx do we have?" without
+	// rebuilding or grepping go.sum.
+	r.Method(http.MethodGet, "/api/v2/build-info/dependencies",
+		buildinfo.DependenciesHandler())
 
 	// MCP server (public JSON-RPC 2.0 endpoint for AI agents).
 	//
