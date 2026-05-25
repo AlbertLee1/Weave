@@ -207,6 +207,31 @@ class ObjectCheckResponse(_CamelModel):
     can_write: bool = Field(alias="canWrite")
 
 
+class ObjectCheckBatchEntry(_CamelModel):
+    """One row in the round-108 bulk OT check response.
+
+    ``found`` is the key discriminator (round-107 backend contract):
+    True when the object type exists, False when it has been
+    removed/renamed in config. found=False entries always carry
+    can_read=can_write=False regardless of caller perms, so the
+    SPA never accidentally shows UI for a missing type.
+    """
+    object_type_api_name: str = Field(alias="objectTypeApiName")
+    found: bool = False
+    object_type_rid: str = Field(default="", alias="objectTypeRid")
+    can_read: bool = Field(default=False, alias="canRead")
+    can_write: bool = Field(default=False, alias="canWrite")
+
+
+class ObjectCheckBatchResponse(_CamelModel):
+    """Round-108 SDK mirror of round-107 backend
+    ObjectCheckBatchResponse. results preserves input order so
+    callers can correlate row N → row N without a name→row map.
+    """
+    ontology_api_name: str = Field(alias="ontologyApiName")
+    results: List[ObjectCheckBatchEntry] = Field(default_factory=list)
+
+
 class ActionCheckResponse(_CamelModel):
     """Round-104 SDK mirror of round-103 backend ActionCheckResponse.
 

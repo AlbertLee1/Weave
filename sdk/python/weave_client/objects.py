@@ -4,13 +4,24 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, Iterator, Optional
 
 from ._http import build_query_string, quote_path
-from .types import ObjectCheckResponse, ObjectPage, WireObject
+from .types import (
+    ObjectCheckBatchResponse,
+    ObjectCheckResponse,
+    ObjectPage,
+    WireObject,
+)
 
 
 def _validate_object_check(payload: Any) -> ObjectCheckResponse:
     if hasattr(ObjectCheckResponse, "model_validate"):
         return ObjectCheckResponse.model_validate(payload or {})
     return ObjectCheckResponse(**(payload or {}))
+
+
+def _validate_object_check_batch(payload: Any) -> ObjectCheckBatchResponse:
+    if hasattr(ObjectCheckBatchResponse, "model_validate"):
+        return ObjectCheckBatchResponse.model_validate(payload or {})
+    return ObjectCheckBatchResponse(**(payload or {}))
 
 if TYPE_CHECKING:
     from .client import Client
@@ -174,6 +185,32 @@ class ObjectsAPI:
         )
         body = self._client._request("GET", path)
         return body or {}
+
+    def check_batch(
+        self,
+        ontology: str,
+        object_types: list,
+    ) -> ObjectCheckBatchResponse:
+        """Bulk-probe N object types on one ontology (round 108).
+
+        Mirrors round-107 backend POST /api/v2/me/checks/objectTypes.
+        Returns one round-trip that the SPA would otherwise need N
+        parallel GETs (against round-105's check()) to gather. Each
+        result entry carries .found discriminator so callers can
+        distinguish "type removed from config" from "exists but no
+        perm" — found=False entries always have can_read=can_write
+        =False regardless of caller perms.
+
+        Empty object_types raises WeaveError (400 from server) — the
+        SDK keeps validation thin and trusts the server's contract.
+        """
+        body = {
+            "ontologyApiName": ontology,
+            "objectTypeApiNames": object_types,
+        }
+        resp = self._client._request(
+            "POST", "/api/v2/me/checks/objectTypes", json_body=body)
+        return _validate_object_check_batch(resp)
 
     def check(self, ontology: str, object_type: str) -> ObjectCheckResponse:
         """Probe read/write permissions for an object type (round 106).

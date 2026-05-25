@@ -105,6 +105,8 @@ from .types import (
     LinkType,
     LoginResponse,
     MeOntologiesEntry,
+    ObjectCheckBatchEntry,
+    ObjectCheckBatchResponse,
     ObjectCheckResponse,
     ObjectPage,
     ObjectType,
@@ -199,6 +201,8 @@ __all__ = [
     "SessionsAPI",
     "ActionCheckResponse",
     "ObjectCheckResponse",
+    "ObjectCheckBatchEntry",
+    "ObjectCheckBatchResponse",
 ]
 
 __version__ = "0.1.0"

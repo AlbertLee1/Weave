@@ -38,6 +38,7 @@ from .types import (
     ApplyActionResponse,
     BatchApplyActionResponse,
     InterfaceType,
+    ObjectCheckBatchResponse,
     ObjectCheckResponse,
     LoginResponse,
     MeOntologiesEntry,
@@ -582,6 +583,20 @@ class AsyncObjectsAPI:
         )
         body = await self._client._request("GET", path)
         return body or {}
+
+    async def check_batch(
+        self,
+        ontology: str,
+        object_types: list,
+    ) -> ObjectCheckBatchResponse:
+        """Async mirror of ObjectsAPI.check_batch — round 108."""
+        body = {
+            "ontologyApiName": ontology,
+            "objectTypeApiNames": object_types,
+        }
+        resp = await self._client._request(
+            "POST", "/api/v2/me/checks/objectTypes", json_body=body)
+        return _validate(ObjectCheckBatchResponse, resp or {})
 
     async def check(self, ontology: str, object_type: str) -> ObjectCheckResponse:
         """Async mirror of ObjectsAPI.check — round 106."""
