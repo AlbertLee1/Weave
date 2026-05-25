@@ -115,6 +115,21 @@ class Dependency(_CamelModel):
     replace: str = ""
 
 
+class Feature(_CamelModel):
+    """Round-128 SDK mirror of one row from
+    GET /api/v2/build-info/features (round-127 backend).
+
+    name + enabled always populated; description + reason optional
+    (reason omitted by backend via json:omitempty when enabled=true).
+    Pydantic defaults to "" so callers iterate uniformly without
+    branching on key presence.
+    """
+    name: str
+    enabled: bool
+    description: str = ""
+    reason: str = ""
+
+
 class TypeGroup(_CamelModel):
     """Round-122 SDK mirror of pkg/oms.TypeGroup wire shape — the
     navigation-pane categorisation primitive (per round 87/88)."""

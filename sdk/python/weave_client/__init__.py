@@ -107,6 +107,7 @@ from .types import (
     CountResponse,
     Dependency,
     Edit,
+    Feature,
     InterfaceType,
     LinkType,
     LoginResponse,
@@ -225,6 +226,7 @@ __all__ = [
     "TypeGroup",
     "BuildInfo",
     "Dependency",
+    "Feature",
 ]
 
 __version__ = "0.1.0"

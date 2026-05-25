@@ -204,6 +204,16 @@ class WeaveAsyncClient:
             return [Dependency.model_validate(d) for d in items]
         return [Dependency(**d) for d in items]
 
+    async def build_info_features(self) -> "List[Feature]":
+        """Async mirror of Client.build_info_features — round 128."""
+        from .types import Feature
+        body = await self._request(
+            "GET", "/api/v2/build-info/features", anonymous=True)
+        items = (body or {}).get("features", []) if isinstance(body, dict) else []
+        if hasattr(Feature, "model_validate"):
+            return [Feature.model_validate(f) for f in items]
+        return [Feature(**f) for f in items]
+
 
 def _handle(resp: HTTPResponse) -> Any:
     """Translate an HTTPResponse into either a Python value or a typed exception.

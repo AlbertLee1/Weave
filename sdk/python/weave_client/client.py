@@ -25,7 +25,7 @@ from .exceptions import (
 )
 from typing import List
 
-from .types import BuildInfo, Dependency, LoginResponse
+from .types import BuildInfo, Dependency, Feature, LoginResponse
 
 
 class Client:
@@ -284,3 +284,19 @@ class Client:
         if hasattr(Dependency, "model_validate"):
             return [Dependency.model_validate(d) for d in items]
         return [Dependency(**d) for d in items]
+
+    def build_info_features(self) -> List[Feature]:
+        """Fetch the server's capability feature manifest (round 128).
+
+        Mirrors round-127 backend GET /api/v2/build-info/features.
+        Returns typed Feature entries (name / enabled / description
+        / reason). SPA reads this at page-load to decide which UI
+        affordances to render without poking endpoints for 404s.
+        Same anonymous public access as ``build_info()``.
+        """
+        body = self._request(
+            "GET", "/api/v2/build-info/features", anonymous=True)
+        items = (body or {}).get("features", []) if isinstance(body, dict) else []
+        if hasattr(Feature, "model_validate"):
+            return [Feature.model_validate(f) for f in items]
+        return [Feature(**f) for f in items]
