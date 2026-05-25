@@ -190,3 +190,22 @@ class Attachment(_CamelModel):
     media_type: str = Field(default="", alias="mediaType")
     created_at: Optional[datetime] = Field(default=None, alias="createdAt")
     linked: bool = False
+
+
+class OntologyMe(_CamelModel):
+    """Caller's scope on ONE specific ontology — round 96 mirror of
+    round-95 backend ``GET /api/v2/ontologies/{ontologyApiName}/me``.
+
+    Narrower than :class:`weave_client.types`'s general user shape
+    (the global ``/api/v2/me`` returns every per-ontology role at
+    once); this model carries just the resolved role + effective
+    permissions for ONE ontology, which is the shape the SPA needs
+    once it has scoped itself to a single ontology. ``role`` is an
+    empty string when the caller has no scoped role on this
+    ontology (they still get global-role permissions).
+    """
+    ontology_rid: str = Field(alias="ontologyRid")
+    ontology_api_name: str = Field(alias="ontologyApiName")
+    role: str = ""
+    permissions: List[str] = Field(default_factory=list)
+    markings: List[str] = Field(default_factory=list)

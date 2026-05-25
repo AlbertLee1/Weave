@@ -9,6 +9,7 @@ from .types import (
     InterfaceType,
     ObjectType,
     Ontology,
+    OntologyMe,
     QueryType,
     ValueType,
 )
@@ -273,3 +274,20 @@ class OntologiesAPI:
             f"/api/v2/ontologies/{quote_path(ontology)}/queryTypes/{quote_path(query_type)}",
         )
         return _validate(QueryType, body)
+
+    # ---- per-ontology caller-scope (round 96) -------------------------------
+
+    def get_me(self, ontology: str) -> OntologyMe:
+        """Return the caller's resolved role + permissions for ONE ontology.
+
+        Narrower than the global ``/api/v2/me`` — exposes just the role
+        and effective permission set the caller holds on the named
+        ontology (round 95 backend). ``role`` is an empty string when
+        the caller has no scoped role on this ontology (they still
+        get global-role permissions).
+        """
+        body = self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/me",
+        )
+        return _validate(OntologyMe, body or {})

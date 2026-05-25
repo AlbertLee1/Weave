@@ -104,6 +104,7 @@ from .types import (
     ObjectPage,
     ObjectType,
     Ontology,
+    OntologyMe,
     QueryType,
     TimeSeriesPoint,
     ValueType,
@@ -181,6 +182,7 @@ __all__ = [
     "InvalidRidError",
     "parse_rid",
     "format_rid",
+    "OntologyMe",
 ]
 
 __version__ = "0.1.0"

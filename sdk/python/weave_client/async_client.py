@@ -41,6 +41,7 @@ from .types import (
     ObjectPage,
     ObjectType,
     Ontology,
+    OntologyMe,
     QueryType,
     ValueType,
     WireObject,
@@ -424,6 +425,14 @@ class AsyncOntologiesAPI:
             f"/api/v2/ontologies/{quote_path(ontology)}/queryTypes/{quote_path(query_type)}",
         )
         return _validate(QueryType, body)
+
+    async def get_me(self, ontology: str) -> OntologyMe:
+        """Async mirror of OntologiesAPI.get_me — round-96."""
+        body = await self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/me",
+        )
+        return _validate(OntologyMe, body or {})
 
 
 class AsyncObjectsAPI:
