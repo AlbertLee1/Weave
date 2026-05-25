@@ -37,12 +37,14 @@ from weave_client.async_client import (
     AsyncObjectsAPI,
     AsyncOntologiesAPI,
     AsyncPermissionsAPI,
+    AsyncQueriesAPI,
     AsyncSessionsAPI,
 )
 from weave_client.actions import ActionsAPI
 from weave_client.objects import ObjectsAPI
 from weave_client.ontologies import OntologiesAPI
 from weave_client.permissions import PermissionsAPI
+from weave_client.queries import QueriesAPI
 from weave_client.sessions import SessionsAPI
 
 from tests.test_client import _StubServer
@@ -60,6 +62,7 @@ _SDK_SURFACE = [
     ("actions", "check_batch", ActionsAPI, AsyncActionsAPI),
     ("objects", "check", ObjectsAPI, AsyncObjectsAPI),
     ("objects", "check_batch", ObjectsAPI, AsyncObjectsAPI),
+    ("queries", "check", QueriesAPI, AsyncQueriesAPI),
 ]
 
 
@@ -146,6 +149,9 @@ _WIRE_CASES = [
     ("objects.check", "GET",
      "/api/v2/ontologies/nw/objectTypes/Customer/check",
      ("nw", "Customer"), None),
+    ("queries.check", "GET",
+     "/api/v2/ontologies/nw/queryTypes/topCustomers/check",
+     ("nw", "topCustomers"), None),
     # DELETE endpoint
     ("sessions.revoke", "DELETE", "/api/auth/sessions/s1", ("s1",), None),
     # POST endpoints — body shape contract
@@ -194,6 +200,11 @@ class WireShapeContractTests(unittest.TestCase):
             return json.dumps({
                 "ontologyApiName": "nw", "objectTypeApiName": "Customer",
                 "objectTypeRid": "ri.ot", "canRead": True, "canWrite": True,
+            })
+        if sync_dotted == "queries.check":
+            return json.dumps({
+                "ontologyApiName": "nw", "queryTypeApiName": "topCustomers",
+                "queryTypeRid": "ri.qt", "canExecute": True,
             })
         if sync_dotted == "objects.check_batch":
             return json.dumps({"ontologyApiName": "nw", "results": []})

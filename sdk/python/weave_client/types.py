@@ -192,6 +192,21 @@ class Attachment(_CamelModel):
     linked: bool = False
 
 
+class QueryCheckResponse(_CamelModel):
+    """Round-114 SDK mirror of round-113 backend QueryCheckResponse.
+
+    Third axis of the per-resource check family on the SDK side
+    (after ObjectCheckResponse and ActionCheckResponse). can_execute
+    surfaces the backend's canExecute boolean — PermQueryTypeRead
+    gates query execution because Weave query types are read-only
+    computed views.
+    """
+    ontology_api_name: str = Field(alias="ontologyApiName")
+    query_type_api_name: str = Field(alias="queryTypeApiName")
+    query_type_rid: str = Field(alias="queryTypeRid")
+    can_execute: bool = Field(alias="canExecute")
+
+
 class ObjectCheckResponse(_CamelModel):
     """Round-106 SDK mirror of round-105 backend ObjectCheckResponse.
 

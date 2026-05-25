@@ -109,6 +109,7 @@ class WeaveAsyncClient:
         self.dashboards = AsyncDashboardsAPI(self)
         self.permissionrequests = AsyncPermissionRequestsAPI(self)
         self.permissions = AsyncPermissionsAPI(self)
+        self.queries = AsyncQueriesAPI(self)
         self.sessions = AsyncSessionsAPI(self)
 
     @property
@@ -1234,6 +1235,23 @@ class AsyncPermissionRequestsAPI:
         return _parse_request(resp or {})
 
 
+class AsyncQueriesAPI:
+    """Async mirror of QueriesAPI (round 114). Wraps round-113
+    GET /api/v2/ontologies/{ont}/queryTypes/{qt}/check."""
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def check(self, ontology: str, query_type: str) -> "QueryCheckResponse":
+        from .types import QueryCheckResponse
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/queryTypes/{quote_path(query_type)}/check"
+        )
+        resp = await self._client._request("GET", path)
+        return _validate(QueryCheckResponse, resp or {})
+
+
 class AsyncSessionsAPI:
     """Async mirror of SessionsAPI (round 102). Wraps the
     US-254 list + delete + round-101 revoke-others surface."""
@@ -1294,5 +1312,6 @@ __all__ = [
     "AsyncDashboardsAPI",
     "AsyncPermissionRequestsAPI",
     "AsyncPermissionsAPI",
+    "AsyncQueriesAPI",
     "AsyncSessionsAPI",
 ]
