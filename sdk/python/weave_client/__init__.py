@@ -123,7 +123,9 @@ from .types import (
     QueryType,
     RevokeOthersResponse,
     Session,
+    SharedPropertyType,
     TimeSeriesPoint,
+    TypeGroup,
     ValueType,
     WireObject,
 )
@@ -217,6 +219,8 @@ __all__ = [
     "QueryCheckBatchEntry",
     "QueryCheckBatchResponse",
     "QueriesAPI",
+    "SharedPropertyType",
+    "TypeGroup",
 ]
 
 __version__ = "0.1.0"

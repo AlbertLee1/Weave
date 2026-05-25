@@ -58,6 +58,10 @@ _GET_METHODS = [
     ("get_interface_type", "interfaceTypes", "interfaceType"),
     ("get_value_type", "valueTypes", "valueType"),
     ("get_query_type", "queryTypes", "queryApiName"),
+    # Round 122: gap-fill wrappers, now matching round-119 backend 8-of-8
+    ("get_link_type", "linkTypes", "linkType"),
+    ("get_shared_property_type", "sharedPropertyTypes", "sharedPropertyType"),
+    ("get_type_group", "typeGroups", "typeGroup"),
 ]
 
 

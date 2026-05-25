@@ -65,6 +65,32 @@ class LinkType(_CamelModel):
     required: bool = False
 
 
+class SharedPropertyType(_CamelModel):
+    """Round-122 SDK mirror of pkg/oms.SharedProperty wire shape.
+    Backend type name is SharedProperty (singular) but the public
+    URL segment is /sharedPropertyTypes/...; the Python model uses
+    SDK-conventional ``SharedPropertyType`` to match the wrapper
+    method ``get_shared_property_type``.
+    """
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(default="", alias="displayName")
+    description: str = ""
+    base_type: str = Field(alias="baseType")
+    type_config: Optional[Any] = Field(default=None, alias="typeConfig")
+    is_array: bool = Field(default=False, alias="isArray")
+
+
+class TypeGroup(_CamelModel):
+    """Round-122 SDK mirror of pkg/oms.TypeGroup wire shape — the
+    navigation-pane categorisation primitive (per round 87/88)."""
+    rid: str
+    api_name: str = Field(alias="apiName")
+    display_name: str = Field(alias="displayName")
+    description: str = ""
+    color: str = ""
+
+
 class ActionType(_CamelModel):
     rid: str
     api_name: str = Field(alias="apiName")

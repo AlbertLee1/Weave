@@ -44,6 +44,7 @@ from .types import (
     ApplyActionResponse,
     BatchApplyActionResponse,
     InterfaceType,
+    LinkType,
     ObjectCheckBatchResponse,
     ObjectCheckResponse,
     LoginResponse,
@@ -53,6 +54,8 @@ from .types import (
     Ontology,
     OntologyMe,
     QueryType,
+    SharedPropertyType,
+    TypeGroup,
     ValueType,
     WireObject,
 )
@@ -442,6 +445,32 @@ class AsyncOntologiesAPI:
             f"/api/v2/ontologies/{quote_path(ontology)}/queryTypes/{quote_path(query_type)}",
         )
         return _validate(QueryType, body)
+
+    # ---- round 122 async mirrors --------------------------------------
+
+    async def get_link_type(self, ontology: str, link_type: str) -> LinkType:
+        body = await self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/linkTypes/{quote_path(link_type)}",
+        )
+        return _validate(LinkType, body)
+
+    async def get_shared_property_type(
+        self, ontology: str, shared_property_type: str
+    ) -> SharedPropertyType:
+        body = await self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/sharedPropertyTypes/"
+            f"{quote_path(shared_property_type)}",
+        )
+        return _validate(SharedPropertyType, body)
+
+    async def get_type_group(self, ontology: str, type_group: str) -> TypeGroup:
+        body = await self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/typeGroups/{quote_path(type_group)}",
+        )
+        return _validate(TypeGroup, body)
 
     async def get_me(self, ontology: str) -> OntologyMe:
         """Async mirror of OntologiesAPI.get_me — round-96."""

@@ -7,11 +7,14 @@ from ._http import quote_path
 from .types import (
     ActionType,
     InterfaceType,
+    LinkType,
     MeOntologiesEntry,
     ObjectType,
     Ontology,
     OntologyMe,
     QueryType,
+    SharedPropertyType,
+    TypeGroup,
     ValueType,
 )
 
@@ -275,6 +278,37 @@ class OntologiesAPI:
             f"/api/v2/ontologies/{quote_path(ontology)}/queryTypes/{quote_path(query_type)}",
         )
         return _validate(QueryType, body)
+
+    # ---- round 122: gap-fill wrappers (link/shared-property/type-group) ---
+    # Closes the round-120 docstring gap — backend r119 covers 8 Get
+    # endpoints with @vN guards but SDK had wrappers for only 5.
+
+    def get_link_type(self, ontology: str, link_type: str) -> LinkType:
+        """Fetch a single link type by API name (round 122)."""
+        body = self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/linkTypes/{quote_path(link_type)}",
+        )
+        return _validate(LinkType, body)
+
+    def get_shared_property_type(
+        self, ontology: str, shared_property_type: str
+    ) -> SharedPropertyType:
+        """Fetch a single shared property type by API name (round 122)."""
+        body = self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/sharedPropertyTypes/"
+            f"{quote_path(shared_property_type)}",
+        )
+        return _validate(SharedPropertyType, body)
+
+    def get_type_group(self, ontology: str, type_group: str) -> TypeGroup:
+        """Fetch a single type group by API name (round 122)."""
+        body = self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/typeGroups/{quote_path(type_group)}",
+        )
+        return _validate(TypeGroup, body)
 
     # ---- caller-scoped ontology inventory (round 100) -----------------------
 
