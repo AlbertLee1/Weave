@@ -4587,6 +4587,57 @@ paths:
                       (in which case all sessions were revoked).
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/server-info:
+    get:
+      operationId: getServerInfo
+      summary: Runtime statistics (round 129)
+      description: |
+        Returns the running server's live runtime stats — uptime,
+        goroutine count, heap allocation, total OS memory, GC
+        cycles. Sibling of /api/v2/build-info (round 123): where
+        build-info exposes compile-time identity (immutable), this
+        endpoint exposes LIVE state (mutates per call). On-call
+        pairs the two for full debug context: "we're running
+        commit abc123 with 1.2GB heap and 384 goroutines".
+
+        Public unauthenticated — same Foundry-parity convention as
+        the build-info family.
+
+        startedAt is the timestamp of the most recent
+        NewFullRouter invocation (effectively process boot).
+        uptimeSeconds is integer for diff-friendliness.
+
+        Note: runtime.ReadMemStats stops-the-world briefly. Use
+        the Prometheus /metrics scrape for high-frequency polling;
+        this endpoint is for ad-hoc on-call use.
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: Runtime statistics snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [startedAt, uptimeSeconds, goroutineCount,
+                           memoryAllocBytes, memorySysBytes, gcCycles]
+                properties:
+                  startedAt:
+                    type: string
+                    format: date-time
+                  uptimeSeconds:
+                    type: integer
+                    format: int64
+                  goroutineCount:
+                    type: integer
+                  memoryAllocBytes:
+                    type: integer
+                    format: int64
+                  memorySysBytes:
+                    type: integer
+                    format: int64
+                  gcCycles:
+                    type: integer
   /api/v2/build-info/features:
     get:
       operationId: getBuildInfoFeatures

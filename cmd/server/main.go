@@ -34,6 +34,7 @@ import (
 	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/buildinfo"
+	"github.com/liyang/weave/pkg/serverinfo"
 	"github.com/liyang/weave/pkg/cellsec"
 	"github.com/liyang/weave/pkg/cipher"
 	"github.com/liyang/weave/pkg/comments"
@@ -702,6 +703,13 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	r.Method(http.MethodGet, "/api/v2/build-info/features",
 		buildinfo.FeaturesHandler())
 	buildinfo.SetFeatures(detectFeatures(deps))
+
+	// Round 129: runtime statistics (uptime, goroutines, memory).
+	// Sibling of build-info: compile-time identity vs LIVE state.
+	// startedAt anchors uptime to NewFullRouter call time so each
+	// boot has a clean reference point.
+	serverinfo.SetStartedAt(time.Now())
+	r.Method(http.MethodGet, "/api/v2/server-info", serverinfo.Handler())
 
 	// MCP server (public JSON-RPC 2.0 endpoint for AI agents).
 	//
