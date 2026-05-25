@@ -4,7 +4,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, Iterator, Optional
 
 from ._http import build_query_string, quote_path
-from .types import ObjectPage, WireObject
+from .types import ObjectCheckResponse, ObjectPage, WireObject
+
+
+def _validate_object_check(payload: Any) -> ObjectCheckResponse:
+    if hasattr(ObjectCheckResponse, "model_validate"):
+        return ObjectCheckResponse.model_validate(payload or {})
+    return ObjectCheckResponse(**(payload or {}))
 
 if TYPE_CHECKING:
     from .client import Client
@@ -168,3 +174,21 @@ class ObjectsAPI:
         )
         body = self._client._request("GET", path)
         return body or {}
+
+    def check(self, ontology: str, object_type: str) -> ObjectCheckResponse:
+        """Probe read/write permissions for an object type (round 106).
+
+        Mirrors round-105 backend GET /api/v2/ontologies/{ontology}/
+        objectTypes/{ot}/check. Returns the typed two-axis matrix
+        (can_read + can_write) so the SPA gates row visibility
+        separately from edit-pencil visibility in one round-trip.
+        Always 200 with two booleans when the (ontology, objectType)
+        pair exists — probe is informational, never 403. 404
+        ObjectTypeNotFound when the type doesn't exist.
+        """
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/objectTypes/{quote_path(object_type)}/check"
+        )
+        resp = self._client._request("GET", path)
+        return _validate_object_check(resp)

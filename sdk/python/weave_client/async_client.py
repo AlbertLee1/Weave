@@ -38,6 +38,7 @@ from .types import (
     ApplyActionResponse,
     BatchApplyActionResponse,
     InterfaceType,
+    ObjectCheckResponse,
     LoginResponse,
     MeOntologiesEntry,
     ObjectPage,
@@ -581,6 +582,15 @@ class AsyncObjectsAPI:
         )
         body = await self._client._request("GET", path)
         return body or {}
+
+    async def check(self, ontology: str, object_type: str) -> ObjectCheckResponse:
+        """Async mirror of ObjectsAPI.check — round 106."""
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/objectTypes/{quote_path(object_type)}/check"
+        )
+        resp = await self._client._request("GET", path)
+        return _validate(ObjectCheckResponse, resp or {})
 
     def subscribe(
         self,

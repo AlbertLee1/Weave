@@ -192,6 +192,21 @@ class Attachment(_CamelModel):
     linked: bool = False
 
 
+class ObjectCheckResponse(_CamelModel):
+    """Round-106 SDK mirror of round-105 backend ObjectCheckResponse.
+
+    Two-axis read/write matrix for the SPA's per-object-type UI
+    gating: can_read controls row visibility, can_write controls
+    edit-pencil visibility. Always carries the five fields so the
+    SPA can rely on each without nil-checks.
+    """
+    ontology_api_name: str = Field(alias="ontologyApiName")
+    object_type_api_name: str = Field(alias="objectTypeApiName")
+    object_type_rid: str = Field(alias="objectTypeRid")
+    can_read: bool = Field(alias="canRead")
+    can_write: bool = Field(alias="canWrite")
+
+
 class ActionCheckResponse(_CamelModel):
     """Round-104 SDK mirror of round-103 backend ActionCheckResponse.
 
