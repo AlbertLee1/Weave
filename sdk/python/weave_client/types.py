@@ -192,6 +192,33 @@ class Attachment(_CamelModel):
     linked: bool = False
 
 
+class Session(_CamelModel):
+    """One active session row from GET /api/auth/sessions (US-254).
+
+    Wire-format uses snake_case for created_at / last_seen /
+    user_agent (the Go SessionView struct preserves the Foundry
+    json:"..." spellings). _CamelModel's populate-by-name lets
+    callers access either spelling via the dataclass.
+    """
+    id: str
+    ip: str = ""
+    user_agent: str = Field(default="", alias="user_agent")
+    created_at: Optional[datetime] = Field(default=None, alias="created_at")
+    last_seen: Optional[datetime] = Field(default=None, alias="last_seen")
+    current: bool = False
+
+
+class RevokeOthersResponse(_CamelModel):
+    """Response for POST /api/auth/sessions/revoke-others — round 101.
+
+    revoked is the count of sessions destroyed; current_session_id is
+    the session anchor preserved (empty when caller had no anchor,
+    in which case revoked covers ALL of the caller's sessions).
+    """
+    revoked: int = 0
+    current_session_id: str = Field(default="", alias="currentSessionId")
+
+
 class MeOntologiesEntry(_CamelModel):
     """One row from GET /api/v2/me/ontologies — round-100 SDK mirror
     of round-99 backend MeOntologiesResponse. Always carries a

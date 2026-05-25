@@ -105,6 +105,7 @@ class WeaveAsyncClient:
         self.dashboards = AsyncDashboardsAPI(self)
         self.permissionrequests = AsyncPermissionRequestsAPI(self)
         self.permissions = AsyncPermissionsAPI(self)
+        self.sessions = AsyncSessionsAPI(self)
 
     @property
     def token(self) -> str:
@@ -1183,6 +1184,31 @@ class AsyncPermissionRequestsAPI:
         return _parse_request(resp or {})
 
 
+class AsyncSessionsAPI:
+    """Async mirror of SessionsAPI (round 102). Wraps the
+    US-254 list + delete + round-101 revoke-others surface."""
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def list(self) -> "List[Session]":
+        from .types import Session
+        body = await self._client._request("GET", "/api/auth/sessions") or {}
+        items = body.get("sessions", []) if isinstance(body, dict) else []
+        return [_validate(Session, item) for item in items]
+
+    async def revoke(self, session_id: str) -> None:
+        await self._client._request(
+            "DELETE", f"/api/auth/sessions/{quote_path(session_id)}")
+        return None
+
+    async def revoke_others(self) -> "RevokeOthersResponse":
+        from .types import RevokeOthersResponse
+        resp = await self._client._request(
+            "POST", "/api/auth/sessions/revoke-others")
+        return _validate(RevokeOthersResponse, resp or {})
+
+
 class AsyncPermissionsAPI:
     """Async mirror of PermissionsAPI (round 98). Wraps the
     round-97 POST /api/v2/me/permissions/check probe so the async
@@ -1218,4 +1244,5 @@ __all__ = [
     "AsyncDashboardsAPI",
     "AsyncPermissionRequestsAPI",
     "AsyncPermissionsAPI",
+    "AsyncSessionsAPI",
 ]

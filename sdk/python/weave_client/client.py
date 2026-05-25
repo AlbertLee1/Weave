@@ -55,6 +55,7 @@ class Client:
         from .permissions import PermissionsAPI
         from .permissionrequests import PermissionRequestsAPI
         from .reactions import ReactionsAPI
+        from .sessions import SessionsAPI
         from .timeseries import TimeSeriesAPI
         from .transactions import TransactionsAPI
         from .vertex import VertexAPI
@@ -72,6 +73,7 @@ class Client:
         self.dashboards = DashboardsAPI(self)
         self.permissionrequests = PermissionRequestsAPI(self)
         self.permissions = PermissionsAPI(self)
+        self.sessions = SessionsAPI(self)
         self.vertex = VertexAPI(self)
 
     @property

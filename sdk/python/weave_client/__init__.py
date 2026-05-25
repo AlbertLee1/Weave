@@ -91,6 +91,7 @@ from .transactions import (
 )
 from .permissions import PermissionsAPI
 from .rid import InvalidRidError, Rid, format_rid, parse_rid
+from .sessions import SessionsAPI
 from .types import (
     ActionResults,
     ActionType,
@@ -109,6 +110,8 @@ from .types import (
     OntologyMe,
     PermissionsCheckResponse,
     QueryType,
+    RevokeOthersResponse,
+    Session,
     TimeSeriesPoint,
     ValueType,
     WireObject,
@@ -189,6 +192,9 @@ __all__ = [
     "PermissionsCheckResponse",
     "PermissionsAPI",
     "MeOntologiesEntry",
+    "Session",
+    "RevokeOthersResponse",
+    "SessionsAPI",
 ]
 
 __version__ = "0.1.0"
