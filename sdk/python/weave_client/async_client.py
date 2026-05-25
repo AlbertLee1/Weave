@@ -222,6 +222,15 @@ class WeaveAsyncClient:
             return ServerInfo.model_validate(body or {})
         return ServerInfo(**(body or {}))
 
+    async def server_info_connections(self) -> "ConnectionStats":
+        """Async mirror of Client.server_info_connections — round 132."""
+        from .types import ConnectionStats
+        body = await self._request(
+            "GET", "/api/v2/server-info/connections", anonymous=True)
+        if hasattr(ConnectionStats, "model_validate"):
+            return ConnectionStats.model_validate(body or {})
+        return ConnectionStats(**(body or {}))
+
 
 def _handle(resp: HTTPResponse) -> Any:
     """Translate an HTTPResponse into either a Python value or a typed exception.

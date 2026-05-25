@@ -147,6 +147,43 @@ class ServerInfo(_CamelModel):
     gc_cycles: int = Field(default=0, alias="gcCycles")
 
 
+class PostgresStats(_CamelModel):
+    """Round-132 SDK mirror of pkg/serverinfo.PostgresStats. Thin
+    projection of pgxpool.Stat() — on-call reads acquired vs max
+    and destroy counters to spot connection leaks."""
+    acquired_conns: int = Field(default=0, alias="acquiredConns")
+    idle_conns: int = Field(default=0, alias="idleConns")
+    total_conns: int = Field(default=0, alias="totalConns")
+    max_conns: int = Field(default=0, alias="maxConns")
+    new_conns_count: int = Field(default=0, alias="newConnsCount")
+    max_lifetime_destroy_count: int = Field(
+        default=0, alias="maxLifetimeDestroyCount")
+    max_idle_destroy_count: int = Field(
+        default=0, alias="maxIdleDestroyCount")
+
+
+class NATSStats(_CamelModel):
+    """Round-132 SDK mirror of pkg/serverinfo.NATSStats. Wraps
+    nats.Conn.Status + in/out message counters. ``status`` is one
+    of CONNECTED / RECONNECTING / CLOSED / etc."""
+    status: str = ""
+    server_url: str = Field(default="", alias="serverUrl")
+    in_msgs: int = Field(default=0, alias="inMsgs")
+    out_msgs: int = Field(default=0, alias="outMsgs")
+    reconnects: int = 0
+
+
+class ConnectionStats(_CamelModel):
+    """Round-132 SDK mirror of round-131 backend
+    GET /api/v2/server-info/connections. Per-service fields are
+    Optional — backend emits null when service isn't configured;
+    partial boot (PG up, NATS down) surfaces accurately without
+    crashing the SPA.
+    """
+    postgres: Optional[PostgresStats] = None
+    nats: Optional[NATSStats] = None
+
+
 class TypeGroup(_CamelModel):
     """Round-122 SDK mirror of pkg/oms.TypeGroup wire shape — the
     navigation-pane categorisation primitive (per round 87/88)."""

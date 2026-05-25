@@ -104,12 +104,15 @@ from .types import (
     Attachment,
     BatchApplyActionResponse,
     BuildInfo,
+    ConnectionStats,
     CountResponse,
     Dependency,
     Edit,
     Feature,
     InterfaceType,
     LinkType,
+    NATSStats,
+    PostgresStats,
     LoginResponse,
     MeOntologiesEntry,
     ObjectCheckBatchEntry,
@@ -229,6 +232,9 @@ __all__ = [
     "Dependency",
     "Feature",
     "ServerInfo",
+    "ConnectionStats",
+    "PostgresStats",
+    "NATSStats",
 ]
 
 __version__ = "0.1.0"

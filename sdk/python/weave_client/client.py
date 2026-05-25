@@ -25,7 +25,14 @@ from .exceptions import (
 )
 from typing import List
 
-from .types import BuildInfo, Dependency, Feature, LoginResponse, ServerInfo
+from .types import (
+    BuildInfo,
+    ConnectionStats,
+    Dependency,
+    Feature,
+    LoginResponse,
+    ServerInfo,
+)
 
 
 class Client:
@@ -317,3 +324,21 @@ class Client:
         if hasattr(ServerInfo, "model_validate"):
             return ServerInfo.model_validate(body or {})
         return ServerInfo(**(body or {}))
+
+    def server_info_connections(self) -> ConnectionStats:
+        """Fetch PG pool + NATS connection state (round 132).
+
+        Mirrors round-131 backend GET /api/v2/server-info/connections.
+        Returns typed ConnectionStats. Per-service nullability:
+        each .postgres/.nats is Optional — degraded boot or
+        partial boot (PG up, NATS down) surfaces as Python None
+        so caller code can ``if stats.postgres is None:`` cleanly.
+
+        Same anonymous public access as the rest of the
+        server-observability family.
+        """
+        body = self._request(
+            "GET", "/api/v2/server-info/connections", anonymous=True)
+        if hasattr(ConnectionStats, "model_validate"):
+            return ConnectionStats.model_validate(body or {})
+        return ConnectionStats(**(body or {}))
