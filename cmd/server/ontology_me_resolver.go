@@ -28,10 +28,27 @@ func (r *omsOntologyResolver) GetOntology(ctx context.Context, apiNameOrRID stri
 	return &auth.ResolvedOntology{RID: o.RID, APIName: o.APIName, DisplayName: o.DisplayName}, nil
 }
 
+// GetObjectType implements auth.ObjectTypeResolver for the round-105
+// object-check handler. Adapter now serves FIVE auth interfaces from
+// one struct — single resolution, listing, action lookup, and now
+// object-type lookup. The "single adapter, many narrow interfaces"
+// pattern keeps the auth ↔ oms bridge tight no matter how many
+// per-resource probes accumulate.
+func (r *omsOntologyResolver) GetObjectType(ctx context.Context, ontologyRID, apiName string) (*auth.ResolvedObjectType, error) {
+	ot, err := r.repo.GetObjectTypeByAPIName(ctx, ontologyRID, apiName)
+	if err != nil {
+		if errors.Is(err, oms.ErrNotFound) {
+			return nil, auth.ErrObjectTypeNotFound
+		}
+		return nil, err
+	}
+	return &auth.ResolvedObjectType{RID: ot.RID, APIName: ot.APIName}, nil
+}
+
 // GetActionType implements auth.ActionTypeResolver for the round-103
-// action-check handler. Same adapter struct now serves four interfaces
-// — single resolution, listing, and action lookup — so cmd/server
-// keeps the auth ↔ oms bridge to one struct.
+// action-check handler. Same adapter struct now serves five interfaces
+// — single resolution, listing, action lookup, object lookup — so
+// cmd/server keeps the auth ↔ oms bridge to one struct.
 func (r *omsOntologyResolver) GetActionType(ctx context.Context, ontologyRID, apiNameOrRID string) (*auth.ResolvedActionType, error) {
 	at, err := r.repo.GetActionTypeByAPIName(ctx, ontologyRID, apiNameOrRID)
 	if err != nil {

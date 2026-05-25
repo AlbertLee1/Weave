@@ -926,6 +926,11 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Method(http.MethodGet,
 				"/api/v2/ontologies/{ontologyApiName}/actions/{actionApiName}/check",
 				auth.ActionCheckHandler(resolver, resolver))
+			// Round 105: object-type read/write probe; single resolver
+			// implements both OntologyResolver and ObjectTypeResolver.
+			api.Method(http.MethodGet,
+				"/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/check",
+				auth.ObjectCheckHandler(resolver, resolver))
 		}
 
 		// US-254: active-session inventory. Mounted inside the auth group so

@@ -4690,6 +4690,58 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/check:
+    get:
+      operationId: checkObjectType
+      summary: Foundry-parity object-type applicability probe (round 105)
+      description: |
+        Returns whether the caller can read/write objects of the
+        named type on the named ontology. The SPA uses this to gate
+        per-object-type UI affordances (read = show-the-row, write =
+        show-the-pencil) in a single GET instead of N permission-name
+        lookups against POST /me/permissions/check.
+
+        Sibling of /api/v2/ontologies/{ont}/actions/{action}/check
+        (round 103). Distinct because object UI splits on the two-axis
+        read/write matrix where action UI is single-axis (apply).
+
+        Always returns 200 with two booleans when the (ontology,
+        objectType) pair exists — the probe is informational so
+        false NEVER becomes 403. 404 OntologyNotFound when ontology
+        missing, 404 ObjectTypeNotFound when type missing — the
+        distinction matters because "no permission" and "doesn't
+        exist" need different SPA responses.
+      tags: [Auth]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectTypeApiName
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Object-type applicability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyApiName, objectTypeApiName, objectTypeRid, canRead, canWrite]
+                properties:
+                  ontologyApiName:
+                    type: string
+                  objectTypeApiName:
+                    type: string
+                  objectTypeRid:
+                    type: string
+                  canRead:
+                    type: boolean
+                  canWrite:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/actions/{actionApiName}/check:
     get:
       operationId: checkAction
