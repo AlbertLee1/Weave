@@ -102,6 +102,28 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    VersionedLookupNotSupported:
+      description: |
+        Round 117/119 — the path parameter parsed as a RID with a
+        round-91 @vN version suffix; the system recognises the
+        version semantics but snapshot lookups are not yet
+        implemented (Gap-T4 step-2). errorName is
+        VersionedLookupNotSupported; parameters echo the parsed
+        version + original input so the SPA/SDK can surface
+        "version N pinned, snapshots pending" instead of treating
+        the RID as malformed.
+
+        Applies uniformly across the metadata-Get surface (round
+        119 extended the guard to GetObjectType, GetActionType,
+        GetLinkType, GetInterfaceType, GetValueType, GetQueryType,
+        GetSharedPropertyType, GetTypeGroup). The Python SDK
+        round-118 WeaveVersionedLookupError exception class
+        catches this response specifically — round 120 contract
+        test asserts cross-handler uniformity.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
   parameters:
     OntologyApiName:
       in: path
@@ -5231,16 +5253,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFoundError"
         "501":
-          description: |
-            Versioned RID lookup recognised but not yet implemented
-            (Gap-T4 step-2). errorName is VersionedLookupNotSupported;
-            parameters carry the parsed version + original input so
-            the SPA/SDK can surface "version N pinned, snapshots
-            pending" instead of treating the RID as malformed.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}:
     put:
       operationId: updateObjectType
@@ -5657,6 +5670,10 @@ paths:
         (not RID). The current implementation scans the
         ontology-scoped list and filters; sets are small in practice
         and SDK caches absorb repeat calls.
+
+        Round 119: when the path parameter parses as a RID with
+        a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -5679,6 +5696,8 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes:
     get:
       operationId: listSharedPropertyTypes
@@ -5720,6 +5739,10 @@ paths:
         API name (not RID). The current implementation scans the
         ontology-scoped list and filters; ontology-scoped sets are
         small in practice and SDK caches absorb repeat calls.
+
+        Round 119: when the path parameter parses as a RID with
+        a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -5742,6 +5765,8 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/linkTypes/{linkType}:
     get:
       operationId: getLinkTypeByApiName
@@ -5753,6 +5778,10 @@ paths:
         fall back to ListLinkTypes + client-side filter on every
         call. {linkType} is the API name (bare slug); RID-keyed
         mutations remain on /linkTypes/byRid/{linkTypeRid}.
+
+        Round 119: when the path parameter parses as a RID with
+        a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -5775,6 +5804,8 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/links/{linkTypeRid}/properties:
     get:
       operationId: listLinkProperties
@@ -6564,6 +6595,10 @@ paths:
     get:
       operationId: getActionType
       summary: Get a single action type
+      description: |
+        Accepts either an apiName or a full RID. Round 119: when the
+        input parses as a RID with a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -6579,6 +6614,8 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}/fullMetadata:
     get:
       operationId: getActionTypeFullMetadata
@@ -6693,6 +6730,10 @@ paths:
     get:
       operationId: getInterfaceType
       summary: Get a single interface type
+      description: |
+        Accepts either an apiName or a full RID. Round 119: when the
+        input parses as a RID with a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -6708,6 +6749,8 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes:
     get:
       operationId: listInterfaceOutgoingLinkTypes
@@ -7411,6 +7454,10 @@ paths:
     get:
       operationId: getValueType
       summary: Get a single value type
+      description: |
+        Accepts either an apiName or a full RID. Round 119: when the
+        input parses as a RID with a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -7426,6 +7473,8 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/queryTypes:
     get:
       operationId: listQueryTypes
@@ -7446,6 +7495,10 @@ paths:
     get:
       operationId: getQueryType
       summary: Get a QueryType by apiName or RID
+      description: |
+        Round 119: when the path parameter parses as a RID with
+        a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -7465,6 +7518,8 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/functions:
     post:
       operationId: createFunction
