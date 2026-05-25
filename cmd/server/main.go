@@ -948,6 +948,11 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Method(http.MethodGet,
 				"/api/v2/ontologies/{ontologyApiName}/queryTypes/{queryTypeApiName}/check",
 				auth.QueryCheckHandler(resolver, resolver))
+			// Round 115: bulk query check completes the three-axis
+			// bulk trio (objects r107 + actions r109 + queries).
+			api.Method(http.MethodPost,
+				"/api/v2/me/checks/queryTypes",
+				auth.QueryCheckBatchHandler(resolver, resolver))
 		}
 
 		// US-254: active-session inventory. Mounted inside the auth group so

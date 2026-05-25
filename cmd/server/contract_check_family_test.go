@@ -39,9 +39,10 @@ func TestContract_CheckFamilyEndpoints(t *testing.T) {
 		{Method: "GET", Path: "/api/v2/ontologies/{ontologyApiName}/actions/{actionApiName}/check"},
 		{Method: "GET", Path: "/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/check"},
 		{Method: "GET", Path: "/api/v2/ontologies/{ontologyApiName}/queryTypes/{queryTypeApiName}/check"},
-		// Bulk check pair (rounds 107, 109)
+		// Bulk check trio (rounds 107, 109, 115)
 		{Method: "POST", Path: "/api/v2/me/checks/objectTypes"},
 		{Method: "POST", Path: "/api/v2/me/checks/actionTypes"},
+		{Method: "POST", Path: "/api/v2/me/checks/queryTypes"},
 	}
 
 	router := newContractTestRouter(t)
@@ -142,6 +143,11 @@ func TestContract_CheckFamilyMethodDiscipline(t *testing.T) {
 		},
 		{
 			path:       "/api/v2/me/checks/actionTypes",
+			wantMethod: "POST",
+			forbidden:  []string{"GET", "PUT", "DELETE", "PATCH"},
+		},
+		{
+			path:       "/api/v2/me/checks/queryTypes",
 			wantMethod: "POST",
 			forbidden:  []string{"GET", "PUT", "DELETE", "PATCH"},
 		},

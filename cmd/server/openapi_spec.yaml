@@ -4629,6 +4629,78 @@ paths:
                             to ontologies where role is non-empty).
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/me/checks/queryTypes:
+    post:
+      operationId: checkQueryTypesBatch
+      summary: Bulk query applicability probe (round 115)
+      description: |
+        Third axis of the bulk probe trio (after r107 OT and r109
+        actions). Resolves canExecute for N query types on ONE
+        ontology in a single round-trip. Together with the OT +
+        action bulk probes, a freshly-loaded SPA page resolves its
+        full per-resource gating matrix in THREE POSTs instead of
+        K+M+P parallel GETs.
+
+        Same patterns as r107/r109: per-entry found:bool
+        discriminator distinguishes "removed from config" from
+        "exists but no perm"; found=false entries always have
+        canExecute=false regardless of caller perms; results
+        preserves input order.
+
+        canExecute checks PermQueryTypeRead — Weave query types
+        are read-only computed views so the read permission gates
+        execution.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ontologyApiName, queryTypeApiNames]
+              properties:
+                ontologyApiName:
+                  type: string
+                queryTypeApiNames:
+                  type: array
+                  items:
+                    type: string
+                  description: |
+                    Non-empty list of query-type API names. An
+                    empty array returns 400 — likely a client
+                    coding error.
+      responses:
+        "200":
+          description: Bulk query applicability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyApiName, results]
+                properties:
+                  ontologyApiName:
+                    type: string
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [queryTypeApiName, found, canExecute]
+                      properties:
+                        queryTypeApiName:
+                          type: string
+                        found:
+                          type: boolean
+                        queryTypeRid:
+                          type: string
+                          description: Empty when found is false.
+                        canExecute:
+                          type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/me/checks/actionTypes:
     post:
       operationId: checkActionTypesBatch
