@@ -89,6 +89,7 @@ from .transactions import (
     TransactionAppendResponse,
     TransactionsAPI,
 )
+from .rid import InvalidRidError, Rid, format_rid, parse_rid
 from .types import (
     ActionResults,
     ActionType,
@@ -176,6 +177,10 @@ __all__ = [
     "STATUS_APPROVED",
     "STATUS_REJECTED",
     "STATUS_CANCELLED",
+    "Rid",
+    "InvalidRidError",
+    "parse_rid",
+    "format_rid",
 ]
 
 __version__ = "0.1.0"
