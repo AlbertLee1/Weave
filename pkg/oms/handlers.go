@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/httputil"
+	"github.com/liyang/weave/pkg/rid"
 	"github.com/liyang/weave/pkg/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -247,6 +248,17 @@ func (h *OMSHandler) ListObjectTypes(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetObjectType handles GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}.
+//
+// Round 117 (Gap-T4 step-2 pilot): the path parameter accepts either
+// an API name or a RID. When the input parses as a RID AND carries
+// the round-91 @vN version suffix, the system recognises the version
+// semantics but refuses the lookup with 501 NotImplemented (errorName
+// VersionedLookupNotSupported) — the snapshot system isn't built yet,
+// and 501 is clearer than masquerading as 404 (which would mislead
+// the caller into rewriting the RID). Foundry-parity: their
+// equivalent endpoints route @vN to the historical metadata store
+// when present; without that store we'd rather signal "feature
+// pending" than silently downgrade to the latest version.
 func (h *OMSHandler) GetObjectType(w http.ResponseWriter, r *http.Request) {
 	repo, ok := h.resolveRepo(w, r)
 	if !ok {
@@ -254,6 +266,20 @@ func (h *OMSHandler) GetObjectType(w http.ResponseWriter, r *http.Request) {
 	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	apiName := chi.URLParam(r, "objectTypeApiName")
+
+	// Round 117 (Gap-T4 step-2): if the input parses as a RID with
+	// a version pin, refuse the lookup. rid.Parse silently fails on
+	// plain API names — that's the "not a RID at all" branch and
+	// we fall through to GetObjectTypeByAPIName as before.
+	if parsed, err := rid.Parse(apiName); err == nil && parsed.Version != "" {
+		apierror.WriteJSON(w, apierror.NewNotImplemented("VersionedLookupNotSupported", map[string]string{
+			"reason":            "RID @vN version suffix is recognised but snapshot lookups are not yet implemented",
+			"ontologyApiName":   ontologyRID,
+			"objectTypeApiName": apiName,
+			"version":           parsed.Version,
+		}))
+		return
+	}
 
 	ot, err := repo.GetObjectTypeByAPIName(r.Context(), ontologyRID, apiName)
 	if err != nil {

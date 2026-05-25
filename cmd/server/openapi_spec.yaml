@@ -5206,6 +5206,15 @@ paths:
     get:
       operationId: getObjectType
       summary: Get a single object type
+      description: |
+        The path parameter accepts either an API name (e.g. "Customer")
+        or a RID (e.g. "ri.ontology.main.object-type.{uuid}"). When the
+        input parses as a RID with a round-91 @vN version suffix, the
+        handler returns 501 VersionedLookupNotSupported — the system
+        recognises the version semantics but the snapshot system is
+        not yet built (Gap-T4 step-2 pilot, round 117). Un-versioned
+        RIDs and plain API names continue to resolve the latest
+        version as before.
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -5221,6 +5230,17 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          description: |
+            Versioned RID lookup recognised but not yet implemented
+            (Gap-T4 step-2). errorName is VersionedLookupNotSupported;
+            parameters carry the parsed version + original input so
+            the SPA/SDK can surface "version N pinned, snapshots
+            pending" instead of treating the RID as malformed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}:
     put:
       operationId: updateObjectType
