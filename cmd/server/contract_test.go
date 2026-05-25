@@ -909,6 +909,11 @@ func newContractTestRouter(t *testing.T) *chi.Mux {
 		ApplicationRepo:  stubApplicationRepo{},
 		AuthCodeRepo:     stubAuthCodeRepo{},
 		OAuthTokenRepo:   stubOAuthTokenRepo{},
+		// US-254 + round 101: register session endpoints so
+		// /api/auth/sessions{,/{id}}{,/revoke-others} appear in the
+		// contract router. Memory store is sufficient — chi.Walk
+		// never calls the handlers.
+		SessionStore: auth.NewMemorySessionStore(),
 	}
 	// US-446: contract / pact tests assume /health(z)/ready returns 200 in the
 	// degraded contract harness; MarkReady flips the lifecycle gate so the

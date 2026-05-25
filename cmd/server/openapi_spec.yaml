@@ -4461,6 +4461,110 @@ paths:
       responses:
         "204":
           description: Logout completed.
+  /api/auth/sessions:
+    get:
+      operationId: listMySessions
+      summary: List the caller's active sessions (US-254)
+      description: |
+        Returns every session belonging to the authenticated caller,
+        sorted by last_seen descending so the SPA can render "this
+        device" first. The `current` flag marks the session whose JWT
+        the request was authenticated with (empty for API-key /
+        OAuth callers since there's no session anchor).
+      tags: [Auth]
+      responses:
+        "200":
+          description: Caller's session list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, created_at, last_seen]
+                      properties:
+                        id:
+                          type: string
+                        ip:
+                          type: string
+                        user_agent:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                        last_seen:
+                          type: string
+                          format: date-time
+                        current:
+                          type: boolean
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/auth/sessions/{sessionID}:
+    delete:
+      operationId: revokeMySession
+      summary: Revoke one of the caller's sessions (US-254)
+      description: |
+        Revokes a single session the caller owns. Best-effort
+        revokes the bound refresh token too when present. Returns
+        204 on success.
+      tags: [Auth]
+      parameters:
+        - in: path
+          name: sessionID
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Session revoked.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/auth/sessions/revoke-others:
+    post:
+      operationId: revokeMyOtherSessions
+      summary: Bulk-revoke all caller sessions except current (round 101)
+      description: |
+        "Log out other devices" — revokes every session belonging
+        to the caller EXCEPT the one they're currently authenticated
+        on (per the SessionIDAttributeKey on User.Attributes).
+        Best-effort per row: a single failing Delete is logged via
+        the audit channel and skipped so the rest of the cleanup
+        proceeds. Foundry-parity sibling of the List + Delete pair.
+
+        When the caller has no session anchor (typical for API-key
+        / OAuth auth), the handler revokes ALL of the caller's
+        sessions and the response's currentSessionId is empty.
+      tags: [Auth]
+      responses:
+        "200":
+          description: Bulk revocation result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked, currentSessionId]
+                properties:
+                  revoked:
+                    type: integer
+                    description: |
+                      Count of sessions destroyed by this call. Zero
+                      means the caller had no other sessions to revoke.
+                  currentSessionId:
+                    type: string
+                    description: |
+                      The session anchor preserved by this call.
+                      Empty when the caller had no session anchor
+                      (in which case all sessions were revoked).
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/me:
     get:
       operationId: getMe
