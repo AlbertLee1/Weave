@@ -911,6 +911,15 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		api.Method(http.MethodPost, "/api/v2/me/permissions/check",
 			auth.PermissionsCheckHandler(ontologyResolverForAuth))
 
+		// Round 99: caller-scoped ontology inventory. Mounted only
+		// when the OMS repo is available because we need to list
+		// ontologies. The same adapter struct doubles as the
+		// OntologyLister (cmd/server/ontology_me_resolver.go).
+		if deps.OmsRepo != nil {
+			api.Method(http.MethodGet, "/api/v2/me/ontologies",
+				auth.MeOntologiesHandler(&omsOntologyResolver{repo: deps.OmsRepo}))
+		}
+
 		// US-254: active-session inventory. Mounted inside the auth group so
 		// only authenticated callers can enumerate/revoke their own sessions.
 		// When SessionStore is nil (degraded mode / tests) the routes are

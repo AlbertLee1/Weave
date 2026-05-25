@@ -4476,6 +4476,55 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/me/ontologies:
+    get:
+      operationId: listMyOntologies
+      summary: Caller-scoped ontology inventory (round 99)
+      description: |
+        Returns the subset of system ontologies where the caller
+        holds a scoped per-ontology role. The SPA's ontology-picker
+        uses this to render "your ontologies" without fetching every
+        ontology and filtering against the OntologyRoles map client-
+        side. Foundry-parity sibling of the role-based gating exposed
+        via /api/v2/me and round-95's /api/v2/ontologies/{ontology}/me.
+
+        Filtering rule: an ontology appears iff the caller's
+        OntologyRoles entry for its RID is non-empty. Users with only
+        global roles (no scoped grants) get an empty array — they're
+        expected to use the regular /api/v2/ontologies listing in
+        that case. Stale OntologyRoles entries pointing at unknown
+        RIDs are silently skipped (same convention as the round 79-89
+        getByRidBatch surfaces).
+      tags: [Auth]
+      responses:
+        "200":
+          description: Caller-scoped ontology list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologies]
+                properties:
+                  ontologies:
+                    type: array
+                    items:
+                      type: object
+                      required: [rid, apiName, displayName, role]
+                      properties:
+                        rid:
+                          type: string
+                        apiName:
+                          type: string
+                        displayName:
+                          type: string
+                        role:
+                          type: string
+                          description: |
+                            The caller's scoped role on this ontology
+                            (always populated — entries are filtered
+                            to ontologies where role is non-empty).
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/me/permissions/check:
     post:
       operationId: checkMyPermissions

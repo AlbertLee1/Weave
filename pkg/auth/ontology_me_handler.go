@@ -19,12 +19,25 @@ type OntologyResolver interface {
 	GetOntology(ctx context.Context, apiNameOrRID string) (*ResolvedOntology, error)
 }
 
+// OntologyLister is the round-99 sibling of OntologyResolver: list
+// every ontology the system knows about (the handler filters down
+// to those the caller has scoped roles on). Separate interface so
+// degraded-mode (no OMS repo) installs can wire OntologyResolver
+// without committing to ListOntologies — the /me/ontologies route
+// is mounted only when a lister is available.
+type OntologyLister interface {
+	ListOntologies(ctx context.Context) ([]ResolvedOntology, error)
+}
+
 // ResolvedOntology is the minimal projection of pkg/oms.Ontology this
 // handler needs. Keeping it local avoids a cross-package struct
-// import and pins the dependency surface to just two fields.
+// import and pins the dependency surface to just three fields.
+// DisplayName surfaces in the round-99 /me/ontologies response so
+// SPA picker UIs can render labels without a second fetch.
 type ResolvedOntology struct {
-	RID     string
-	APIName string
+	RID         string
+	APIName     string
+	DisplayName string
 }
 
 // ErrOntologyNotFound is the sentinel resolvers return when the

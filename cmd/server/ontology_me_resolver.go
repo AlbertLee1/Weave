@@ -25,5 +25,23 @@ func (r *omsOntologyResolver) GetOntology(ctx context.Context, apiNameOrRID stri
 		}
 		return nil, err
 	}
-	return &auth.ResolvedOntology{RID: o.RID, APIName: o.APIName}, nil
+	return &auth.ResolvedOntology{RID: o.RID, APIName: o.APIName, DisplayName: o.DisplayName}, nil
+}
+
+// ListOntologies implements auth.OntologyLister for the round-99
+// /api/v2/me/ontologies handler. Same adapter struct serves both
+// the single-lookup and list paths so cmd/server stays free of
+// duplicate plumbing.
+func (r *omsOntologyResolver) ListOntologies(ctx context.Context) ([]auth.ResolvedOntology, error) {
+	all, err := r.repo.ListOntologies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]auth.ResolvedOntology, 0, len(all))
+	for _, o := range all {
+		out = append(out, auth.ResolvedOntology{
+			RID: o.RID, APIName: o.APIName, DisplayName: o.DisplayName,
+		})
+	}
+	return out, nil
 }
