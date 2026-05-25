@@ -33,6 +33,7 @@ import (
 	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/auth"
+	"github.com/liyang/weave/pkg/buildinfo"
 	"github.com/liyang/weave/pkg/cellsec"
 	"github.com/liyang/weave/pkg/cipher"
 	"github.com/liyang/weave/pkg/comments"
@@ -685,6 +686,11 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	r.Method(http.MethodGet, "/api/openapi.yaml", openapiSpecHandler())
 	r.Method(http.MethodGet, "/swagger/", swaggerUIHandler())
 	r.Method(http.MethodGet, "/swagger", http.RedirectHandler("/swagger/", http.StatusMovedPermanently))
+
+	// Round 123: server build metadata. Public unauthenticated so
+	// the on-call can answer "which commit is this?" without a
+	// token. ldflags-overridable package vars in pkg/buildinfo.
+	r.Method(http.MethodGet, "/api/v2/build-info", buildinfo.Handler())
 
 	// MCP server (public JSON-RPC 2.0 endpoint for AI agents).
 	//

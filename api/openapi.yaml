@@ -4587,6 +4587,57 @@ paths:
                       (in which case all sessions were revoked).
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/build-info:
+    get:
+      operationId: getBuildInfo
+      summary: Server build metadata (round 123)
+      description: |
+        Returns the running server's build metadata — version, git
+        commit, Go runtime version, and build timestamp. Useful for
+        the on-call to answer "which commit is this?" without
+        grepping logs or rebuilding the binary.
+
+        Intentionally unauthenticated — build metadata leaks no
+        secrets, and on-call frequently needs the answer without an
+        access token. Foundry's equivalent endpoint follows the
+        same convention.
+
+        version / commit / buildTime are populated at compile time
+        via ``-ldflags="-X github.com/liyang/weave/pkg/buildinfo.X=Y"``;
+        defaults are "unknown" for local dev. goVersion is captured
+        live via runtime.Version() so a swap of the Go toolchain
+        surfaces immediately without rebuild.
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: Build metadata snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, commit, goVersion, buildTime]
+                properties:
+                  version:
+                    type: string
+                    description: |
+                      Build version string (semver or "unknown" for
+                      local dev). ldflags overridable.
+                  commit:
+                    type: string
+                    description: |
+                      Short git commit hash or "unknown". ldflags
+                      overridable.
+                  goVersion:
+                    type: string
+                    description: |
+                      Go runtime version (runtime.Version()),
+                      captured live at request time.
+                  buildTime:
+                    type: string
+                    description: |
+                      Build timestamp (RFC3339) or "unknown".
+                      ldflags overridable.
   /api/v2/me:
     get:
       operationId: getMe
