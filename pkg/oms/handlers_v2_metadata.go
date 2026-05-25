@@ -48,6 +48,12 @@ func (h *OMSHandler) GetInterfaceTypeV2(w http.ResponseWriter, r *http.Request) 
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	interfaceIdentifier := chi.URLParam(r, "interfaceType")
 
+	if rejectVersionedRID(w, interfaceIdentifier, "interfaceType", map[string]string{
+		"ontologyApiName": ontologyRID,
+	}) {
+		return
+	}
+
 	iface, err := h.repo.GetInterfaceByAPIName(r.Context(), ontologyRID, interfaceIdentifier)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -158,6 +164,10 @@ func (h *OMSHandler) ListValueTypesV2(w http.ResponseWriter, r *http.Request) {
 func (h *OMSHandler) GetValueTypeV2(w http.ResponseWriter, r *http.Request) {
 	vtIdentifier := chi.URLParam(r, "valueType")
 
+	if rejectVersionedRID(w, vtIdentifier, "valueType", nil) {
+		return
+	}
+
 	vt, err := h.repo.GetValueTypeByAPIName(r.Context(), vtIdentifier)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -193,6 +203,12 @@ func (h *OMSHandler) ListQueryTypesV2(w http.ResponseWriter, r *http.Request) {
 func (h *OMSHandler) GetQueryTypeV2(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	queryIdentifier := chi.URLParam(r, "queryApiName")
+
+	if rejectVersionedRID(w, queryIdentifier, "queryApiName", map[string]string{
+		"ontologyApiName": ontologyRID,
+	}) {
+		return
+	}
 
 	qt, err := h.repo.GetQueryTypeByAPIName(r.Context(), ontologyRID, queryIdentifier)
 	if err != nil {

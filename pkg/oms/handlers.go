@@ -172,6 +172,47 @@ func (h *OMSHandler) ColumnLineageStore() ColumnLineageStore {
 	return h.columnLineageStore
 }
 
+// rejectVersionedRID is the round-117/119 Gap-T4 step-2 short-circuit:
+// when ``input`` parses as a RID with a version pin (round-91 @vN
+// suffix), the handler writes a 501 VersionedLookupNotSupported
+// response and returns true so the caller can early-exit. Returns
+// false when ``input`` is a plain API name or an un-versioned RID,
+// in which case the caller proceeds with its normal lookup.
+//
+// ``identifierField`` is the JSON key under which the original input
+// is echoed into the response parameters (e.g. "objectTypeApiName",
+// "actionTypeRid") so the SPA can surface a "version pinned, snapshots
+// pending" banner without having to remember which parameter it sent.
+// ``extraParams`` accumulates any additional context (typically
+// {"ontologyApiName": ...}); the helper merges identifierField + the
+// parsed version into the same map.
+//
+// rid.Parse silently fails on plain API names — that's the
+// "not a RID at all" branch and we fall through (return false) so
+// per-API-name lookups keep working. The 501 distinction (vs 404)
+// matters because 404 would mislead callers into rewriting the RID.
+func rejectVersionedRID(
+	w http.ResponseWriter,
+	input string,
+	identifierField string,
+	extraParams map[string]string,
+) bool {
+	parsed, err := rid.Parse(input)
+	if err != nil || parsed.Version == "" {
+		return false
+	}
+	params := map[string]string{
+		"reason":          "RID @vN version suffix is recognised but snapshot lookups are not yet implemented",
+		identifierField:   input,
+		"version":         parsed.Version,
+	}
+	for k, v := range extraParams {
+		params[k] = v
+	}
+	apierror.WriteJSON(w, apierror.NewNotImplemented("VersionedLookupNotSupported", params))
+	return true
+}
+
 // resolveRepo returns a Repository for the request. If ?branch= is set, it
 // wraps h.repo with a BranchedRepository that overlays branch changes on reads.
 // Returns (repo, true) on success or (nil, false) if an error was written.
@@ -267,17 +308,15 @@ func (h *OMSHandler) GetObjectType(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	apiName := chi.URLParam(r, "objectTypeApiName")
 
-	// Round 117 (Gap-T4 step-2): if the input parses as a RID with
-	// a version pin, refuse the lookup. rid.Parse silently fails on
-	// plain API names — that's the "not a RID at all" branch and
-	// we fall through to GetObjectTypeByAPIName as before.
-	if parsed, err := rid.Parse(apiName); err == nil && parsed.Version != "" {
-		apierror.WriteJSON(w, apierror.NewNotImplemented("VersionedLookupNotSupported", map[string]string{
-			"reason":            "RID @vN version suffix is recognised but snapshot lookups are not yet implemented",
-			"ontologyApiName":   ontologyRID,
-			"objectTypeApiName": apiName,
-			"version":           parsed.Version,
-		}))
+	// Round 117 (Gap-T4 step-2): refuse @vN versioned lookups —
+	// round 119 extracts the check into rejectVersionedRID so the
+	// same 3-line guard applies uniformly across the metadata-Get
+	// surface (GetActionType, GetLinkType, GetInterfaceTypeV2,
+	// GetValueTypeV2, GetQueryTypeV2, GetSharedPropertyType,
+	// GetTypeGroup all use the same helper).
+	if rejectVersionedRID(w, apiName, "objectTypeApiName", map[string]string{
+		"ontologyApiName": ontologyRID,
+	}) {
 		return
 	}
 
@@ -741,6 +780,11 @@ func (h *OMSHandler) GetActionType(w http.ResponseWriter, r *http.Request) {
 	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	actionIdentifier := chi.URLParam(r, "actionTypeRid")
+	if rejectVersionedRID(w, actionIdentifier, "actionTypeRid", map[string]string{
+		"ontologyApiName": ontologyRID,
+	}) {
+		return
+	}
 	at, err := repo.GetActionTypeByAPIName(r.Context(), ontologyRID, actionIdentifier)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {

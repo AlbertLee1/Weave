@@ -1641,6 +1641,11 @@ func (h *OMSHandler) GetSharedPropertyTypeByAPIName(w http.ResponseWriter, r *ht
 		}))
 		return
 	}
+	if rejectVersionedRID(w, apiName, "sharedPropertyType", map[string]string{
+		"ontologyApiName": ontologyApiName,
+	}) {
+		return
+	}
 	list, err := repo.ListSharedProperties(r.Context(), ontologyApiName)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("GetSharedPropertyTypeFailed", map[string]string{
@@ -1763,6 +1768,11 @@ func (h *OMSHandler) GetTypeGroupByAPIName(w http.ResponseWriter, r *http.Reques
 		}))
 		return
 	}
+	if rejectVersionedRID(w, apiName, "typeGroup", map[string]string{
+		"ontologyApiName": ontologyApiName,
+	}) {
+		return
+	}
 	list, err := repo.ListTypeGroups(r.Context(), ontologyApiName)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("GetTypeGroupFailed", map[string]string{
@@ -1804,6 +1814,11 @@ func (h *OMSHandler) GetLinkTypeByAPIName(w http.ResponseWriter, r *http.Request
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingLinkType", map[string]string{
 			"reason": "linkType path parameter is required",
 		}))
+		return
+	}
+	if rejectVersionedRID(w, linkTypeApiName, "linkType", map[string]string{
+		"ontologyApiName": ontologyApiName,
+	}) {
 		return
 	}
 	lt, err := repo.GetLinkTypeByAPIName(r.Context(), ontologyApiName, linkTypeApiName)
