@@ -936,6 +936,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Method(http.MethodPost,
 				"/api/v2/me/checks/objectTypes",
 				auth.ObjectCheckBatchHandler(resolver, resolver))
+			// Round 109: bulk action batch probe — sibling of OT
+			// bulk; SPA page-load resolves OT matrix + applicable
+			// actions in 2 POSTs instead of K+M parallel GETs.
+			api.Method(http.MethodPost,
+				"/api/v2/me/checks/actionTypes",
+				auth.ActionCheckBatchHandler(resolver, resolver))
 		}
 
 		// US-254: active-session inventory. Mounted inside the auth group so

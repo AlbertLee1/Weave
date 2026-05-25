@@ -4629,6 +4629,79 @@ paths:
                             to ontologies where role is non-empty).
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/me/checks/actionTypes:
+    post:
+      operationId: checkActionTypesBatch
+      summary: Bulk action applicability probe (round 109)
+      description: |
+        Sibling of /api/v2/me/checks/objectTypes (round 107).
+        Resolves canApply for N action types on ONE ontology in a
+        single round-trip. Together with the OT bulk probe, a
+        freshly-loaded SPA page resolves both its read/write OT
+        matrix AND its applicable-actions list in TWO POSTs
+        instead of K+M parallel GETs against the per-resource
+        round-103/105 single endpoints.
+
+        Each result carries `found:bool` so the SPA can distinguish
+        "action removed from config" (deleted/renamed) from "exists
+        but no permission" — same discriminator pattern as round 107.
+        found=false entries always have canApply=false regardless of
+        caller perms so the SPA never accidentally shows an Apply
+        button for a missing action.
+
+        results preserves the input order: row N of the response
+        corresponds to row N of the request without a name→row map.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ontologyApiName, actionTypeApiNames]
+              properties:
+                ontologyApiName:
+                  type: string
+                actionTypeApiNames:
+                  type: array
+                  items:
+                    type: string
+                  description: |
+                    Non-empty list of action-type API names. An
+                    empty array returns 400 — likely a client
+                    coding error.
+      responses:
+        "200":
+          description: Bulk action applicability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyApiName, results]
+                properties:
+                  ontologyApiName:
+                    type: string
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [actionTypeApiName, found, canApply]
+                      properties:
+                        actionTypeApiName:
+                          type: string
+                        found:
+                          type: boolean
+                        actionTypeRid:
+                          type: string
+                          description: Empty when found is false.
+                        canApply:
+                          type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/me/checks/objectTypes:
     post:
       operationId: checkObjectTypesBatch
