@@ -34,6 +34,7 @@ from .exceptions import (
     WeaveAuthError,
     WeaveError,
     WeaveNotFoundError,
+    WeaveValidationError,
     WeaveVersionedLookupError,
 )
 from .subscriptions import Subscription, WebSocketTransport
@@ -270,6 +271,11 @@ def _handle(resp: HTTPResponse) -> Any:
     if (resp.status_code == 501 and
             kwargs["error_name"] == "VersionedLookupNotSupported"):
         raise WeaveVersionedLookupError(**kwargs)
+    # Round 136: parity with sync Client._handle for the round-135
+    # admin criteria validator.
+    if (resp.status_code == 400 and
+            kwargs["error_name"] == "InvalidParameter:submissionCriteria"):
+        raise WeaveValidationError(**kwargs)
     raise WeaveError(**kwargs)
 
 

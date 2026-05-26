@@ -74,3 +74,33 @@ class WeaveVersionedLookupError(WeaveError):
         never see a KeyError)."""
         v = self.parameters.get("version", "")
         return v if isinstance(v, str) else ""
+
+
+class WeaveValidationError(WeaveError):
+    """Raised on HTTP 400 + errorName=InvalidParameter:submissionCriteria.
+
+    Round 136 SDK mirror of round-135 backend (admin handler
+    structurally validates submissionCriteria before persistence).
+    Catching this specifically lets the UI surface a "criteria
+    shape invalid" banner without parsing ``error_name`` strings.
+
+    Other 400 InvalidParameter:* responses (e.g. ``:apiName``,
+    ``:displayName``) still raise plain WeaveError so this narrow
+    typed branch doesn't auto-capture every admin-side 400.
+    """
+
+    @property
+    def parameter(self) -> str:
+        """The offending parameter name (typically
+        ``"submissionCriteria"``). Defaults to ``""`` if the backend
+        omits the field — callers never see a KeyError."""
+        v = self.parameters.get("parameter", "")
+        return v if isinstance(v, str) else ""
+
+    @property
+    def reason(self) -> str:
+        """The human-readable validation message echoed by the
+        backend (e.g. ``unknown submission criteria type: "X"``).
+        Defaults to ``""`` if the backend omits the field."""
+        v = self.parameters.get("reason", "")
+        return v if isinstance(v, str) else ""

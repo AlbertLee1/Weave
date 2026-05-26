@@ -54,6 +54,7 @@ from .exceptions import (
     WeaveAuthError,
     WeaveError,
     WeaveNotFoundError,
+    WeaveValidationError,
 )
 from .subscriptions import (
     ChangeEvent,
@@ -165,6 +166,7 @@ __all__ = [
     "WeaveError",
     "WeaveAuthError",
     "WeaveNotFoundError",
+    "WeaveValidationError",
     "WeaveVersionedLookupError",
     "ChangeEvent",
     "Subscription",

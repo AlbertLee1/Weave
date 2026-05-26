@@ -21,6 +21,7 @@ from .exceptions import (
     WeaveAuthError,
     WeaveError,
     WeaveNotFoundError,
+    WeaveValidationError,
     WeaveVersionedLookupError,
 )
 from typing import List
@@ -235,6 +236,13 @@ class Client:
         if (resp.status_code == 501 and
                 kwargs["error_name"] == "VersionedLookupNotSupported"):
             raise WeaveVersionedLookupError(**kwargs)
+        # Round 136: narrow-typed 400 dispatch for the round-135
+        # admin handler's criteria-structure validator. Only the
+        # InvalidParameter:submissionCriteria variant gets the typed
+        # exception; other InvalidParameter:* fall through.
+        if (resp.status_code == 400 and
+                kwargs["error_name"] == "InvalidParameter:submissionCriteria"):
+            raise WeaveValidationError(**kwargs)
         raise WeaveError(**kwargs)
 
     # ---- top-level convenience --------------------------------------------
