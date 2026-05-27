@@ -49,9 +49,7 @@ func TestObjectHistory_InsertClosesPriorValidTo(t *testing.T) {
 	insertHistoryAt(t, ctx, repo, otRID, pk, 2, "MODIFY", `{"v":2}`, t2)
 
 	// Snapshot at t1+1ns ⇒ v1 (valid_to == t2 > t1+1ns).
-	snap, err := repo.(interface {
-		SnapshotObjectsAt(context.Context, string, time.Time) ([]oms.LatestObjectState, error)
-	}).SnapshotObjectsAt(ctx, otRID, t1.Add(time.Nanosecond))
+	snap, err := repo.SnapshotObjectsAt(ctx, otRID, t1.Add(time.Nanosecond))
 	if err != nil {
 		t.Fatalf("SnapshotObjectsAt: %v", err)
 	}
@@ -68,9 +66,7 @@ func TestObjectHistory_InsertClosesPriorValidTo(t *testing.T) {
 
 	// Snapshot at t2 ⇒ v2 (the half-open interval is inclusive on
 	// valid_from, exclusive on valid_to).
-	snap2, err := repo.(interface {
-		SnapshotObjectsAt(context.Context, string, time.Time) ([]oms.LatestObjectState, error)
-	}).SnapshotObjectsAt(ctx, otRID, t2)
+	snap2, err := repo.SnapshotObjectsAt(ctx, otRID, t2)
 	if err != nil {
 		t.Fatalf("SnapshotObjectsAt v2: %v", err)
 	}
@@ -99,9 +95,7 @@ func TestObjectHistory_SnapshotSkipsDeleteTombstones(t *testing.T) {
 	insertHistoryAt(t, ctx, repo, otRID, pk, 1, "CREATE", `{"v":1}`, t1)
 	insertHistoryAt(t, ctx, repo, otRID, pk, 2, "DELETE", "", t2)
 
-	store := repo.(interface {
-		SnapshotObjectsAt(context.Context, string, time.Time) ([]oms.LatestObjectState, error)
-	})
+	store := repo
 
 	beforeDelete, err := store.SnapshotObjectsAt(ctx, otRID, t1.Add(time.Hour))
 	if err != nil {
@@ -133,9 +127,7 @@ func TestObjectHistory_SnapshotBeforeFirstVersion(t *testing.T) {
 	t1 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	insertHistoryAt(t, ctx, repo, otRID, pk, 1, "CREATE", `{"v":1}`, t1)
 
-	store := repo.(interface {
-		SnapshotObjectsAt(context.Context, string, time.Time) ([]oms.LatestObjectState, error)
-	})
+	store := repo
 
 	preCreate := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	rows, err := store.SnapshotObjectsAt(ctx, otRID, preCreate)

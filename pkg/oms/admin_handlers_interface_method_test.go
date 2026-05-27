@@ -107,7 +107,7 @@ func newInterfaceMethodRouter(handler *oms.OMSHandler) *chi.Mux {
 
 func seedInterfaceFixture(t *testing.T, repo *mockRepo) (ontRID, ifaceRID, objectTypeRID string) {
 	t.Helper()
-	ontRID = seedOntology(repo)
+	ontRID = seedMockOntology(repo)
 	ifaceRID = "ri.ontology.main.interface.1"
 	repo.interfaces = append(repo.interfaces, oms.Interface{
 		RID:         ifaceRID,
@@ -208,7 +208,7 @@ func TestCreateInterfaceMethod_DuplicateName(t *testing.T) {
 
 func TestCreateInterfaceMethod_UnknownInterface(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	h, _ := wireInterfaceMethodHandler(repo)
 	r := newInterfaceMethodRouter(h)
 

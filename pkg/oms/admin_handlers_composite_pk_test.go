@@ -26,7 +26,7 @@ func newObjectTypeAdminRouter(handler *oms.OMSHandler) *chi.Mux {
 
 func TestCreateObjectType_WithCompositePrimaryKeys_Success(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newObjectTypeAdminRouter(oms.NewOMSHandler(repo))
 
 	body := `{"apiName":"orderDetail","displayName":"Order Detail","primaryKeys":["orderId","lineNumber"],"status":"ACTIVE","visibility":"NORMAL"}`
@@ -74,7 +74,7 @@ func TestCreateObjectType_LegacyPrimaryKeyStillWorks(t *testing.T) {
 	// field continue to succeed; the handler synthesises a single-element
 	// PrimaryKeys list so wire format is consistent.
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newObjectTypeAdminRouter(oms.NewOMSHandler(repo))
 
 	body := `{"apiName":"employee","displayName":"Employee","primaryKey":"employeeId","status":"ACTIVE","visibility":"NORMAL"}`
@@ -101,7 +101,7 @@ func TestCreateObjectType_LegacyPrimaryKeyStillWorks(t *testing.T) {
 
 func TestCreateObjectType_MissingBothPrimaryKeyFields(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newObjectTypeAdminRouter(oms.NewOMSHandler(repo))
 
 	body := `{"apiName":"employee","displayName":"Employee","status":"ACTIVE","visibility":"NORMAL"}`
@@ -121,7 +121,7 @@ func TestCreateObjectType_MissingBothPrimaryKeyFields(t *testing.T) {
 
 func TestCreateObjectType_RejectsEmptyPrimaryKeysElement(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newObjectTypeAdminRouter(oms.NewOMSHandler(repo))
 
 	body := `{"apiName":"x","displayName":"X","primaryKeys":["orderId",""],"status":"ACTIVE","visibility":"NORMAL"}`
@@ -182,7 +182,7 @@ func TestObjectTypeWireFormat_IncludesPrimaryKeysOnGet(t *testing.T) {
 // Acceptance criterion mandates "创建+get+update+delete 全流程".
 func TestObjectType_CompositePK_FullCRUDFlow(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.ontologies[0].APIName = "test"
 	r := newObjectTypeAdminRouter(oms.NewOMSHandler(repo))
 

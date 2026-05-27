@@ -22,7 +22,7 @@ func newLinkTypeRouter(handler *oms.OMSHandler) *chi.Mux {
 	return r
 }
 
-func seedOntology(repo *mockRepo) string {
+func seedMockOntology(repo *mockRepo) string {
 	const ontRID = "ri.ontology.main.ontology.1"
 	repo.ontologies = append(repo.ontologies, oms.Ontology{
 		RID: ontRID, APIName: "test", DisplayName: "Test",
@@ -32,7 +32,7 @@ func seedOntology(repo *mockRepo) string {
 
 func TestCreateLinkType_WithInverseLinkRID_Success(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	// Pre-seed forward link A: employee -> department.
 	forward := oms.LinkType{
 		RID:              "ri.ontology.main.link-type.emp-dept",
@@ -80,7 +80,7 @@ func TestCreateLinkType_WithInverseLinkRID_Success(t *testing.T) {
 
 func TestCreateLinkType_WithInverseLinkRID_NotFound(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newLinkTypeRouter(oms.NewOMSHandler(repo))
 
 	body := `{"apiName":"x","displayName":"X","objectTypeApiName":"a","linkedObjectTypeApiName":"b","cardinality":"MANY_TO_ONE","inverseLinkRid":"ri.ontology.main.link-type.missing"}`
@@ -100,7 +100,7 @@ func TestCreateLinkType_WithInverseLinkRID_NotFound(t *testing.T) {
 
 func TestCreateLinkType_WithInverseLinkRID_EndpointMismatch(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	// Partner link A: employee -> department. New B declares
 	// employee -> employee, so partner.source (employee) == B.target (employee)
 	// holds but partner.target (department) != B.source (employee).
@@ -148,7 +148,7 @@ func TestCreateLinkType_WithInverseLinkRID_EndpointMismatch(t *testing.T) {
 
 func TestCreateLinkType_WithInverseLinkRID_CrossOntology(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	otherOnt := oms.Ontology{RID: "ri.ontology.other.ontology.2", APIName: "other", DisplayName: "Other"}
 	repo.ontologies = append(repo.ontologies, otherOnt)
 	forward := oms.LinkType{
@@ -188,7 +188,7 @@ func TestCreateLinkType_WithInverseLinkRID_CrossOntology(t *testing.T) {
 
 func TestUpdateLinkType_WithInverseLinkRID_Success(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	// Pair: A (emp -> dept) and B (dept -> emp), both already persisted.
 	a := oms.LinkType{
 		RID: "ri.ontology.main.link-type.emp-dept", OntologyRID: ontRID,
@@ -221,7 +221,7 @@ func TestUpdateLinkType_WithInverseLinkRID_Success(t *testing.T) {
 
 func TestUpdateLinkType_WithInverseLinkRID_ClearedByEmptyString(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	a := oms.LinkType{
 		RID: "ri.ontology.main.link-type.emp-dept", OntologyRID: ontRID,
 		APIName: "a", SourceObjectType: "x", TargetObjectType: "y",
@@ -253,7 +253,7 @@ func TestUpdateLinkType_WithInverseLinkRID_ClearedByEmptyString(t *testing.T) {
 
 func TestUpdateLinkType_WithInverseLinkRID_EndpointMismatch(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	a := oms.LinkType{
 		RID: "ri.ontology.main.link-type.emp-dept", OntologyRID: ontRID,
 		APIName: "a", SourceObjectType: "x", TargetObjectType: "y",

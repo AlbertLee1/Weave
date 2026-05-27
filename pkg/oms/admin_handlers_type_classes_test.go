@@ -20,7 +20,7 @@ import (
 
 func TestCreateLinkType_Given_TypeClasses_When_POST_Then_Persisted(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newLinkTypeRouter(oms.NewOMSHandler(repo))
 
 	body := `{
@@ -58,7 +58,7 @@ func TestCreateLinkType_Given_TypeClasses_When_POST_Then_Persisted(t *testing.T)
 
 func TestCreateLinkType_Given_UnknownTypeClass_When_POST_Then_400(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newLinkTypeRouter(oms.NewOMSHandler(repo))
 
 	body := `{
@@ -81,7 +81,7 @@ func TestCreateLinkType_Given_UnknownTypeClass_When_POST_Then_400(t *testing.T) 
 
 func TestCreateLinkType_Given_NoTypeClasses_When_POST_Then_OmittedOnWire(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newLinkTypeRouter(oms.NewOMSHandler(repo))
 
 	body := `{
@@ -108,7 +108,7 @@ func TestCreateLinkType_Given_NoTypeClasses_When_POST_Then_OmittedOnWire(t *test
 
 func TestUpdateLinkType_Given_TypeClassesOmitted_When_PUT_Then_Preserved(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	existing := oms.LinkType{
 		RID:              "ri.lt.x",
 		OntologyRID:      ontRID,
@@ -140,7 +140,7 @@ func TestUpdateLinkType_Given_TypeClassesOmitted_When_PUT_Then_Preserved(t *test
 
 func TestUpdateLinkType_Given_TypeClassesExplicitEmpty_When_PUT_Then_Cleared(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	existing := oms.LinkType{
 		RID:              "ri.lt.x",
 		OntologyRID:      ontRID,
@@ -171,7 +171,7 @@ func TestUpdateLinkType_Given_TypeClassesExplicitEmpty_When_PUT_Then_Cleared(t *
 
 func TestUpdateLinkType_Given_TypeClassesReplaced_When_PUT_Then_Replaced(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	existing := oms.LinkType{
 		RID:              "ri.lt.x",
 		OntologyRID:      ontRID,

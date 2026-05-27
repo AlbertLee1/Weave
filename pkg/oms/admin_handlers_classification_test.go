@@ -31,7 +31,7 @@ func newPropertyRouter(handler *oms.OMSHandler) *chi.Mux {
 
 func TestCreateObjectType_WithClassification_Persisted(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newObjectTypeRouter(oms.NewOMSHandler(repo))
 
 	body := `{
@@ -62,7 +62,7 @@ func TestCreateObjectType_WithClassification_Persisted(t *testing.T) {
 
 func TestCreateObjectType_WithoutClassification_DefaultsEmptyAndOmitted(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newObjectTypeRouter(oms.NewOMSHandler(repo))
 
 	body := `{
@@ -89,7 +89,7 @@ func TestCreateObjectType_WithoutClassification_DefaultsEmptyAndOmitted(t *testi
 
 func TestCreateObjectType_UnknownClassification_Rejected(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newObjectTypeRouter(oms.NewOMSHandler(repo))
 
 	body := `{
@@ -113,7 +113,7 @@ func TestCreateObjectType_UnknownClassification_Rejected(t *testing.T) {
 
 func TestUpdateObjectType_Classification_OmitPreserves(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.objectTypes = append(repo.objectTypes, oms.ObjectType{
 		RID:            "ri.ontology.main.object-type.customer",
 		OntologyRID:    ontRID,
@@ -143,7 +143,7 @@ func TestUpdateObjectType_Classification_OmitPreserves(t *testing.T) {
 
 func TestUpdateObjectType_Classification_ExplicitEmptyClears(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.objectTypes = append(repo.objectTypes, oms.ObjectType{
 		RID:            "ri.ontology.main.object-type.customer",
 		OntologyRID:    ontRID,
@@ -172,7 +172,7 @@ func TestUpdateObjectType_Classification_ExplicitEmptyClears(t *testing.T) {
 
 func TestUpdateObjectType_Classification_ExplicitValueAssigns(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.objectTypes = append(repo.objectTypes, oms.ObjectType{
 		RID:         "ri.ontology.main.object-type.customer",
 		OntologyRID: ontRID,
@@ -200,7 +200,7 @@ func TestUpdateObjectType_Classification_ExplicitValueAssigns(t *testing.T) {
 
 func TestUpdateObjectType_Classification_UnknownRejected(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.objectTypes = append(repo.objectTypes, oms.ObjectType{
 		RID:            "ri.ontology.main.object-type.customer",
 		OntologyRID:    ontRID,

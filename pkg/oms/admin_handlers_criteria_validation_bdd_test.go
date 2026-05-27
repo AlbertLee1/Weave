@@ -68,7 +68,7 @@ func newAdminActionTypeRouterWithValidator(handler *oms.OMSHandler) *chi.Mux {
 func TestBDD_AdminActionType_CriteriaValidation(t *testing.T) {
 	t.Run("Create with valid criteria persists 201", func(t *testing.T) {
 		repo := &mockRepo{}
-		ontRID := seedOntology(repo)
+		ontRID := seedMockOntology(repo)
 		h := oms.NewOMSHandler(repo)
 		h.SetCriteriaValidator(actions.ValidateCriteriaSchema)
 		r := newAdminActionTypeRouterWithValidator(h)
@@ -106,7 +106,7 @@ func TestBDD_AdminActionType_CriteriaValidation(t *testing.T) {
 
 	t.Run("Create with unknown criteria type rejected 422 + no persist", func(t *testing.T) {
 		repo := &mockRepo{}
-		ontRID := seedOntology(repo)
+		ontRID := seedMockOntology(repo)
 		h := oms.NewOMSHandler(repo)
 		h.SetCriteriaValidator(actions.ValidateCriteriaSchema)
 		r := newAdminActionTypeRouterWithValidator(h)
@@ -139,7 +139,7 @@ func TestBDD_AdminActionType_CriteriaValidation(t *testing.T) {
 
 	t.Run("Create with parameterMatch missing parameter rejected 422", func(t *testing.T) {
 		repo := &mockRepo{}
-		ontRID := seedOntology(repo)
+		ontRID := seedMockOntology(repo)
 		h := oms.NewOMSHandler(repo)
 		h.SetCriteriaValidator(actions.ValidateCriteriaSchema)
 		r := newAdminActionTypeRouterWithValidator(h)
@@ -176,7 +176,7 @@ func TestBDD_AdminActionType_CriteriaValidation(t *testing.T) {
 
 	t.Run("Update with invalid NOT group rejected 422 + row unchanged", func(t *testing.T) {
 		repo := &mockRepo{}
-		ontRID := seedOntology(repo)
+		ontRID := seedMockOntology(repo)
 		// Pre-seed a clean action type so we can attempt to update it.
 		existing := oms.ActionType{
 			RID:                "ri.ontology.main.action-type.preexist",
@@ -230,7 +230,7 @@ func TestBDD_AdminActionType_CriteriaValidation(t *testing.T) {
 
 	t.Run("Create without wired validator accepts bad criteria (degraded mode)", func(t *testing.T) {
 		repo := &mockRepo{}
-		ontRID := seedOntology(repo)
+		ontRID := seedMockOntology(repo)
 		h := oms.NewOMSHandler(repo) // NO SetCriteriaValidator
 		r := newAdminActionTypeRouterWithValidator(h)
 

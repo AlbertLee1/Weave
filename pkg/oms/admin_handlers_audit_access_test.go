@@ -15,7 +15,7 @@ import (
 
 func TestCreateObjectType_WithAuditDataAccessTrue_Persisted(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newObjectTypeRouter(oms.NewOMSHandler(repo))
 
 	body := `{
@@ -46,7 +46,7 @@ func TestCreateObjectType_WithAuditDataAccessTrue_Persisted(t *testing.T) {
 
 func TestCreateObjectType_AuditDataAccessDefaultsFalseAndOmitted(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newObjectTypeRouter(oms.NewOMSHandler(repo))
 
 	body := `{"apiName":"widget","displayName":"Widget","primaryKey":"id"}`
@@ -70,7 +70,7 @@ func TestCreateObjectType_AuditDataAccessDefaultsFalseAndOmitted(t *testing.T) {
 
 func TestUpdateObjectType_AuditDataAccess_OmitPreserves(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.objectTypes = append(repo.objectTypes, oms.ObjectType{
 		RID:             "ri.ontology.main.object-type.patient",
 		OntologyRID:     ontRID,
@@ -100,7 +100,7 @@ func TestUpdateObjectType_AuditDataAccess_OmitPreserves(t *testing.T) {
 
 func TestUpdateObjectType_AuditDataAccess_ExplicitFalseDisables(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.objectTypes = append(repo.objectTypes, oms.ObjectType{
 		RID:             "ri.ontology.main.object-type.patient",
 		OntologyRID:     ontRID,
@@ -129,7 +129,7 @@ func TestUpdateObjectType_AuditDataAccess_ExplicitFalseDisables(t *testing.T) {
 
 func TestUpdateObjectType_AuditDataAccess_ExplicitTrueEnables(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.objectTypes = append(repo.objectTypes, oms.ObjectType{
 		RID:         "ri.ontology.main.object-type.patient",
 		OntologyRID: ontRID,
