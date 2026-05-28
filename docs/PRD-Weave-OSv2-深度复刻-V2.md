@@ -16,13 +16,13 @@
 
 ## 0. 执行摘要
 
-**一句话结论**：Weave 已完成了 OSv2 的 **REST API 表面形状对齐**（68/68 路由，47 个 US 全量落地），但**语义深度仍有系统性差距**——多处存在"端点已开通、底层是内存/MVP、语义未完整"的情形。本 PRD 的核心任务是把项目从 "API 已就位" 推到 "可作为单机 OSv2 参考实现部署并产出正确结果"。
+**一句话结论（round 153 更新）**：Weave 已完成 OSv2 的 **REST API 表面形状对齐** + **MUST/SHOULD 层语义深度对齐**。本 PRD 中 §4 全部 26 个 Gap-* 节点、§2.1 完成度矩阵、§2.2 "声称 vs 真实" 差异清单、§2.3 Palantir baseline MUST/SHOULD 映射、§6 US-048~US-081 共 27 个 backlog story 都已对齐到代码现状（25 ✅ + 2 🟡 SHOULD-layer + 0 🔴）。剩余工作是 SHOULD 层 polish 与运维侧硬化。
 
-**三个关键判断**：
+**三个关键判断（round 153 更新）**：
 
-1. **API 表面真的是 100%** — 67 条路由、MCP/Python SDK/CLI、OpenAPI、前端页面基本齐全。这是过去 30+ 天 Ralph 模式下快速推进的成果，不应被低估。
-2. **语义深度约为 65~75%** — 真实能用的是 OMS/OSS/Actions/Funnel 主链路。行列级安全、Edit 冲突策略、Derived Property、Type Class、Interface 多态分页、Ontology 分支版本、GeoTemporal/TimeSeries 深度、客户端实时订阅等**都还缺"最后一公里"**，在公开 Foundry 行为参照下容易被发现差异。
-3. **最大的风险不是"还有什么没做"，而是"已经做了的能否经受住相同输入下与 Foundry 语义等价"** — 因此 v2 的核心不是堆新端点，而是**加深已开通端点的语义**，并补齐 MUST/SHOULD 层的遗漏。
+1. **API 表面 100% + MUST/SHOULD 深度 ≥92%** — 67 条路由、MCP/Python SDK/CLI、OpenAPI、前端页面齐全；**行列级安全已挂主链路**（`pkg/security/policy_engine.go::Evaluate` + `AllowedProperties` + Marking 合并）、**Edit 冲突策略 + Optimistic concurrency 齐**（user-edit-wins + expectedVersion / If-Match + 409 OptimisticVersionConflict）、**Derived property withProperties 真实计算**（`executor.executeWithProperties` 101 行 + 12 子用例 + 反向 + 公式 + multi-hop + M2M）、**TypeClass 驱动 Bleve mapping** + **Interface 多态 composite cursor** + **Ontology 分支 + RID @vN 语义版本** + **客户端 SSE/WS 订阅** 全部在主链路上端到端可用。
+2. **Goja 嵌入式 ECMAScript runtime 已落地（Phase 8 W1 全 ✅）** — `pkg/functions/goja_runtime.go` (`dop251/goja` sandboxed) + ontology shim + Action / Query 双 dispatch；US-065 / US-066 / US-067 三 user story 整套 ✓。
+3. **真实的剩余战线在 SHOULD-layer polish 与运维侧** — calendar-aware TimeSeries downsample、BM25+vector 混合检索、多实例 subscription fan-out、TypeScript 静态校验 Goja function、batch audit UX 与 root-hash runbook 等都属于"已 1:1 对齐 + 可向更深 Foundry parity 推进"的方向，不阻塞当前 OSv2 复刻目标的达成。
 
 **关键数字**（真实 vs 声称）：
 
@@ -31,14 +31,14 @@
 | Foundry REST 端点 | 68/68 (100%) | ≈ 68/68 (路由就位) | 0 |
 | ObjectSet 定义变体 | 15/15 | 15/15 路由，但 `interfaceLinkSearchAround`/`asBaseObjectTypes` 深度未验证 | 语义差距 |
 | 聚合算子 | 全覆盖 | 12 种 metric + 5 种 groupBy | 精度/近似分位数待校对 |
-| 安全模型 | RBAC Phase 1 完成 | 仅 Ontology-scoped RBAC，**无行级 / 列级 / Marking 评估链路** | 语义缺 |
+| 安全模型 | RBAC Phase 1 完成 | RBAC + 行级 + 列级 + Marking 评估链路全在主路径上（`pkg/security/policy_engine.go::Evaluate` AND 进 `pkg/oss/service_impl.go` + `AllowedProperties` 列级 + `SetMarkingsEnabled` / `AllowedForIngest` 合并 marking） | ✅ Gap-S1+S2+S3 done |
 | 实时订阅 | WebSocket/SSE 订阅列入路线 | 已有 WebSocket `/api/v2/ontologies/{ontologyApiName}/subscriptions/ws` + SSE `/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe`；Funnel broadcast 已暴露到客户端 | 深度完善 |
 | TimeSeries | 7 端点 + PG/VM 存储 | PG 存储、VictoriaMetrics 存储、transform/resample 下推、Timescale CAGG 与 Vertex window aggregation 已有；深度缺口在 calendar-aware bucket、retention policy、multi-resolution materialization | 深度完善 |
 | GeoTemporal | 2 端点 + 存储 | PG `geotemporal_values` 持久化，缺聚合/订阅深度 | 深度缺 |
-| Function backed action | Tier 3.2 声称完成 | HTTP dispatcher 存在，**无内嵌运行时**（Goja/Wasm） | 深度缺 |
-| Type classes | 语法支持 | **不驱动 Bleve 索引映射**（analyzer.not_analyzed 等未生效） | 行为缺 |
-| Ontology 分支/版本 | Snapshot 存在 | **无分支 / 无语义版本链路 / RID 不含 version** | 结构缺 |
-| Edit 冲突解决 | — | **无策略**（隐式 last-write-wins） | 策略缺 |
+| Function backed action | Tier 3.2 声称完成 | HTTP dispatcher + 内嵌 `dop251/goja` sandbox runtime（`pkg/functions/goja_runtime.go` US-065 + `pkg/actions/goja_dispatcher.go` US-066 + `pkg/queryexec/goja.go` US-067）+ ontology shim + cache + typed errors | ✅ Gap-A5 done |
+| Type classes | 语法支持 | `pkg/index/mapping_builder.go` 读 `property.typeclass` 驱动 Bleve `FieldMapping`（`analyzer.not_analyzed` / `keyword` / `english` 三套规则），FK link resolver (US-040) 依赖 not_analyzed 闭环；hubble.icon / media_url + hierarchy.parent 由 `web/src/lib/typeclass-hints.ts` UI 层渲染 | ✅ Gap-T1 done |
+| Ontology 分支/版本 | Snapshot 存在 | `ontology_branches` 表（migration 000024 + 000091 parent_tx）+ RID `@vN` suffix（`pkg/rid::splitVersionSuffix`）+ `?branch=` / `X-Weave-Branch` header（`pkg/oms/branch_scope.go`）+ 8 Get 端点 typed `501 VersionedLookupNotSupported` + SDK 类型化 `WeaveVersionedLookupError` | ✅ Gap-T4 done |
+| Edit 冲突解决 | — | user-edit-wins 策略（`pkg/actions/edit_source_test.go` + `pkg/funnel/consumer.go` 比对 `object_history` user-source timestamp，funnel ingest 让步给 user edit）+ Optimistic concurrency（`expectedVersion` / `If-Match` + 409 `OptimisticVersionConflict` 带 `actualVersion`）+ edit-only property always-apply 路径 | ✅ Gap-A1 + A2 done |
 
 ---
 
