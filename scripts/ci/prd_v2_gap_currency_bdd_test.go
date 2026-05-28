@@ -179,6 +179,38 @@ func TestBDD_PRDV2GapEntriesReflectImplementationReality(t *testing.T) {
 			marker: "SetMarkingsEnabled",
 			why:    "Gap-S3 Marking evaluation IS implemented and merged into policy_engine (no separate marking_filter.go) — pkg/security/policy_engine.go SetMarkingsEnabled / MarkingsEnabled / AllowedForIngest take user-context markings (from auth.User.Attributes[MarkingsAttributeKey]) and short-circuit both ingest and row-level decisions; pkg/security/auto_marking_test.go covers inheritance.",
 		},
+		// Round 143 — Gap-Q4 / D1 / D2 / D5 / R1 marker top-up:
+		// these five gaps were already ✅ in the PRD but the
+		// staleness CI test had no marker for them. D1 and D2 in
+		// fact had stale wording too ("raw dict" / "未暴露") which
+		// this round refreshed in the same commit. Pin one stable
+		// identifier per gap so a future regression on any of the
+		// five surfaces shows up red.
+		{
+			gap:    "Gap-Q4",
+			marker: "fusionStrategy",
+			why:    "Gap-Q4 nearestNeighbors hybrid surfaces ARE implemented through the MUST line — filter-then-KNN via CandidatePKs, PropertyIdentifiers multi-vector column (round 49), and fusionStrategy 'min' | 'rrf' RRF rank fusion (round 50, k=60). Pinning fusionStrategy guards against regression on the most subtle of the three.",
+		},
+		{
+			gap:    "Gap-D1",
+			marker: "ObjectSetBuilder",
+			why:    "Gap-D1 Python SDK ObjectSet builder IS implemented (commit a042fa5) — sdk/python/weave_client/objectsets.py::ObjectSetBuilder chains base / filter / search_around / union / intersect / subtract / withProperties Pythonically; sdk/python/tests/test_objectsets.py + test_builders.py exercise it.",
+		},
+		{
+			gap:    "Gap-D2",
+			marker: "TimeSeriesAPI",
+			why:    "Gap-D2 Python SDK Aggregation / TimeSeries / Attachment all IS implemented — sdk/python/weave_client/aggregation.py::AggregationAPI (commit 863a19e), timeseries.py::TimeSeriesAPI (commit 751d9dc Gap-D2 partial), attachments.py::AttachmentsAPI (commit 66a675d Gap-D2 close-out); sdk/python/tests/test_aggregation_builders.py + test_timeseries.py + test_attachments.py cover the matrix.",
+		},
+		{
+			gap:    "Gap-D5",
+			marker: "http_bridge.go",
+			why:    "Gap-D5 weave-mcp stdio bridge IS implemented — cmd/weave-mcp/http_bridge.go forwards local stdio JSON-RPC to a running /mcp when WEAVE_MCP_URL is set, passes through WEAVE_MCP_TOKEN / WEAVE_MCP_API_KEY, and honors WEAVE_MCP_HTTP_TIMEOUT; tests cover empty_response_p2a003 + timeout_p2a003. Local-standalone embed mode is the only remaining sub-task.",
+		},
+		{
+			gap:    "Gap-R1",
+			marker: "subscribe_sse.go",
+			why:    "Gap-R1 client subscription depth IS implemented — pkg/oss/subscribe_sse.go exposes GET /api/v2/ontologies/{ont}/objectSets/{rid}/subscribe with Last-Event-ID + since replay and per-user connection guard, pkg/subscriptions/ mounts the WebSocket /subscriptions/ws endpoint, web/src/hooks/useObjectSetSubscription.ts drives the realtime mode in BrowserPage and ObjectSetLivePage. Remaining ops items (multi-instance fan-out, replay window metrics, reconnect matrix, end-to-end load) are deferred SHOULD-layer hardening.",
+		},
 	}
 
 	for _, c := range cases {

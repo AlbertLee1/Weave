@@ -354,12 +354,16 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 ### 4.7 开发体验
 
 **Gap-D1 — Python SDK ObjectSet builder**
-- 现状：raw dict。
-- 建议：一个 Pythonic builder `Employees.filter(Employee.age > 30).searchAround("team").aggregate(count())`。
+- 现状：✅ 已落地（commit a042fa5）。`sdk/python/weave_client/objectsets.py::ObjectSetBuilder` 提供 Pythonic chaining：`ObjectSetBuilder(client).base("Employee").filter({"field":"age","op":"gt","value":30}).search_around("team").build()`，可链式 union / intersect / subtract / searchAround / withProperties；与 `sdk/python/weave_client/builders.py` 的 aggregation / criteria builders 配套；`sdk/python/tests/test_objectsets.py` + `test_builders.py` 覆盖。
+- 剩余：纯 Pythonic 属性比较 DSL（`Employee.age > 30`）尚需 metaclass-based field proxy 层；当前 dict-based 输入已能完整表达 ObjectSet 操作语义。
 
 **Gap-D2 — Python SDK Aggregation / TimeSeries / Attachment**
-- 现状：未暴露。
-- 建议：按 US-046 类似模式补齐。
+- 现状：✅ 已落地（commits 863a19e + 751d9dc + 66a675d）。
+  - `sdk/python/weave_client/aggregation.py::AggregationAPI` 完整 metric + groupBy builder + typed response（commit 863a19e）。
+  - `sdk/python/weave_client/timeseries.py::TimeSeriesAPI` 暴露 property TimeSeries 端点（commit 751d9dc Gap-D2 partial）。
+  - `sdk/python/weave_client/attachments.py::AttachmentsAPI` 暴露 attachment 上传 / 读取（commit 66a675d Gap-D2 close-out）。
+  - 测试 `sdk/python/tests/test_aggregation_builders.py` / `test_timeseries.py` / `test_attachments.py` 全套覆盖。
+- 剩余：批量 attachment 上传与 streaming download 仍待用例驱动。
 
 **Gap-D3 — CLI action / aggregate / objectset 深度**
 - 现状：✅ 已落地（commit fc6ef44）。`weave action apply`、`weave aggregate`、`weave objectset load`、`weave objectset create-temporary` 完整入口在 `cmd/weave-cli/cmd_action.go` / `cmd_aggregate.go` / `cmd_objectset.go`，由 `cmd/weave-cli/cli_us304_test.go` 覆盖；`docs/cli.md` 在 `### weave action apply` (L141) / `### weave aggregate` (L177) / `### weave objectset <load|create-temporary>` (L220) 三个章节提供命令参考 + 常用 body 模板 + 真实 northwind 示例（131 行 docs 改动）；BDD 守哨 `scripts/ci/cli_docs_bdd_test.go` 防止任一章节被误删或 wording drift。
