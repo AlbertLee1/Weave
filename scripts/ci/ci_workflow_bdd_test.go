@@ -1095,7 +1095,27 @@ func readGolangCILintActionConfig(t *testing.T, path string) (string, bool) {
 				if !ok || strings.TrimSpace(version) == "" {
 					t.Fatalf("job %q golangci-lint action step %q must set with.version", jobName, step.Name)
 				}
-				return strings.TrimSpace(version), readBoolInput(step.With["only-new-issues"])
+				onlyNew := readBoolInput(step.With["only-new-issues"])
+				if !onlyNew {
+					// Round 154: also accept --new-from-rev= /
+					// --new-from-merge-base= / --new-from-patch=
+					// in args as equivalent to only-new-issues:true.
+					// The action's own only-new-issues flag fetches
+					// the GH PR patch which 406s on PRs > 300 files
+					// (Weave's Ralph self-iteration batches routinely
+					// exceed that), so we now drive new-issue detection
+					// via golangci-lint's own git diff — see commit
+					// 77514e1 "fix CI to use git merge-base instead of
+					// GH PR diff API".
+					if args, ok := step.With["args"].(string); ok {
+						if strings.Contains(args, "--new-from-rev=") ||
+							strings.Contains(args, "--new-from-merge-base=") ||
+							strings.Contains(args, "--new-from-patch=") {
+							onlyNew = true
+						}
+					}
+				}
+				return strings.TrimSpace(version), onlyNew
 			}
 		}
 	}
