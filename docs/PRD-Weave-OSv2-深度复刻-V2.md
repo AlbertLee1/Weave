@@ -232,9 +232,14 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 剩余：表 §3 行 99 已记录 90%；Phase 6 Gate 通过 (US-006..US-008, US-041)。
 
 **Gap-Q2 — withProperties 真实计算**
-- 现状：executor 里有 `executeWithProperties` 分发，但代码只是把属性名传下去；**跨 link 的聚合（reportsCount / teamSize 之类）未实现**。
-- 影响：Foundry 的 derived property 是核心卖点之一，SDK 示例里随处可见。
-- 建议：实现单 hop 的 count/sum/avg；二 hop 以上 Phase 7 再做。
+- 现状：✅ 已落地。`pkg/oss/objectset/executor.go::executeWithProperties`（101 行实现）真正执行跨 link 计算并附到 `Result.DerivedValues`，`executeWithPropertiesPolymorphic` 处理 Interface 多态路径；`handler_aggregate_derived.go::aggregationNeedsDerivedPath` 决定是否走 derived path 让 metric 引用 derived property；
+  - **单 hop**：`withproperties_test.go` 覆盖 count / sum / avg / min / max + 反向 link count + 空集 / 类型不匹配 / 缺字段 / cursor stability / metric 校验共 12 子用例。
+  - **公式表达**：`withproperties_formula_test.go` 覆盖 FullName 组合 / 算术 / 多 DP / 校验缺失 formula 共 5 子用例。
+  - **反向语义**：`withproperties_reverse_test.go` 锁定反向 link 计算（reportsCount 这类）。
+  - **derived 排除**：`aggregate_derived_us382_test.go` 锁定 derived-excluded items 行为。
+  - **lineage 集成**：`handler_lineage_test.go::TestObjectSetLineage_WithPropertiesAggregation` 把 derived 列入 lineage。
+  - **多 hop / M2M**：multi-hop searchAround（US-366）+ M2M traversal（US-210）接入 `ErrQueryTooLarge` 防爆。
+- 剩余：自定义 reducer DSL（除内置 5 类外）保留为 SHOULD 层；二 hop 以上 cross-link 聚合已通过 multi-hop searchAround + withProperties 组合可达。
 
 **Gap-Q3 — Aggregation 多层嵌套 + 精度标记**
 - 现状：✅ 已落地。multi-groupBy end-to-end 覆盖在 `test/foundry_parity/us015_multi_groupby.json` (105-doc fixture: 5 countries × 3 quarters × 7 prices = 105 orders) 驱动 `test/integration/aggregation_multigroupby_test.go::TestMultiGroupBy_NorthwindOrders`，三层 groupBy `ExactValue × FixedWidth × Duration` 组合走通 PG-backed OMS → `pkg/index.BuildMapping` → `pkg/oss/aggregation.Engine` 全链路，leaf 行的 count/sum/avg metrics 与手算 expected 一一对齐；`pkg/oss/aggregation/multi_groupby_test.go` 三个单测覆盖嵌套键 shape (`TestMultiGroupBy_ThreeLayerNested`) / 稳定 bucket order (`TestMultiGroupBy_StableBucketOrder`) / null group key 行为 (`TestMultiGroupBy_NullGroupKey`)；`accuracy=APPROXIMATE` 标记的触发条件在 `pkg/oss/aggregation/accuracy_test.go::TestAggregationAccuracyMarker` 6 子场景里全部断言 (simple avg / standardDeviation / approximatePercentile / groupBy + truncated leaf 触发 APPROXIMATE；count-only / fits-all-docs 保持 ACCURATE)。

@@ -211,6 +211,19 @@ func TestBDD_PRDV2GapEntriesReflectImplementationReality(t *testing.T) {
 			marker: "subscribe_sse.go",
 			why:    "Gap-R1 client subscription depth IS implemented — pkg/oss/subscribe_sse.go exposes GET /api/v2/ontologies/{ont}/objectSets/{rid}/subscribe with Last-Event-ID + since replay and per-user connection guard, pkg/subscriptions/ mounts the WebSocket /subscriptions/ws endpoint, web/src/hooks/useObjectSetSubscription.ts drives the realtime mode in BrowserPage and ObjectSetLivePage. Remaining ops items (multi-instance fan-out, replay window metrics, reconnect matrix, end-to-end load) are deferred SHOULD-layer hardening.",
 		},
+		// Round 144 — Gap-Q2 was the most spectacularly stale gap
+		// left: PRD still said "跨 link 的聚合未实现" but
+		// withProperties has a full 101-line executor +
+		// derived-aware aggregation gate + 12 single-hop subtests +
+		// 5 formula subtests + reverse / lineage / multi-hop /
+		// M2M coverage. This is a Foundry MUST-line crown jewel
+		// that had been left looking like a known gap. Pin the
+		// executor entry-point.
+		{
+			gap:    "Gap-Q2",
+			marker: "executeWithProperties",
+			why:    "Gap-Q2 withProperties cross-link aggregation IS implemented (Foundry derived-property MUST line) — pkg/oss/objectset/executor.go executeWithProperties + executeWithPropertiesPolymorphic (101-line impl) drive forward / reverse / polymorphic derived paths attaching values onto Result.DerivedValues; handler_aggregate_derived.go aggregationNeedsDerivedPath gates the derived-aware aggregation; withproperties_test.go covers count / sum / avg / min / max / reverse count + 6 edge cases (12 subtests); withproperties_formula_test.go covers FullName / arithmetic / multi-DP / validation (5 subtests); withproperties_reverse_test.go locks reverse semantics; aggregate_derived_us382_test.go locks derived-excluded items; handler_lineage_test.go::TestObjectSetLineage_WithPropertiesAggregation pulls derived into lineage. Multi-hop searchAround (US-366) + M2M traversal (US-210) wire into ErrQueryTooLarge. Only custom reducer DSL remains on the SHOULD layer.",
+		},
 	}
 
 	for _, c := range cases {
