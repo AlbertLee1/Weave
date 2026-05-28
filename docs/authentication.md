@@ -268,6 +268,46 @@ API Key 特性：
 - 确认在 `AUTH_MODE=jwt` 下已用 `/api/auth/login` 获取 access token
 - 检查 Authorization header 格式：`Bearer <token>`（注意 `Bearer` 后有一个空格）
 
+## 会话管理（rounds 101-102）
+
+JWT 模式下登录会在服务端登记一个 session 行，方便用户多设备登录后单独
+撤销某条会话或一键登出其他设备。三个端点：
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| `GET` | `/api/auth/sessions` | 列出当前用户所有 active sessions（含 `id` / `createdAt` / `lastSeenAt` / `userAgent` / `ipHash`） |
+| `POST` | `/api/auth/sessions/{id}/revoke` | 撤销指定 session（自己的或 admin 代撤），下次该 session token 命中 middleware 即 401 |
+| `POST` | `/api/auth/sessions/revoke-others` | 撤销当前用户除当前请求 session 外的所有其他 sessions（"sign out other devices"，round 101 / commit a29e9d2） |
+
+Python SDK 镜像（round 102 / commit c737af2）：
+
+```python
+from weave_client import WeaveClient
+
+client = WeaveClient("http://localhost:9117", token=...)
+
+# 列出 active sessions
+for s in client.sessions.list():
+    print(s.id, s.user_agent, s.last_seen_at)
+
+# 一键登出其他设备
+client.sessions.revoke_others()
+
+# 撤销具体 session
+client.sessions.revoke(session_id="ses-abc123")
+```
+
+异步客户端同名方法：`await async_client.sessions.list()` 等。
+
+### 错误分类
+
+| Exception | HTTP | Notes |
+|---|---|---|
+| `WeaveAuthError` | 401 / 403 | base auth class — 凭证缺失 / 失效 / 已撤销均归此类；`exc.error_name` 区分 `MissingAuthenticatedUser` / `InvalidCredentials` / `SessionRevoked` 子情况 |
+| `WeaveError`（基类） | 任意非 2xx | 兜底；现有 `except WeaveError:` 块继续兼容 |
+
+`WeaveAuthError.error_instance_id` 始终带服务端生成的 UUID，方便对照 audit log 中的 `login_failed` / `token_refresh` 事件定位。
+
 ## 相关代码位置
 
 | 功能 | 文件 |
