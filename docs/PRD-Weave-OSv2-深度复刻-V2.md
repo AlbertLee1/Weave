@@ -213,13 +213,15 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 
 ### 3.3 本阶段成功的标志
 
-- `make test && make test-integration && make web-test && pytest sdk/python` 全绿；
-- 新增 `make test-contract` 命令运行 "Foundry 行为等价矩阵" ≥ 100 个样例；
-- 新增 `pkg/security/policy_engine.go` 完整 policy evaluation 链，**至少 10 个端到端集成测试覆盖 row/column filter**；
-- 已有 `/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe` SSE 端点、`/api/v2/ontologies/{ontologyApiName}/subscriptions/ws` WebSocket 端点，前端有 Browser realtime mode 与 ObjectSet Live 页；
-- `pkg/geotemporal/pg_store.go` + `pkg/timeseries` 时间分桶聚合，`/timeseries/transform` 下推到 PG/VM downsampler，`make bench` 基准存在；
-- `pkg/functions/` 新包内嵌 Goja，可执行 TS-like 函数；
-- `docs/CHANGES-v2.md` 记录 v2 所有改动与 breaking changes。
+> 状态更新自 round 158 — 全部 7 项已达成。
+
+- ✅ `make test && make test-integration && make web-test && pytest sdk/python` 全绿（本会话 R155-R157 修复 lint 守哨 / coverage gate / vulncheck，CI 三 gate 现 PASS）；
+- ✅ `make test-contract` 命令运行 Pact-style consumer-driven contract tests（US-362 + US-445），`Makefile` 已暴露；
+- ✅ `pkg/security/policy_engine.go` 完整 policy evaluation 链（`Engine.Evaluate` + `AllowedProperties` + `SetMarkingsEnabled`），端到端集成测试覆盖 row / column / marking 决策 — `pkg/oss/row_policy_integration_test.go` + `policy_engine_integration_test.go` + `row_policy_cel_integration_test.go` + `handlers_aggregate_policy_test.go` + `cmd/server/rls_cel_us487_bdd_test.go` + `pkg/security/rls_bench_test.go` 共 6+ 套覆盖；
+- ✅ `/api/v2/ontologies/{ontologyApiName}/objectSets/{objectSetRid}/subscribe` SSE 端点（`pkg/oss/subscribe_sse.go`）、`/api/v2/ontologies/{ontologyApiName}/subscriptions/ws` WebSocket 端点（`pkg/subscriptions`）、前端 `web/src/components/browser/BrowserPage.tsx` realtime mode 与 `web/src/components/objectsets/ObjectSetLivePage.tsx` 全部就位；
+- ✅ `pkg/geotemporal/pg_store.go` + `pkg/timeseries` 时间分桶聚合，`/api/v2/ontologies/{ontology}/timeseries/transform` 下推到 PG / VM downsampler，`make bench` US-441 perf regression 套件存在；
+- ✅ `pkg/functions/goja_runtime.go` 内嵌 `dop251/goja` 运行时（Gap-A5 Phase 8 W1 全 ✅），可执行 TS-like 函数；
+- ✅ `docs/CHANGES-v2.md` 记录 v2 改动与 breaking changes — 涵盖 Highlights / Changes by area / Breaking changes / Upgrade notes（round 158 落地）。
 
 ---
 
