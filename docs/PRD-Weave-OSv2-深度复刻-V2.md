@@ -87,7 +87,7 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 | 层 | 模块 | API 表面 | 存储/持久 | 语义深度 | 综合 | 备注 |
 |---|---|:---:|:---:|:---:|:---:|---|
 | OMS | 元数据 CRUD | 🟢 | 🟢 PG + 缓存 | 🟢 | **95%** | Ontology/ObjectType/LinkType/ActionType/Interface/ValueType/QueryType 全 CRUD |
-| OMS | Snapshot / 版本 | 🟢 | 🟢 | 🟡 | **70%** | 无分支、RID 不含 version、无 version diff |
+| OMS | Snapshot / 版本 | 🟢 | 🟢 | 🟢 | **90%** | `ontology_branches` 表（migration 000024 + 000091 parent_tx）+ RID `@vN` suffix（`pkg/rid` splitVersionSuffix）+ `?branch=` / `X-Weave-Branch` header（`pkg/oms/branch_scope.go`）+ 8 Get 端点 typed `501 VersionedLookupNotSupported`；Gap-T4 全部 4 块 done |
 | OMS | SharedProperty / TypeGroup | 🟢 | 🟢 | 🟢 | **90%** | 表与 CRUD 在；round 54 DeleteSharedProperty 在使用中拒绝 (409 SharedPropertyInUse + usageCount)；round 55 CreateProperty 新增 `sharedPropertyTypeApiName` + baseType/isArray 强校验（400 SharedPropertyTypeMismatch 含双向 diff）；round 58 DeleteTypeGroup 在使用中拒绝 (409 TypeGroupInUse + usageCount) 镜像 round-54 防悬空 object_type_groups assignment 行；仍未对 Interface 自动属性 / Search analyzer 联动 |
 | OSS | Where DSL | 🟢 | n/a | 🟢 | **90%** | 15+ 子句类型，Bleve query compile |
 | OSS | ObjectSet 15 变体 | 🟢 | n/a | 🟡 | **70%** | base/filter/union/intersect/subtract/searchAround/static/reference/nearestNeighbors/asType/asBaseObjectTypes/interfaceBase/withProperties/interfaceLinkSearchAround/methodInput 路由就位；**深度不一** |
@@ -100,7 +100,7 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 | OSS | ObjectSet 持久化 | 🟢 | 🟢 PG `saved_object_sets` | 🟢 | **85%** | temporary TTL 通过 store；`createTemporary` 已接入 |
 | Actions | 参数 / 规则 / 编辑生成 | 🟢 | 🟢 | 🟡 | **80%** | 规则引擎能 run；**submission criteria 表达力浅**，无内嵌脚本 |
 | Actions | applyBatch / applyWithOverrides | 🟢 | 🟢 | 🟢 | **90%** | atomic/bestEffort 两种模式；**Phase 6 Gate**: optimistic concurrency + user-edit-wins + edit-only ingest 全链路 (US-035..US-037)；Playwright `optimistic-concurrency.spec.ts` + `editonly-ingest.spec.ts` 绿 |
-| Actions | Function-backed | 🟢 HTTP dispatcher | — | 🔴 | **35%** | 可通过 HTTP 转发至外部 function server；**无内嵌 Goja/Wasm 运行时** |
+| Actions | Function-backed | 🟢 HTTP + Goja | 🟢 | 🟢 | **90%** | `pkg/functions/goja_runtime.go` 用 `dop251/goja` 嵌入式沙箱 JS runtime（US-218 + US-476）+ ontology 客户端 shim（`goja_shim_functions.go`）+ progress（`goja_shim_progress.go`）+ cache + typed errors；`pkg/actions/goja_dispatcher.go` 路由 Function-backed action（US-066）；`pkg/queryexec/goja.go` executeQuery via function（US-067）；HTTP dispatcher 仍可用作 fallback；Gap-A5 Phase 8 W1 全 ✅ |
 | Actions | Side effects | 🟢 | 🟢 | 🟡 | **60%** | 结构体存在；**webhook 通知未验证**，无重试 |
 | Funnel | Publisher / Consumer | 🟢 | 🟢 JetStream | 🟢 | **90%** | per-ontology subject、DLQ、offset、broadcast |
 | Funnel | 实时客户端订阅 | 🟢 | 🟢 replay tail | 🟡 | **70%** | `pkg/funnel/broadcast.go` 经 `pkg/oss/subscribe_sse.go` 暴露 SSE ObjectSet 订阅；`pkg/subscriptions` 提供 WebSocket 订阅；剩余深度在跨节点 fan-out 与更完整断线恢复矩阵 |
@@ -110,8 +110,8 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 | Auth | dev / token / JWT | 🟢 | 🟢 | 🟢 | **90%** | RS256、refresh token 轮换、bootstrap admin |
 | Auth | API Key | 🟢 | 🟢 | 🟢 | **90%** | `wvk_` 前缀、SHA-256 hash、revoke、last_used |
 | Auth | RBAC (4 role × 26 perm) | 🟢 | 🟢 | 🟡 | **70%** | 全局 + per-ontology 角色；**未参与行/列/Marking 级过滤** |
-| Security | Marking / 分级 | 🟢 表 | 🟢 表 | 🔴 | **25%** | 表存在，marking_filter.go 文件有；**未接入查询过滤主路径** |
-| Security | Object / Property Security Policy | 🟡 表 | 🟡 表 | 🔴 | **15%** | CRUD 有，**policy evaluation 不生效** |
+| Security | Marking / 分级 | 🟢 | 🟢 | 🟢 | **90%** | 已合并进 `pkg/security/policy_engine.go`（`SetMarkingsEnabled` / `MarkingsEnabled` / `AllowedForIngest`），user-context markings 从 `auth.User.Attributes[MarkingsAttributeKey]` 注入，贯穿 row + property 决策；`auto_marking_test.go` 覆盖继承；无单独 marking_filter.go（Gap-S3 done） |
+| Security | Object / Property Security Policy | 🟢 | 🟢 | 🟢 | **90%** | `pkg/security/policy_engine.go::Engine.Evaluate` (RLS query AND 进主链路) + `AllowedProperties` (column-level) + CEL DSL (`cel_evaluator.go`) + decision/policy 缓存（`decision_cache.go` + `policy_cache.go`）；挂在 `pkg/oss/service_impl.go`；row / aggregate / CEL 三套 integration_test + BDD + bench（Gap-S1 + S2 done） |
 | Security | Edit conflict / concurrency | 🟢 | 🟢 `object_history` | 🟢 | **90%** | **Phase 6 Gate**: user-edit-wins / most-recent-timestamp + optimistic version check + edit-only property 全链路 (US-035..US-037)；Playwright 双 context 竞争场景覆盖 |
 | Types | 21 基础 + 强制转换 | 🟢 | n/a | 🟡 | **80%** | Vector / Struct / Attachment / MediaRef / Cipher / TimeSeries / GeoTemporal 都能声明；**Struct 嵌套深度与校验未完整** |
 | Types | TypeClass | 🟢 存储 | 🟢 `properties.type_config` | 🟢 | **85%** | **Phase 6 Gate**: type_config analyzer hints (not_analyzed / keyword / english) 通过 `pkg/index/mapping_builder.go` 注入 Bleve FieldMapping；FK link resolver 依赖此路径 (US-001, US-012, US-040) |
@@ -121,7 +121,7 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 | Special | GeoTemporal | 🟢 2 端点 | 🟢 PG `geotemporal_values` | 🟡 | **60%** | latestValue / streamHistoricValues 由 `cmd/server/main.go` 在 PG 可用时接入 PG-backed `PgStore`；无 PG 时使用 in-process MemoryStore as degraded mode |
 | Special | CipherText (AES-GCM) | 🟢 | 🟢 | 🟢 | **80%** | decrypt 端点 + 信封加密 |
 | Special | Transaction (preview) | 🟢 | 🟡 | 🟡 | **65%** | `/transactions/{id}/edits` 已就位；round 59 新增 `GET /transactions/{id}` 与 `DELETE /transactions/{id}` （both 需 `?preview=true`，DELETE 幂等），SDK 可读回累计 edits 与 abort 实验。仍未与 Action commit/atomic-apply 集成 |
-| Special | SQL Query | 🟢 | 🟢 | 🟡 | **60%** | execute 端点；**无查询沙箱、无资源限制、无 read-only guard** |
+| Special | SQL Query | 🟢 | 🟢 | 🟢 | **90%** | execute 端点 + `pkg/sqlqueries/safety.go::ValidateQuery` 全 SQL tokenizer（白名单 SELECT / WITH + 黑名单 30+ 关键字 + 系统表防御 + stacked-statement 防御）；`pkg/sqlqueries/engine.go::PGEngine` 强制 `pgx.ReadOnly` + `context.WithTimeout`（5s 默认 US-468）+ MaxRows 流式截断（10K）+ `ErrQueryTimeout` 类型化映射（Gap-S5 done） |
 | Observability | Prometheus metrics | 🟢 | 🟢 | 🟡 | **65%** | 基础 metric；**无业务指标 dashboard** |
 | Observability | OpenTelemetry | 🟢 | 🟢 | 🟢 | **85%** | `pkg/tracing` 完整 Init（otlp/stdout/none 三种 exporter）+ HTTPMiddleware（chi route 模板做 span 名，5xx 翻 status Error）+ BaggageMiddleware（request_id/user_id 注入）+ PgxTracer（DB 查询 span）+ `pkg/funnel/tracing.go` 跨 NATS 注入/抽取 TraceContext；round 52 HTTPDispatcher 出站 W3C TraceContext 注入；round 53 webhook side-effect 出站注入（context-aware retry loop + 每次 attempt 一个 client-kind span）。剩余深度是外部 sampler 配置矩阵与多租户 trace 隔离 |
 | Observability | Audit log | 🟢 `audit_events` | 🟢 PG + hash chain | 🟡 | **78%** | `pkg/audit` 的 `AuditEvent` / `NewPGStore` 对应 `migrations/000020_audit_events.up.sql`；`migrations/000062_audit_hash_chain.up.sql` 加 `chain_seq` / `prev_hash` / `entry_hash`，`VerifyChain` 与 `cmd/weave-audit-verify` 校验链路，`RootHashPublisher` 可锚定 root hash，`RedactingStore` 处理 GDPR redaction；`cmd/server/admin_audit.go` 暴露 `/api/v2/admin/auditEvents` 与 `/api/admin/audit`，支持 `resourceRid`；`pkg/oms/audited_repository.go` 的 `NewAuditedRepository` 记录 OMS metadata create/update/delete；`migrations/000061_object_type_data_access_audit.up.sql` + `pkg/oss/data_access_audit.go` / `cmd/server/data_access_audit_adapter.go` 的 `NewDataAccessAuditor` 记录 `data.access`；`pkg/auth/login_handler.go`、`pkg/auth/refresh_handler.go`、`pkg/auth/api_key_handlers.go` 覆盖 `login_failed` / `token_refresh` / `api_key_create`；remaining depth gaps 是 policy-change breadth、SIEM/retention deployment hardening 与 audit UX aggregation |
