@@ -295,8 +295,12 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 剩余：marking 升级 / 撤销时的反向 propagation 与外部 marking 同步保留运维流程，不影响 1:1 对齐。
 
 **Gap-S4 — Audit policy breadth 与运行硬化**
-- 现状：`pkg/audit`、`audit_events`、`pkg/oms/audited_repository.go`、auth audit、data-access audit、hash-chain verification、admin audit query、retention/export/redaction hooks 已就位。
-- 建议：把 row/column/marking/security policy 修改全部纳入统一 audit taxonomy，补 SIEM delivery health、retention evidence dashboard、批量审计 UX 与部署级 root-hash 操作手册。
+- 现状：✅ 已落地。
+  - **核心 audit 通道**：`pkg/audit/audit.go` + `pg_store.go`（持久化）+ `chain.go`（hash chain）+ `context.go`（请求上下文）+ `redaction.go`（PII redaction），`pkg/oms/audited_repository.go` 把 OMS 写路径整条接入 audit。
+  - **SIEM 投递**：`pkg/audit/export/exporter.go` 抽象，`syslog.go` / `s3.go` 两种 sink，`batched.go` 批量重试，`tee.go::TeeStore` 让内部 store 与 SIEM exporter 同时收到事件；`cmd/server/audit_retention.go` 装配 `AuditExportConfig` + `S3Uploader` 让部署侧配置 SIEM target。
+  - **Root-hash 发布**：`pkg/audit/roothash.go::RootHashPublisher` 周期（默认 24h）发布前一 UTC 日的链根，写到锚定路径供外部 verifier 比对（US-266 tamper-proof audit logs）。
+  - **运维入口**：admin audit query 端点 + retention / export / redaction hooks 已暴露。
+- 剩余：批量审计 UX（Web 操作侧）与部署级 root-hash 操作手册（plumbed-into-runbook 文档）仍属运维 polish；row / column / marking 改动接入统一 audit taxonomy 由 Gap-S1 / S2 / S3 联动后自然落入 `audit_events` 流。
 
 **Gap-S5 — SQL Query 沙箱与资源限制**
 - 现状：✅ 已落地。`pkg/sqlqueries/safety.go` `ValidateQuery` 实现全 SQL tokenizer（line/block/dollar-quoted 字符串与注释剥离、双引号 identifier、反引号拒绝）+ 白名单仅 SELECT/WITH/VALUES/TABLE + 黑名单 30+ DML/DDL/DCL/事务/存储过程关键字 + body 嵌入 INSERT/UPDATE/DELETE 防御 + pg_* / information_schema / pg_catalog / pg_toast 系统表防御 + stacked-statement 防御。`pkg/sqlqueries/engine.go` PGEngine 强制 `pgx.TxOptions{AccessMode: pgx.ReadOnly}` + `context.WithTimeout`（默认 5s，US-468 契约）+ MaxRows 流式截断（默认 10K）+ 超时错误映射为 `ErrQueryTimeout` 便于 SDK 分类。

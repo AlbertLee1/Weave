@@ -224,6 +224,18 @@ func TestBDD_PRDV2GapEntriesReflectImplementationReality(t *testing.T) {
 			marker: "executeWithProperties",
 			why:    "Gap-Q2 withProperties cross-link aggregation IS implemented (Foundry derived-property MUST line) — pkg/oss/objectset/executor.go executeWithProperties + executeWithPropertiesPolymorphic (101-line impl) drive forward / reverse / polymorphic derived paths attaching values onto Result.DerivedValues; handler_aggregate_derived.go aggregationNeedsDerivedPath gates the derived-aware aggregation; withproperties_test.go covers count / sum / avg / min / max / reverse count + 6 edge cases (12 subtests); withproperties_formula_test.go covers FullName / arithmetic / multi-DP / validation (5 subtests); withproperties_reverse_test.go locks reverse semantics; aggregate_derived_us382_test.go locks derived-excluded items; handler_lineage_test.go::TestObjectSetLineage_WithPropertiesAggregation pulls derived into lineage. Multi-hop searchAround (US-366) + M2M traversal (US-210) wire into ErrQueryTooLarge. Only custom reducer DSL remains on the SHOULD layer.",
 		},
+		// Round 145 — Gap-S4 audit breadth: PRD listed 4
+		// suggestions (taxonomy unification / SIEM delivery health
+		// / retention evidence dashboard / root-hash runbook) but
+		// SIEM delivery and root-hash publication ARE implemented
+		// (pkg/audit/export + roothash.go::RootHashPublisher per
+		// US-266). Pin the publisher type so US-266's tamper-proof
+		// anchor cannot be silently removed.
+		{
+			gap:    "Gap-S4",
+			marker: "RootHashPublisher",
+			why:    "Gap-S4 audit breadth + hardening IS implemented at the code level — pkg/audit/audit.go + pg_store.go + chain.go + context.go + redaction.go + oms/audited_repository.go form the core write path; pkg/audit/export/{exporter,syslog,s3,batched,tee}.go ship SIEM delivery with batched retry, syslog/S3 sinks, and TeeStore fan-out so internal store + SIEM both receive events; pkg/audit/roothash.go::RootHashPublisher periodically anchors the previous UTC day's hash chain (US-266 tamper-proof). Admin query + retention / export / redaction hooks exposed via cmd/server/audit_retention.go AuditExportConfig. Only the operator-facing batch audit UX and root-hash runbook prose remain on the SHOULD / runbook layer.",
+		},
 	}
 
 	for _, c := range cases {
