@@ -133,6 +133,17 @@ func TestBDD_PRDV2GapEntriesReflectImplementationReality(t *testing.T) {
 			marker: "cli_docs_bdd_test.go",
 			why:    "Gap-D3 CLI action/aggregate/objectset depth IS implemented — commit fc6ef44 added docs/cli.md sections '### weave action apply' (L141) / '### weave aggregate' (L177) / '### weave objectset <load|create-temporary>' (L220) with command reference + body templates + real northwind examples (131 doc lines), plus scripts/ci/cli_docs_bdd_test.go BDD guard that fails loudly if any of those headings disappears.",
 		},
+		// Round 140 — Gap-D4 stale: MCP completion/complete was
+		// delivered (commits 1a1065e Gap-D4 partial + fb5f90c
+		// Gap-D4 follow-up wiring ontology-backed CompletionSource)
+		// but the PRD's Gap-D4 paragraph still listed only
+		// prompts + resources, omitting completion entirely. Pin
+		// the source file so a future revert is caught.
+		{
+			gap:    "Gap-D4",
+			marker: "completion_ontology_source.go",
+			why:    "Gap-D4 MCP completion/complete protocol method IS implemented (in addition to prompts/list and resources/* listed in the PRD) — pkg/mcp/completion.go dispatches the completion/complete RPC and pkg/mcp/completion_ontology_source.go wires it to the OMS so AI clients see live ontology/objectType apiName suggestions while typing weave://objecttype/<...>/ URIs; BDD coverage in pkg/mcp/completion_bdd_test.go + completion_ontology_source_bdd_test.go (commits 1a1065e partial + fb5f90c follow-up). Only MCP sampling and production auth remain on the SHOULD layer.",
+		},
 	}
 
 	for _, c := range cases {

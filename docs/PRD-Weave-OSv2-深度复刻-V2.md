@@ -365,9 +365,9 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 现状：✅ 已落地（commit fc6ef44）。`weave action apply`、`weave aggregate`、`weave objectset load`、`weave objectset create-temporary` 完整入口在 `cmd/weave-cli/cmd_action.go` / `cmd_aggregate.go` / `cmd_objectset.go`，由 `cmd/weave-cli/cli_us304_test.go` 覆盖；`docs/cli.md` 在 `### weave action apply` (L141) / `### weave aggregate` (L177) / `### weave objectset <load|create-temporary>` (L220) 三个章节提供命令参考 + 常用 body 模板 + 真实 northwind 示例（131 行 docs 改动）；BDD 守哨 `scripts/ci/cli_docs_bdd_test.go` 防止任一章节被误删或 wording drift。
 - 剩余：`objectset run` 便捷别名与更丰富的 table 输出仍属可选 polish，不阻塞 1:1 对齐。
 
-**Gap-D4 — MCP prompts / resources / sampling**
-- 现状：`pkg/mcp/prompts.go` 已实现 `prompts/list` / `prompts/get`，从 OMS ActionType 元数据合成 prompt；`pkg/mcp/resources.go` 已实现 `resources/list` / `resources/read` / `resources/subscribe` / `resources/unsubscribe`，能列出 ontology、ObjectType 与临时 ObjectSet 资源，ObjectType URI 形如 `weave://objecttype/<ontology>/<objectType>`；对外契约见 `docs/mcp.md`。
-- 建议：下一步补 MCP sampling 以及生产认证/部署说明；prompts/resources 不再是缺失入口。
+**Gap-D4 — MCP prompts / resources / completion / sampling**
+- 现状：`pkg/mcp/prompts.go` 已实现 `prompts/list` / `prompts/get`，从 OMS ActionType 元数据合成 prompt；`pkg/mcp/resources.go` 已实现 `resources/list` / `resources/read` / `resources/subscribe` / `resources/unsubscribe`，能列出 ontology、ObjectType 与临时 ObjectSet 资源，ObjectType URI 形如 `weave://objecttype/<ontology>/<objectType>`；`pkg/mcp/completion.go` + `pkg/mcp/completion_ontology_source.go` 实现 `completion/complete`（commits 1a1065e + fb5f90c），AI 客户端在 URI 路径补全时（如键入 `weave://objecttype/`）从 OMS 拉取 ontology / objectType apiName 实时建议，BDD 覆盖 `completion_bdd_test.go` + `completion_ontology_source_bdd_test.go`；对外契约见 `docs/mcp.md`。
+- 建议：下一步补 MCP sampling（客户端反向请求 LLM 完成的 RPC）以及生产认证/部署说明；prompts / resources / completion 不再是缺失入口。
 
 **Gap-D5 — weave-mcp stdio 真可用**
 - 现状：`weave-mcp` 已有 bridge 模式：设置 `WEAVE_MCP_URL` 后，`cmd/weave-mcp/http_bridge.go` 会把本地 stdio JSON-RPC 转发到运行中的 `/mcp`，并复用同一套 tools/prompts/resources；也会透传 `WEAVE_MCP_TOKEN` / `WEAVE_MCP_API_KEY`，且 `WEAVE_MCP_HTTP_TIMEOUT` 可限制上游 HTTP stall。
