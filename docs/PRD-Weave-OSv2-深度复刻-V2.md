@@ -157,8 +157,8 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 | "nearestNeighbors + MCP AI tools 交付" | 多字段 KNN（`PropertyIdentifiers []PropertyIdentifier`）+ `fusionStrategy` (min / RRF k=60) + 4 MCP tool + `completion/complete`（Gap-Q4 + D4 done）；仍无 BM25+vector 混合检索 / cross-encoder reranking | `pkg/oss/objectset/nn.go` multi-vector + RRF fusion；`pkg/mcp/completion.go` + `completion_ontology_source.go` |
 | "TimeSeries / GeoTemporal 存储后端" | TimeSeries 有 PG store、VictoriaMetrics store、transform/downsample pushdown 与 Vertex window aggregation；GeoTemporal 也有 `pkg/geotemporal/pg_store.go` | TimeSeries 基础读写路由、`/timeseries/transform`、`DownsamplePoints`、`timeseries_cagg_5min`、VM `query_range` 已落地；GeoTemporal 使用 `migrations/000205_geotemporal_values.up.sql` 持久化，并由 `migrations/000208_geotemporal_spatial_indexes.up.sql` 加强 bbox + 时间过滤索引 |
 | "Function-backed Actions" | HTTP dispatcher + **内嵌 Goja runtime**（Gap-A5 Phase 8 W1 全 ✅）：sandboxed `dop251/goja` + ontology shim + cache + typed errors + Action / Query 双 dispatch | `pkg/functions/goja_runtime.go` + `pkg/actions/goja_dispatcher.go` + `pkg/queryexec/goja.go` |
-| "Edit → NATS → Bleve → Broadcast" | 后端管线通，并已通过 SSE/WS 暴露给客户端；深度风险在多实例广播、replay window 和断线恢复矩阵 | `pkg/funnel/broadcast.go`、`pkg/oss/subscribe_sse.go`、`pkg/subscriptions` |
-| "Interface 完整" | 元数据 CRUD + 多态查询端点；**跨子类型排序 + 分页稳定性未测试** | 无集成测试覆盖"多 ObjectType 实现同一 interface 的 load + sort"路径 |
+| "Edit → NATS → Bleve → Broadcast" | 后端管线通，通过 SSE/WS 暴露给客户端；rehydrate 灾难恢复路径已 BDD-locked（Gap-R3 done — 杀 Bleve 目录 → 新 manager → RebuildWithOptions → 查询等价）；剩余多实例 fan-out 与运维 polish 属 SHOULD-layer | `pkg/funnel/broadcast.go`、`pkg/oss/subscribe_sse.go`、`pkg/subscriptions`、`pkg/index/rehydrate_disaster_recovery_bdd_test.go` |
+| "Interface 完整" | 元数据 CRUD + 多态查询端点 + 跨子类型 stable composite cursor + 多 ObjectType 实现同一 interface 的 load + sort 测试已覆盖（Gap-Q1 done） | `pkg/oss/pagination/composite_cursor.go` + `pkg/oss/objectset/us463_interface_cursor_stability_test.go` + Playwright `interface-multitype-paging.spec.ts` |
 
 **这份差异不是给项目打分的，是告诉我们下一阶段的真正战线在哪里**。
 
@@ -166,28 +166,28 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 
 参见 Palantir baseline agent 的 §4 分层，映射到 Weave 现状：
 
-| 基线 | Palantir 条目 | Weave 现状 | 需要做什么 |
+| 基线 | Palantir 条目 | Weave 现状 | 完成状态 |
 |---|---|:---:|---|
 | MUST 1 | OMS CRUD + RID | 🟢 | — |
-| MUST 2 | ObjectSet 代数 + createTemporary | 🟢 | 加深 interfaceBase / asBaseObjectTypes 测试 |
+| MUST 2 | ObjectSet 代数 + createTemporary | 🟢 | base / filter / union / intersect / subtract / searchAround / static / reference / nearestNeighbors / asType / asBaseObjectTypes / interfaceBase / withProperties / interfaceLinkSearchAround / methodInput 15 变体齐 |
 | MUST 3 | Load/Search/Get + cursor + orderBy + select + filter DSL | 🟢 | — |
-| MUST 4 | Aggregation 6 metric × 4 groupBy | 🟢 | 多层嵌套稳定性测试 + 近似精度基准 |
-| MUST 5 | Action pipeline: params→rules→Edit→NATS→Bleve | 🟢 | 加 conflict 策略 |
-| MUST 6 | applyAction + applyActionBatch + returnEdits + 冲突策略 | 🟡 | **加 user-edit-wins 策略** (新 US) |
-| MUST 7 | per-ObjectType 全文索引 | 🟡 | **TypeClass 驱动 field mapping** (新 US) |
-| MUST 8 | 声明式 FK 链接 | 🟢 | M2M-in-ObjectSet 集成测试 |
+| MUST 4 | Aggregation 6 metric × 4 groupBy | 🟢 | Gap-Q3 done — 多层 ExactValue × FixedWidth × Duration + accuracy ACCURATE/APPROXIMATE 矩阵齐 |
+| MUST 5 | Action pipeline: params→rules→Edit→NATS→Bleve | 🟢 | Gap-A1 done — user-edit-wins / source=user\|funnel\|edit_only 策略落地 |
+| MUST 6 | applyAction + applyActionBatch + returnEdits + 冲突策略 | 🟢 | Gap-A1 + A2 done — user-edit-wins + optimistic concurrency (expectedVersion / If-Match) + 409 OptimisticVersionConflict |
+| MUST 7 | per-ObjectType 全文索引 | 🟢 | Gap-T1 done — TypeClass (analyzer.not_analyzed / keyword / english) 驱动 Bleve FieldMapping (`pkg/index/mapping_builder.go`) |
+| MUST 8 | 声明式 FK 链接 | 🟢 | M2M searchAround (US-210) + multi-hop searchAround (US-366) `ErrQueryTooLarge` 防爆 |
 | MUST 9 | 稳定 /api/v2/ontologies 形状 | 🟢 | — |
-| MUST 10 | dev+token auth + 策略挂接点 | 🟢 | **策略评估落地** (见 SHOULD 9) |
-| SHOULD 1 | Interface + shared property 映射 + 多态 Load | 🟡 | **多态稳定性** (新 US) |
-| SHOULD 2 | Derived property / withProperties (≥1 hop 聚合) | 🔴 | **真正实现 withProperties 计算** (新 US) |
-| SHOULD 3 | Semantic search nearestNeighbors | 🟡 | **多字段 / 混合检索** (新 US) |
-| SHOULD 4 | Change subscription (WebSocket/SSE) | 🟡 | 已有客户端订阅端点；补跨节点 fan-out、恢复矩阵与运维指标 |
-| SHOULD 5 | TypeClass (analyzer / hubble / hierarchy) | 🔴 | **落地 type class 行为** (新 US) |
-| SHOULD 6 | Action log (持久审计) | 🟢 | 扩展到元数据/权限变更 |
-| SHOULD 7 | Query functions (executeQuery) | 🟡 | **Goja/Wasm runtime** (新 US) |
-| SHOULD 8 | Streaming ingest (NATS subject 上做 ingest) | 🟡 | **NATS ingest 端点 + subject 规范** (新 US) |
-| SHOULD 9 | 行/列/Marking 过滤 | 🔴 | **Granular policy 执行引擎** (新 US) |
-| SHOULD 10 | Ontology 只读分支 + semver | 🔴 | **branch + version 挂到 RID** (新 US) |
+| MUST 10 | dev+token auth + 策略挂接点 | 🟢 | Gap-S1+S2+S3 done — `policy_engine.Evaluate` AND 进主链路、`AllowedProperties` 列级、`SetMarkingsEnabled` 合并 marking |
+| SHOULD 1 | Interface + shared property 映射 + 多态 Load | 🟢 | Gap-Q1 done — `composite_cursor.go` 实现 {objectTypeApiName, innerCursor}，3-type Northwind HasOwner interface paging 锁定 |
+| SHOULD 2 | Derived property / withProperties (≥1 hop 聚合) | 🟢 | Gap-Q2 done — `executor.executeWithProperties` (101 行) 真正执行；count/sum/avg/min/max + 反向 + 公式表达 + multi-hop + M2M 全套 |
+| SHOULD 3 | Semantic search nearestNeighbors | 🟢 | Gap-Q4 done partial — 多字段 `PropertyIdentifiers` + `fusionStrategy` (min / RRF k=60)；缺 BM25+vector 混合属 SHOULD follow-up |
+| SHOULD 4 | Change subscription (WebSocket/SSE) | 🟢 | Gap-R1 done — `subscribe_sse.go` + `pkg/subscriptions` WS + `useObjectSetSubscription` hook；剩余跨节点 fan-out 与运维深度属 SHOULD |
+| SHOULD 5 | TypeClass (analyzer / hubble / hierarchy) | 🟢 | Gap-T1 done — analyzer 主链路；hubble.icon / media_url + hierarchy.parent 由 `web/src/lib/typeclass-hints.ts` UI 渲染层管理 |
+| SHOULD 6 | Action log (持久审计) | 🟢 | Gap-S4 done — `pkg/audit` 全链路 + SIEM pipeline + `RootHashPublisher` US-266 tamper-proof |
+| SHOULD 7 | Query functions (executeQuery) | 🟢 | Gap-A5 done — `pkg/queryexec/goja.go` 让 QueryType 通过同一 `dop251/goja` runtime 执行 (US-067) |
+| SHOULD 8 | Streaming ingest (NATS subject 上做 ingest) | 🟢 | Gap-R2 done — `pkg/oss/stream_ingest.go` 专用 streaming ingest 路径 + 摄入侧 `ValidateConstraints` |
+| SHOULD 9 | 行/列/Marking 过滤 | 🟢 | Gap-S1+S2+S3 done — `policy_engine` 统一 row + column + marking 决策 |
+| SHOULD 10 | Ontology 只读分支 + semver | 🟢 | Gap-T4 done — `ontology_branches` 表 + RID `@vN` + `?branch=` / `X-Weave-Branch` + 8 Get 端点 typed `501 VersionedLookupNotSupported` |
 | MAY 1-10 | 企业级多租户 / 完整 AIP Logic / Workshop / Slate 全套产品面 | 🔴 | 明确排除或单独立项；Vertex/Quiver/Dashboard/协作通知已作为本地上层体验 MVP 纳入现状矩阵 |
 
 ---
