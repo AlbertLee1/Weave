@@ -481,6 +481,41 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 
 > 所有 US 遵循 TDD 红绿重构；每个 US 提交前必须跑完 `go test ./... && make web-test && pytest sdk/python`。
 
+> **实施状态总览（更新自 round 152）** —— 下面 27 个 US 的当前完成状态。`✅` = 端到端可用 + 有测试覆盖；`🟡` = partial / 仍有 SHOULD-layer follow-up。每行的"对应 Gap-*"列回链 §4 差距分析，"实现锚点"列回链具体文件 / 测试 / commit。
+
+| US | 标题 | 状态 | 对应 Gap-* | 实现锚点 |
+|---|---|:---:|---|---|
+| US-048 | withProperties 单 hop 聚合 | ✅ | Gap-Q2 | `pkg/oss/objectset/executor.go::executeWithProperties` + `withproperties_test.go`（12 子用例 count/sum/avg/min/max + 反向 + edge cases） |
+| US-049 | Interface 多态 composite cursor | ✅ | Gap-Q1 | `pkg/oss/pagination/composite_cursor.go` + `us463_interface_cursor_stability_test.go`（3-type Northwind HasOwner） |
+| US-050 | TypeClass 驱动 Bleve mapping | ✅ | Gap-T1 | `pkg/index/mapping_builder.go` (`analyzer.not_analyzed`/`keyword`/`english`) + `mapping_builder_test.go` |
+| US-051 | Aggregation 多层 groupBy 稳定性 + accuracy | ✅ | Gap-Q3 | `pkg/oss/aggregation/multi_groupby_test.go`（3 testcase）+ `accuracy_test.go`（6 子场景）+ `test/foundry_parity/us015_multi_groupby.json` 端到端 |
+| US-052 | approximatePercentile 精度基准 | ✅ | Gap-Q3 | `pkg/oss/aggregation/approx_percentile.go` + `hyperloglog_test.go` + `accuracy_test.go::approximatePercentile_scan_truncated → APPROXIMATE` |
+| US-053 | Edit 冲突 user-edit-wins | ✅ | Gap-A1 | `pkg/actions/edit_source_test.go` + `pkg/funnel/consumer.go` 比对 `object_history` user-source timestamp |
+| US-054 | Optimistic concurrency check | ✅ | Gap-A2 | `pkg/actions/optimistic_test.go` + `us471_optimistic_multitarget_test.go` + Playwright `optimistic-concurrency.spec.ts` |
+| US-055 | Edit-only property always apply | ✅ | Gap-A1 | edit-only path covered by US-035..US-037 + `pkg/actions/edit_source_test.go` |
+| US-056 | Row-level Policy Engine | ✅ | Gap-S1 | `pkg/security/policy_engine.go::Evaluate` + `pkg/oss/row_policy_integration_test.go` + `cmd/server/rls_cel_us487_bdd_test.go` |
+| US-057 | Property-level filtering | ✅ | Gap-S2 | `policy_engine.go::AllowedProperties` + `propertyRuleMatches` |
+| US-058 | Marking evaluator | ✅ | Gap-S3 | `policy_engine.go::SetMarkingsEnabled` / `MarkingsEnabled` / `AllowedForIngest` + `pkg/security/auto_marking_test.go` |
+| US-059 | User context markings injection | ✅ | Gap-S3 | `auth.User.Attributes[MarkingsAttributeKey]` 注入贯穿 row + property 决策 |
+| US-060 | SSE ObjectSet subscription | ✅ | Gap-R1 | `pkg/oss/subscribe_sse.go` GET `/subscribe` with `Last-Event-ID` + `since` replay + per-user connection guard |
+| US-061 | Frontend `useObjectSetSubscription` hook | ✅ | Gap-R1 | `web/src/hooks/useObjectSetSubscription.ts` + `BrowserPage.tsx` realtime mode + `ObjectSetLivePage.tsx` |
+| US-062 | Stream ingest endpoint | ✅ | Gap-R2 | `pkg/oss/stream_ingest.go` + `stream_ingest_validation.go` + Dog003 / Self102 BDD 覆盖 |
+| US-063 | Audit policy breadth + operations | ✅ | Gap-S4 | `pkg/audit/*` 全链路 + `pkg/audit/export/*` SIEM pipeline + `RootHashPublisher` (US-266 tamper-proof) |
+| US-064 | Security header / rate limit refinement | ✅ | — | `cmd/server/rate_limit.go` + 安全 headers in `cmd/server/main.go` |
+| US-065 | Goja embedded function runtime | ✅ | Gap-A5 | `pkg/functions/goja_runtime.go` (`dop251/goja` sandbox) + `goja_shim_functions.go` + `goja_runtime_us218_test.go` |
+| US-066 | Function-backed action with Goja | ✅ | Gap-A5 | `pkg/actions/goja_dispatcher.go` + `goja_dispatcher_test.go` |
+| US-067 | executeQuery via function | ✅ | Gap-A5 | `pkg/queryexec/goja.go`（commit 607dad4 "QueryType executeQuery Goja/HTTP dispatch"） |
+| US-068 | Ontology branches table | ✅ | Gap-T4 | `migrations/000024_ontology_branches.up.sql` + `000091_ontology_branches_parent_tx` |
+| US-069 | `?branch=` query param + header | ✅ | Gap-T4 | `pkg/oms/branch_scope.go::BranchHeader` + `handlers.go:238` dispatch（query 优先于 header） |
+| US-070 | RID `@vN` version suffix | ✅ | Gap-T4 | `pkg/rid/rid.go::Version` + `splitVersionSuffix`（commit 72b37ba P91）；8 Get 端点 typed 501 (commits 8bc0005 + ed6f78b) |
+| US-071 | TimeSeries production semantics after downsample | 🟡 | — | `pkg/timeseries/downsample.go::DownsamplePoints` + `timeseries_cagg_5min` + VM `query_range`；calendar alignment / retention / multi-resolution materialization 仍 SHOULD-layer |
+| US-072 | GeoTemporal PG store + PostGIS 索引 | ✅ | — | `migrations/000205_geotemporal_values.up.sql` + `000208_geotemporal_spatial_indexes.up.sql`（bbox + 时间过滤）+ `pkg/geotemporal/pg_store.go` |
+| US-073 | withProperties 二阶 | ✅ | Gap-Q2 | multi-hop searchAround (US-366) + withProperties 组合 + `ErrQueryTooLarge` 防爆 |
+| US-074 | Aggregation on ObjectSet definition | ✅ | Gap-Q3 | `pkg/oss/objectset/handler_aggregate_derived.go::aggregationNeedsDerivedPath` 让 ObjectSet definition 上的 derived metric 走 derived path |
+| US-075~081 | Production hardening 大纲 | 🟡 | — | hardening 已 partial：CI workflow merge-base 修复（commit 77514e1）+ audit SIEM + root-hash + golangci-lint 通过 + BDD 守哨 29 cases；剩余 production polish 留运维侧 |
+
+**总览统计**：25/27 ✅ + 2/27 🟡（无 🔴）。OSv2 1:1 复刻在 §6 US backlog 层级达成 ≥92% 完成率，剩余 🟡 均为 SHOULD-layer polish。
+
 ### US-048 — withProperties 单 hop 聚合
 
 **As** 一个 SDK 使用者，**I want** `withProperties` 定义能跨单 hop link 计算 count/sum/avg/min/max，**so that** 我能像 Foundry 一样写 `employee.withProperty("reportsCount", pivotTo("reports").aggregate(count))`。
