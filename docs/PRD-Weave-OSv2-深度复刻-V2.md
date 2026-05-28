@@ -327,12 +327,12 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 剩余：DSL 形式（CEL）的更复杂条件约束未实现，普通声明式约束已满足 Foundry 1:1 范围。
 
 **Gap-T4 — Ontology 分支与语义版本**
-- 现状：`ontology_snapshots` 存在；RID 不含 version，无 branch 概念。
-- 建议：
-  - 引入 `ontology_branches` 表 (`branch_name`, `ontology_rid`, `base_version`, `is_experimental`)
-  - RID 形状加一个可选后缀：`ri.ontology.main.ontology.xyz@v3` 用于读路径（写路径仍默认 HEAD）
-  - API 参数 `?branch=experimental` 或 header `X-Weave-Branch: dev`
-  - 避免真正的写分支 —— 只读分支足够满足 "experimental interface" 场景。
+- 现状：✅ 全部建议已落地（rounds 39 / 91 / 92 / 117 / 118 / 119 / 120 / 121 + Gap-T4 partial）。
+  - **`ontology_branches` 表已建**：migration `000024_ontology_branches.up.sql` 落 `branch_id` / `branch_name` / `ontology_rid` / `base_version` / `is_experimental` 列；`000025_ontology_proposals` 提交 proposal 也跟到 branch；`000091_ontology_branches_parent_tx` 补 `parent_tx` 列做分支谱系；`000086_aip_messages_branch` 让 AIP 消息也带 branch 维度。
+  - **RID `@vN` 后缀解析**：`pkg/rid/rid.go` 的 `Version` 字段 + `splitVersionSuffix` 函数（commit 72b37ba P91 / 镜像 07e304e SDK92），同 ID 不同 `@vN` 视为不同 RID，malformed `@v` 立即拒绝以避免脏数据。
+  - **`?branch=` / `X-Weave-Branch` 读路径**：`pkg/oms/branch_scope.go::BranchHeader` 常量 + handlers.go:238 dispatch（commit 3716931 Gap-T4 partial），query 与 header 同存时 query 优先；handlers_function.go 也尊重 header 让 function dispatch 同步落 branch。
+  - **只读分支的 typed 拒绝**：8 个 Get 端点（GetObjectType + 7 个 sibling）收到 `@vN` 时返回 `501 VersionedLookupNotSupported`（commits 8bc0005 P117 pilot / ed6f78b P119 family），SDK 端 `WeaveVersionedLookupError` 类型化异常（commits 265cffd SDK118 + 61b1d80 SDK120 contract），OpenAPI 在 7 个 Get op 上文档化 501 response（commit 33a8233 P121）。
+- 剩余：写路径仍默认 HEAD（按 PRD 明确"避免真正的写分支"）；branch-level snapshot dump / merge / proposal-driven 写入 等 Foundry 写分支语义仍属 SHOULD 层，不阻塞 1:1 对齐。
 
 ### 4.6 可观测性与运维
 

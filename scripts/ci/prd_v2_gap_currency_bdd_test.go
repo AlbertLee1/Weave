@@ -144,6 +144,19 @@ func TestBDD_PRDV2GapEntriesReflectImplementationReality(t *testing.T) {
 			marker: "completion_ontology_source.go",
 			why:    "Gap-D4 MCP completion/complete protocol method IS implemented (in addition to prompts/list and resources/* listed in the PRD) — pkg/mcp/completion.go dispatches the completion/complete RPC and pkg/mcp/completion_ontology_source.go wires it to the OMS so AI clients see live ontology/objectType apiName suggestions while typing weave://objecttype/<...>/ URIs; BDD coverage in pkg/mcp/completion_bdd_test.go + completion_ontology_source_bdd_test.go (commits 1a1065e partial + fb5f90c follow-up). Only MCP sampling and production auth remain on the SHOULD layer.",
 		},
+		// Round 141 — Gap-T4 stale: PRD still read "RID 不含 version,
+		// 无 branch 概念" even though ALL four suggestions had
+		// landed (ontology_branches table in migration 000024 +
+		// 000091 parent_tx, RID @vN parser in pkg/rid + Python SDK
+		// mirror, X-Weave-Branch header + ?branch= query, and 8
+		// versioned-Get endpoints with typed 501 / typed SDK
+		// exception). Pin the RID parser fn so a regression on the
+		// suffix is caught.
+		{
+			gap:    "Gap-T4",
+			marker: "splitVersionSuffix",
+			why:    "Gap-T4 ontology branching + semantic versioning ALL four PRD suggestions ARE implemented — (1) migration 000024_ontology_branches.up.sql lays branch_id / branch_name / ontology_rid / base_version / is_experimental columns plus 000091_ontology_branches_parent_tx for branch lineage; (2) pkg/rid/rid.go's Version field + splitVersionSuffix parser (commit 72b37ba P91 / mirror 07e304e SDK92) makes 'ri.ontology.main.ontology.xyz@v3' lex; (3) pkg/oms/branch_scope.go::BranchHeader + handlers.go:238 honor ?branch= query and X-Weave-Branch header (commit 3716931 Gap-T4 partial, query wins on conflict); (4) 8 Get endpoints reject @vN with 501 VersionedLookupNotSupported (commits 8bc0005 P117 pilot + ed6f78b P119 family), SDK ships typed WeaveVersionedLookupError (commits 265cffd SDK118 + 61b1d80 SDK120 contract), OpenAPI documents the 501 on 7 Get ops (commit 33a8233 P121). Writes still default to HEAD per the PRD's 'avoid real write branches'.",
+		},
 	}
 
 	for _, c := range cases {
