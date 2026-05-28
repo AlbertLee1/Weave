@@ -157,6 +157,28 @@ func TestBDD_PRDV2GapEntriesReflectImplementationReality(t *testing.T) {
 			marker: "splitVersionSuffix",
 			why:    "Gap-T4 ontology branching + semantic versioning ALL four PRD suggestions ARE implemented — (1) migration 000024_ontology_branches.up.sql lays branch_id / branch_name / ontology_rid / base_version / is_experimental columns plus 000091_ontology_branches_parent_tx for branch lineage; (2) pkg/rid/rid.go's Version field + splitVersionSuffix parser (commit 72b37ba P91 / mirror 07e304e SDK92) makes 'ri.ontology.main.ontology.xyz@v3' lex; (3) pkg/oms/branch_scope.go::BranchHeader + handlers.go:238 honor ?branch= query and X-Weave-Branch header (commit 3716931 Gap-T4 partial, query wins on conflict); (4) 8 Get endpoints reject @vN with 501 VersionedLookupNotSupported (commits 8bc0005 P117 pilot + ed6f78b P119 family), SDK ships typed WeaveVersionedLookupError (commits 265cffd SDK118 + 61b1d80 SDK120 contract), OpenAPI documents the 501 on 7 Get ops (commit 33a8233 P121). Writes still default to HEAD per the PRD's 'avoid real write branches'.",
 		},
+		// Round 142 — Gap-S1/S2/S3 triple-stale: pkg/security/
+		// policy_engine.go exposes Evaluate / AllowedProperties /
+		// SetMarkingsEnabled / AllowedForIngest, wired into the OSS
+		// pipeline (pkg/oss/service_impl.go) with CEL evaluator,
+		// integration + BDD + bench, but the PRD still said
+		// "没挂在 query pipeline" / "无" / "不在主链路". Pin all
+		// three implementation tokens.
+		{
+			gap:    "Gap-S1",
+			marker: "policy_engine.go",
+			why:    "Gap-S1 row-level security IS implemented and wired into the OSS query pipeline — pkg/security/policy_engine.go exposes Engine.Evaluate(ctx, user, oms.ObjectType) (query.Query, error) which pkg/oss/service_impl.go ANDs into the user where clause; CEL DSL in cel_evaluator.go evaluates row predicates; integration tests row_policy_integration_test.go / policy_engine_integration_test.go / row_policy_cel_integration_test.go, aggregate path handlers_aggregate_policy_test.go, BDD rls_cel_us487_bdd_test.go and rls_bench_test.go cover the matrix.",
+		},
+		{
+			gap:    "Gap-S2",
+			marker: "AllowedProperties",
+			why:    "Gap-S2 column/property-level security IS implemented — pkg/security/policy_engine.go AllowedProperties(ctx, user, ot) []string returns the user-scoped permitted property set and propertyRuleMatches(Rule, *auth.User) drives per-property rule matching; pkg/oss/service_impl.go uses the set to filter WireObject serialization.",
+		},
+		{
+			gap:    "Gap-S3",
+			marker: "SetMarkingsEnabled",
+			why:    "Gap-S3 Marking evaluation IS implemented and merged into policy_engine (no separate marking_filter.go) — pkg/security/policy_engine.go SetMarkingsEnabled / MarkingsEnabled / AllowedForIngest take user-context markings (from auth.User.Attributes[MarkingsAttributeKey]) and short-circuit both ingest and row-level decisions; pkg/security/auto_marking_test.go covers inheritance.",
+		},
 	}
 
 	for _, c := range cases {

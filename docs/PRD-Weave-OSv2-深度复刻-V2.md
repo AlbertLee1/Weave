@@ -278,16 +278,16 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 ### 4.3 安全与治理层
 
 **Gap-S1 — 行级安全（Row-Level Security）**
-- 现状：`security_policies` 表 + `policy_filter.go` 文件存在，但**没挂在 query pipeline 上**。
-- 建议：实现 `pkg/security/policy_engine.go`，提供 `Evaluate(ctx, user, objectType) -> BleveQuery` 接口，把返回的 query 与用户 where 子句做 `AND`。
+- 现状：✅ 已落地。`pkg/security/policy_engine.go` 提供 `Engine.Evaluate(ctx, user, oms.ObjectType) (query.Query, error)` 接口（正是 PRD 建议的形状），返回的 BleveQuery 与用户 where 子句在 `pkg/oss/service_impl.go` 主查询路径上做 `AND`；CEL DSL 在 `pkg/security/cel_evaluator.go` 评估 row-level 条件，`pkg/security/policy_cache.go` 缓存 policy 解析、`decision_cache.go` 缓存 per-request decision；集成测试 `pkg/oss/row_policy_integration_test.go` / `policy_engine_integration_test.go` / `row_policy_cel_integration_test.go`、聚合路径 `handlers_aggregate_policy_test.go`、BDD `cmd/server/rls_cel_us487_bdd_test.go`、性能基线 `pkg/security/rls_bench_test.go` 全套覆盖。
+- 剩余：跨实例 policy hot-reload 与租户级 isolation 仍属 Foundry SHOULD 层。
 
 **Gap-S2 — 列级 / 属性级安全**
-- 现状：无。
-- 建议：policy rules 描述 allowed/denied property 列表；在序列化 WireObject 时按用户 context 过滤字段。
+- 现状：✅ 已落地。`pkg/security/policy_engine.go::AllowedProperties(ctx, user, ot) []string` 按用户 context 计算可见 property 集合，内部 `propertyRuleMatches(Rule, *auth.User)` 匹配 policy rule 的 user / role / scope 子句；WireObject 序列化路径（`pkg/oss/service_impl.go`）据此过滤字段。
+- 剩余：动态属性级 marking 衍生与属性级 redaction（masking）仍属 SHOULD 层，由 Gap-S4 audit 流程联动。
 
 **Gap-S3 — Marking 评估链路**
-- 现状：`marking_filter.go` 文件存在，不在主链路。
-- 建议：把 Marking 作为 OSP 的一个输入，合并到 Gap-S1 的 policy_engine。
+- 现状：✅ 已落地。Marking 已并入 `pkg/security/policy_engine.go`：`SetMarkingsEnabled` / `MarkingsEnabled` 控制每 ObjectType 是否启用 marking 过滤，`AllowedForIngest(ctx, user, ot)` 用 user-context markings 阻止越权写入；`pkg/security/auto_marking_test.go` 覆盖自动 marking 继承；用户 context markings 由 `auth.User.Attributes[MarkingsAttributeKey]` 注入并贯穿 row-level + property-level 决策（无单独 `marking_filter.go`，统一在 policy_engine）。
+- 剩余：marking 升级 / 撤销时的反向 propagation 与外部 marking 同步保留运维流程，不影响 1:1 对齐。
 
 **Gap-S4 — Audit policy breadth 与运行硬化**
 - 现状：`pkg/audit`、`audit_events`、`pkg/oms/audited_repository.go`、auth audit、data-access audit、hash-chain verification、admin audit query、retention/export/redaction hooks 已就位。
