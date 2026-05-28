@@ -21,6 +21,7 @@ var chapters = []string{
 	"04-subscription",
 	"05-rag",
 	"06-ws-subscription",
+	"07-builders",
 }
 
 // TestCookbook_StructureMatches asserts every chapter ships both a markdown

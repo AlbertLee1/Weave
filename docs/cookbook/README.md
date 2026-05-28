@@ -12,6 +12,7 @@ edit, and execute against a live `make dev` server.
 | 4 | [Subscription](04-subscription.md) | [`04-subscription.py`](04-subscription.py) | SSE consumer with `lastEventId` resume and exponential backoff |
 | 5 | [RAG](05-rag.md) | [`05-rag.py`](05-rag.py) | Retrieval-augmented generation grounded in ontology objects |
 | 6 | [WS Subscription](06-ws-subscription.md) | [`06-ws-subscription.py`](06-ws-subscription.py) | `WeaveAsyncClient.objects.subscribe` with cursor + replay (US-418) |
+| 7 | [Builders & typed errors](07-builders.md) | [`07-builders.py`](07-builders.py) | `ObjectSetBuilder` / `AggregationAPI` / `criteria_builders` + branching on `WeaveValidationError` / `WeaveVersionedLookupError` (Gap-D1+D2+A3+T4) |
 
 ## Conventions
 
