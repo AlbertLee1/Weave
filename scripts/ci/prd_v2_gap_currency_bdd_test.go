@@ -102,6 +102,15 @@ func TestBDD_PRDV2GapEntriesReflectImplementationReality(t *testing.T) {
 			marker: "pkg/index/mapping_builder.go",
 			why:    "Gap-T1 TypeClass driving Bleve index IS implemented — pkg/index/mapping_builder.go reads property.typeclass to choose analyzer / keyword / skip mapping per US-001 / US-012 / US-040.",
 		},
+		// Round 137 — Gap-Q3 stale: multi-groupBy + accuracy marker
+		// end-to-end coverage IS already in place, the PRD wording
+		// just hadn't caught up. Pin the fixture path so a future
+		// PR that deletes us015 will fail this guard.
+		{
+			gap:    "Gap-Q3",
+			marker: "us015_multi_groupby.json",
+			why:    "Gap-Q3 multi-groupBy + accuracy marker coverage IS implemented — test/foundry_parity/us015_multi_groupby.json (105-doc country×freight×orderDate fixture) drives test/integration/aggregation_multigroupby_test.go::TestMultiGroupBy_NorthwindOrders for the ExactValue × FixedWidth × Duration combo; pkg/oss/aggregation/multi_groupby_test.go covers nested key shape / stable order / null keys; accuracy_test.go::TestAggregationAccuracyMarker asserts ACCURATE vs APPROXIMATE across simple avg / standardDeviation / approximatePercentile / groupBy+truncated leaf / count-only / fits-all-docs.",
+		},
 	}
 
 	for _, c := range cases {

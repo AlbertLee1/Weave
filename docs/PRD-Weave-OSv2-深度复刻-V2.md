@@ -237,9 +237,8 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 建议：实现单 hop 的 count/sum/avg；二 hop 以上 Phase 7 再做。
 
 **Gap-Q3 — Aggregation 多层嵌套 + 精度标记**
-- 现状：multi-groupBy 支持存在，但没有 end-to-end 测试覆盖 "groupBy ExactValue × FixedWidth × Duration" 组合；`accuracy=APPROXIMATE` 标记的触发条件未在测试里断言。
-- 影响：可能导致数字悄悄错误。
-- 建议：加一套基准数据（Northwind orders by {country, quarter, priceBucket}）作为回归。
+- 现状：✅ 已落地。multi-groupBy end-to-end 覆盖在 `test/foundry_parity/us015_multi_groupby.json` (105-doc fixture: 5 countries × 3 quarters × 7 prices = 105 orders) 驱动 `test/integration/aggregation_multigroupby_test.go::TestMultiGroupBy_NorthwindOrders`，三层 groupBy `ExactValue × FixedWidth × Duration` 组合走通 PG-backed OMS → `pkg/index.BuildMapping` → `pkg/oss/aggregation.Engine` 全链路，leaf 行的 count/sum/avg metrics 与手算 expected 一一对齐；`pkg/oss/aggregation/multi_groupby_test.go` 三个单测覆盖嵌套键 shape (`TestMultiGroupBy_ThreeLayerNested`) / 稳定 bucket order (`TestMultiGroupBy_StableBucketOrder`) / null group key 行为 (`TestMultiGroupBy_NullGroupKey`)；`accuracy=APPROXIMATE` 标记的触发条件在 `pkg/oss/aggregation/accuracy_test.go::TestAggregationAccuracyMarker` 6 子场景里全部断言 (simple avg / standardDeviation / approximatePercentile / groupBy + truncated leaf 触发 APPROXIMATE；count-only / fits-all-docs 保持 ACCURATE)。
+- 剩余：documentation 已对齐 implementation；结构性无缺口，进一步的 cube/rollup 风格回归补在 `pkg/oss/aggregation/cube_rollup_test.go`。
 
 **Gap-Q4 — nearestNeighbors 多字段 / 混合搜索**
 - 现状：✅ "filter then KNN" 已支持（CandidatePKs 路由）；✅ 多 vector column（`PropertyIdentifiers []PropertyIdentifier`）已支持（round 49）；✅ `fusionStrategy` 选择 `min`（默认）或 `rrf`（Reciprocal Rank Fusion，k=60）已支持（round 50）。
