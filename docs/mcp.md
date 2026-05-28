@@ -196,7 +196,8 @@ curl -s -X POST http://localhost:9117/mcp \
 #    "capabilities":{
 #      "tools":{"listChanged":false},
 #      "prompts":{"listChanged":false},
-#      "resources":{"listChanged":false,"subscribe":true}},
+#      "resources":{"listChanged":false,"subscribe":true},
+#      "completions":{}},
 #    "serverInfo":{"name":"weave-mcp","version":"0.1.0"}}}
 
 # 2. tools/list
@@ -321,6 +322,49 @@ recording the subscription, so malformed or unknown resources return a
 JSON-RPC error instead of a silent success. `resources/unsubscribe` is
 idempotent and succeeds even if the caller has already removed the
 subscription.
+
+## Completion
+
+`completion/complete` lets AI clients request real-time URI suggestions as
+the user types. Weave wires its OMS-backed completion source to two URI
+shapes — bare resource refs (`weave://ontology/`,
+`weave://objecttype/<ontology>/`) so that as the operator types a
+`weave://...` URI into a tool argument, the client can pre-fill the
+catalogue without round-tripping a separate `resources/list`:
+
+- `weave://ontology/` — completes to the list of ontology `apiName`s the
+  caller can see.
+- `weave://objecttype/<ontology>/` — completes to the ObjectType
+  `apiName`s defined under that ontology.
+
+The response shape mirrors the MCP spec (`completion.values` array,
+`hasMore` flag, `total` field). Empty `argument.value` enumerates the full
+visible set up to a server-side cap; non-empty input prefix-filters
+case-sensitively. Unknown URI shapes return an empty `values` array
+without raising an error so the typing-time client never sees a hard fail
+just because the user is still mid-word.
+
+```bash
+# completion/complete for ontology apiNames the caller can see
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":6,"method":"completion/complete","params":{
+        "ref":{"type":"ref/resource","uri":"weave://ontology/"},
+        "argument":{"name":"value","value":""}}}'
+
+# completion/complete for ObjectType apiNames under a known ontology
+curl -s -X POST http://localhost:9117/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":7,"method":"completion/complete","params":{
+        "ref":{"type":"ref/resource","uri":"weave://objecttype/northwind/"},
+        "argument":{"name":"value","value":"Empl"}}}'
+```
+
+Implementation: `pkg/mcp/completion.go` dispatches the RPC and
+`pkg/mcp/completion_ontology_source.go` wires the OMS-backed source so the
+suggestions reflect live metadata (no stale lookup tables). BDD coverage
+in `pkg/mcp/completion_bdd_test.go` +
+`pkg/mcp/completion_ontology_source_bdd_test.go` (Gap-D4 done).
 
 ## Limitations (MVP)
 
