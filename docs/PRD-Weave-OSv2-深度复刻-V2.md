@@ -362,8 +362,8 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 建议：按 US-046 类似模式补齐。
 
 **Gap-D3 — CLI action / aggregate / objectset 深度**
-- 现状：已暴露 `weave action apply`、`weave aggregate`、`weave objectset load`、`weave objectset create-temporary`，入口分别在 `cmd/weave-cli/cmd_action.go`、`cmd/weave-cli/cmd_aggregate.go`、`cmd/weave-cli/cmd_objectset.go`，并由 `cmd/weave-cli/cli_us304_test.go` 覆盖。
-- 建议：补 `docs/cli.md` 的 action/aggregate/objectset 命令参考、常用 body 模板、可能的 `objectset run` 便捷别名，以及更丰富的 table 输出；这些属于 remaining depth gaps，不是缺失入口。
+- 现状：✅ 已落地（commit fc6ef44）。`weave action apply`、`weave aggregate`、`weave objectset load`、`weave objectset create-temporary` 完整入口在 `cmd/weave-cli/cmd_action.go` / `cmd_aggregate.go` / `cmd_objectset.go`，由 `cmd/weave-cli/cli_us304_test.go` 覆盖；`docs/cli.md` 在 `### weave action apply` (L141) / `### weave aggregate` (L177) / `### weave objectset <load|create-temporary>` (L220) 三个章节提供命令参考 + 常用 body 模板 + 真实 northwind 示例（131 行 docs 改动）；BDD 守哨 `scripts/ci/cli_docs_bdd_test.go` 防止任一章节被误删或 wording drift。
+- 剩余：`objectset run` 便捷别名与更丰富的 table 输出仍属可选 polish，不阻塞 1:1 对齐。
 
 **Gap-D4 — MCP prompts / resources / sampling**
 - 现状：`pkg/mcp/prompts.go` 已实现 `prompts/list` / `prompts/get`，从 OMS ActionType 元数据合成 prompt；`pkg/mcp/resources.go` 已实现 `resources/list` / `resources/read` / `resources/subscribe` / `resources/unsubscribe`，能列出 ontology、ObjectType 与临时 ObjectSet 资源，ObjectType URI 形如 `weave://objecttype/<ontology>/<objectType>`；对外契约见 `docs/mcp.md`。

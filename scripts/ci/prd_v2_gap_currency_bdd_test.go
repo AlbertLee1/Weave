@@ -122,6 +122,17 @@ func TestBDD_PRDV2GapEntriesReflectImplementationReality(t *testing.T) {
 			marker: "parameterCompareValue",
 			why:    "Gap-A3 cross-field submission-criteria expressiveness IS implemented — pkg/actions/criteria.go parameterCompareValue (line 69) drives the `case \"parameterCompare\"` dispatch (line 129) for gt/gte/lt/lte/eq/neq comparisons; AND/OR/NOT composite groups round out boolean algebra; admin save validates the criteria tree structurally; SDK ships typed WeaveValidationError + criteria builders (always/parameterMatch/parameterCompare/and_/or_/not_) — only CEL-lite / Goja-embedded forms remain on the Gap-A5 SHOULD layer.",
 		},
+		// Round 139 — Gap-D3 stale: docs/cli.md action/aggregate/
+		// objectset reference sections + body templates + northwind
+		// examples landed in commit fc6ef44 (131 doc lines + the
+		// cli_docs_bdd_test.go guard), but the PRD still said
+		// "建议补". Pin the BDD guard path so the doc cannot be
+		// silently regressed.
+		{
+			gap:    "Gap-D3",
+			marker: "cli_docs_bdd_test.go",
+			why:    "Gap-D3 CLI action/aggregate/objectset depth IS implemented — commit fc6ef44 added docs/cli.md sections '### weave action apply' (L141) / '### weave aggregate' (L177) / '### weave objectset <load|create-temporary>' (L220) with command reference + body templates + real northwind examples (131 doc lines), plus scripts/ci/cli_docs_bdd_test.go BDD guard that fails loudly if any of those headings disappears.",
+		},
 	}
 
 	for _, c := range cases {
