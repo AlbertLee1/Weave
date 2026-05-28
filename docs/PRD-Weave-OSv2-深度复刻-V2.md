@@ -261,9 +261,11 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 剩余：跨批次"intent token"风格的语义合并保留 Foundry SHOULD 层。
 
 **Gap-A3 — Submission criteria 表达力**
-- 现状：`criteria.go` 支持基础比较，无法表达"参数 A > 参数 B" 等跨字段约束。
-- 影响：Action 验证被迫在 rules 里写。
-- 建议：引入一个迷你表达式 DSL（CEL-lite），或直接嵌入 Goja。
+- 现状：✅ 已落地（rounds 133 / 134 / 135 / 136 + Gap-A3 partial）。`pkg/actions/criteria.go` 在基础 `parameterMatch` / `always` 之外补齐了三块表达力：
+  - **`parameterCompare`** 跨字段比较运算（`gt` / `gte` / `lt` / `lte` / `eq` / `neq`）：`parameterCompareValue` (criteria.go:69) 与 `evaluateSingleCriteria` 分发（`case "parameterCompare"` criteria.go:129）覆盖 "参数 A > 参数 B" 等约束（commit 9bd0f2b）。
+  - **`and` / `or` / `not`** 复合 group criteria（commit c8bb4ba），构成完整 boolean 代数，可任意嵌套上面两类原子。
+  - **入口校验 + SDK 闭环**：admin save 时结构化 reject 不合法 criteria 树（commit a0a8079），SDK 端伴随 `WeaveValidationError` 类型化 400 InvalidParameter（commit c0bb215），并提供 `criteria builders`（`always` / `parameterMatch` / `parameterCompare` / `and_` / `or_` / `not_`）让 Python SDK 用户拼装（commit c7725c1）。
+- 剩余：CEL-lite 形式的更复杂表达式（算术、函数调用、字符串操作）与 Goja 嵌入仍保留为 Foundry SHOULD 层，被 Gap-A5 Function-backed action 跟进。
 
 **Gap-A4 — Side effects 真实触发**
 - 现状：✅ 已落地。`pkg/actions/effects.go` 实现 webhook + log 两种 side-effect dispatcher：webhook 路径覆盖完整重试循环（exponential backoff、429/408/5xx 重试、4xx fail-fast，round 30）+ per-effect outcomes 持久化到 `action_logs.side_effect_status` JSONB 列（round 31）+ DLQ 表 `action_log_side_effect_dlq` 失败行重放（round 33）+ admin replay 端点（round 35）+ round 53 全链路 W3C TraceContext 注入与每次 attempt 一个 client-kind span。

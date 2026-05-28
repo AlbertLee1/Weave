@@ -111,6 +111,17 @@ func TestBDD_PRDV2GapEntriesReflectImplementationReality(t *testing.T) {
 			marker: "us015_multi_groupby.json",
 			why:    "Gap-Q3 multi-groupBy + accuracy marker coverage IS implemented — test/foundry_parity/us015_multi_groupby.json (105-doc country×freight×orderDate fixture) drives test/integration/aggregation_multigroupby_test.go::TestMultiGroupBy_NorthwindOrders for the ExactValue × FixedWidth × Duration combo; pkg/oss/aggregation/multi_groupby_test.go covers nested key shape / stable order / null keys; accuracy_test.go::TestAggregationAccuracyMarker asserts ACCURATE vs APPROXIMATE across simple avg / standardDeviation / approximatePercentile / groupBy+truncated leaf / count-only / fits-all-docs.",
 		},
+		// Round 138 — Gap-A3 stale: parameterCompare + AND/OR/NOT
+		// composite group criteria + save-time validation + typed
+		// SDK exception were all delivered (commits 9bd0f2b /
+		// c8bb4ba / a0a8079 / c0bb215 / c7725c1) but the PRD still
+		// said "无法表达 cross-field constraints". Pin the
+		// implementation type so a future revert is caught loudly.
+		{
+			gap:    "Gap-A3",
+			marker: "parameterCompareValue",
+			why:    "Gap-A3 cross-field submission-criteria expressiveness IS implemented — pkg/actions/criteria.go parameterCompareValue (line 69) drives the `case \"parameterCompare\"` dispatch (line 129) for gt/gte/lt/lte/eq/neq comparisons; AND/OR/NOT composite groups round out boolean algebra; admin save validates the criteria tree structurally; SDK ships typed WeaveValidationError + criteria builders (always/parameterMatch/parameterCompare/and_/or_/not_) — only CEL-lite / Goja-embedded forms remain on the Gap-A5 SHOULD layer.",
+		},
 	}
 
 	for _, c := range cases {
