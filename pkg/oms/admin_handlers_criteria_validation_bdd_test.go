@@ -27,34 +27,34 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given an admin POST CreateActionType with valid criteria
-//         and a wired ValidateCriteriaSchema
-//   When  the handler runs
-//   Then  the action type is created (201) and persisted with the
-//         criteria intact
+//	Given an admin POST CreateActionType with valid criteria
+//	      and a wired ValidateCriteriaSchema
+//	When  the handler runs
+//	Then  the action type is created (201) and persisted with the
+//	      criteria intact
 //
-//   Given an admin POST CreateActionType with an unknown
-//         submissionCriteria type
-//   When  the handler runs
-//   Then  the response is 400 InvalidParameter naming the bad type
-//         AND no row is persisted
+//	Given an admin POST CreateActionType with an unknown
+//	      submissionCriteria type
+//	When  the handler runs
+//	Then  the response is 400 InvalidParameter naming the bad type
+//	      AND no row is persisted
 //
-//   Given an admin POST CreateActionType with a parameterMatch
-//         missing the parameter field
-//   When  the handler runs
-//   Then  the response is 400 InvalidParameter mentioning
-//         "parameter" AND no row is persisted
+//	Given an admin POST CreateActionType with a parameterMatch
+//	      missing the parameter field
+//	When  the handler runs
+//	Then  the response is 400 InvalidParameter mentioning
+//	      "parameter" AND no row is persisted
 //
-//   Given an admin PUT UpdateActionType with a group(not) holding
-//         two children (invalid NOT)
-//   When  the handler runs
-//   Then  the response is 400 InvalidParameter mentioning NOT
-//         AND the persisted row is unchanged
+//	Given an admin PUT UpdateActionType with a group(not) holding
+//	      two children (invalid NOT)
+//	When  the handler runs
+//	Then  the response is 400 InvalidParameter mentioning NOT
+//	      AND the persisted row is unchanged
 //
-//   Given an admin POST CreateActionType WITHOUT a wired validator
-//   When  the handler runs with bad criteria
-//   Then  the row is created with the bad criteria (degraded mode
-//         preserves legacy behavior — no implicit enforcement)
+//	Given an admin POST CreateActionType WITHOUT a wired validator
+//	When  the handler runs with bad criteria
+//	Then  the row is created with the bad criteria (degraded mode
+//	      preserves legacy behavior — no implicit enforcement)
 //
 // Tests written FIRST (RED) before the handler is wired to call
 // the validator.

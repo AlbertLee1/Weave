@@ -113,7 +113,7 @@ func TestBDD_ConnectionsHandler(t *testing.T) {
 	t.Run("Provider invoked per request (not cached)", func(t *testing.T) {
 		// Round-131 contract: each request re-reads live counters.
 		// Confirm by mutating a captured value between calls.
-		var counter int32 = 0
+		var counter int32
 		SetStatsProvider(func() ConnectionStats {
 			counter++
 			return ConnectionStats{

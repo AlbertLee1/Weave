@@ -34,12 +34,12 @@ func TestContract_BatchByRidSymmetry(t *testing.T) {
 		"/api/v2/ontologies/{ontologyApiName}/objectTypes/getByRidBatch",
 		"/api/v2/ontologies/{ontologyApiName}/actionTypes/getByRidBatch",
 		// Round 79-89 closure wave (8-of-8 symmetry):
-		"/api/v2/ontologies/{ontologyApiName}/linkTypes/getByRidBatch",          // round 79
-		"/api/v2/ontologies/{ontologyApiName}/interfaceTypes/getByRidBatch",     // round 81
-		"/api/v2/ontologies/{ontologyApiName}/valueTypes/getByRidBatch",         // round 83
+		"/api/v2/ontologies/{ontologyApiName}/linkTypes/getByRidBatch",           // round 79
+		"/api/v2/ontologies/{ontologyApiName}/interfaceTypes/getByRidBatch",      // round 81
+		"/api/v2/ontologies/{ontologyApiName}/valueTypes/getByRidBatch",          // round 83
 		"/api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/getByRidBatch", // round 85
-		"/api/v2/ontologies/{ontologyApiName}/typeGroups/getByRidBatch",         // round 87
-		"/api/v2/ontologies/{ontologyApiName}/queryTypes/getByRidBatch",         // round 89
+		"/api/v2/ontologies/{ontologyApiName}/typeGroups/getByRidBatch",          // round 87
+		"/api/v2/ontologies/{ontologyApiName}/queryTypes/getByRidBatch",          // round 89
 	}
 
 	router := newContractTestRouter(t)

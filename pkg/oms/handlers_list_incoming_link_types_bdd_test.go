@@ -21,10 +21,10 @@ import (
 //
 // Wire shape (mirror of ListOutgoingLinkTypes):
 //
-//   GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/incomingLinkTypes
-//     200 + {"data": [LinkType, LinkType, ...]} — link types
-//         whose TargetObjectType matches the resolved ObjectType
-//     404 + ObjectTypeNotFound when the apiName is unknown
+//	GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/incomingLinkTypes
+//	  200 + {"data": [LinkType, LinkType, ...]} — link types
+//	      whose TargetObjectType matches the resolved ObjectType
+//	  404 + ObjectTypeNotFound when the apiName is unknown
 //
 // Scenarios:
 //   - Target ObjectType has 2 incoming links: returns both.

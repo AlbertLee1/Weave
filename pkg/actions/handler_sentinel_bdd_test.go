@@ -34,22 +34,22 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given an action type that doesn't exist in the ontology
-//   When  POST /api/v2/ontologies/{o}/actions/{action}/apply
-//   Then  HTTP 404 with errorName "ActionTypeNotFound"
+//	Given an action type that doesn't exist in the ontology
+//	When  POST /api/v2/ontologies/{o}/actions/{action}/apply
+//	Then  HTTP 404 with errorName "ActionTypeNotFound"
 //
-//   Given a known action type but parameters missing a required field
-//   When  the handler runs
-//   Then  HTTP 400 with errorName "InvalidActionParameters" and
-//         reason mentioning the missing field
+//	Given a known action type but parameters missing a required field
+//	When  the handler runs
+//	Then  HTTP 400 with errorName "InvalidActionParameters" and
+//	      reason mentioning the missing field
 //
-//   Given a known action type but parameters with a wrong type
-//   When  the handler runs
-//   Then  HTTP 400 with errorName "InvalidActionParameters"
+//	Given a known action type but parameters with a wrong type
+//	When  the handler runs
+//	Then  HTTP 400 with errorName "InvalidActionParameters"
 //
-//   Regression guard: round-31's TestExecutor_Apply_ValidationError
-//   still passes (existing validation tests continue to work via the
-//   new sentinel routing).
+//	Regression guard: round-31's TestExecutor_Apply_ValidationError
+//	still passes (existing validation tests continue to work via the
+//	new sentinel routing).
 func TestBDD_ApplyAction_SplitsUserSideFromServerSide(t *testing.T) {
 	t.Run("unknown action type → 404 ActionTypeNotFound", func(t *testing.T) {
 		repo := &mockOmsRepo{actionTypes: []oms.ActionType{}}

@@ -21,10 +21,10 @@ import (
 //   - Single-column path remains unchanged (regression).
 //   - Two-column query runs one store call per column and the fused
 //     result keeps the best (lowest) distance per PK.
-//   - K is honoured on the fused output, not per-column.
+//   - K is honored on the fused output, not per-column.
 //   - Specifying BOTH the singular AND plural fields is rejected at
 //     Validate() time so the call shape is unambiguous.
-//   - Neither field set is rejected (existing behaviour preserved).
+//   - Neither field set is rejected (existing behavior preserved).
 type fusionFakeVectorStore struct {
 	// matchesByProperty maps a property API name to the matches the
 	// store should return for that property. Lets a single fake serve
@@ -196,7 +196,7 @@ func TestBDD_NearestNeighbors_ValidateRejectsBothSingularAndPlural(t *testing.T)
 			Type:       "base",
 			ObjectType: "employee",
 		},
-		PropertyIdentifier:  &objectset.PropertyIdentifier{Property: struct {
+		PropertyIdentifier: &objectset.PropertyIdentifier{Property: struct {
 			APIName string `json:"apiName"`
 		}{APIName: "a"}},
 		PropertyIdentifiers: []objectset.PropertyIdentifier{mkPropID("b")},

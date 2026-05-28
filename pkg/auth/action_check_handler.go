@@ -25,7 +25,7 @@ type ResolvedActionType struct {
 // pkg/auth stays free of pkg/oms imports (which already imports
 // pkg/auth — a cycle is forbidden).
 type ActionTypeResolver interface {
-	GetActionType(ctx context.Context, ontologyRID, actionApiNameOrRID string) (*ResolvedActionType, error)
+	GetActionType(ctx context.Context, ontologyRID, actionAPINameOrRID string) (*ResolvedActionType, error)
 }
 
 // ErrActionTypeNotFound is the sentinel resolvers return when the
@@ -54,11 +54,11 @@ type ActionCheckResponse struct {
 // Foundry's SDK exposes this so the SPA can disable a per-row
 // "Apply Action" button without round-tripping a real apply call.
 // Distinct from round-97 PermissionsCheckHandler in two ways:
-//   1. Validates that the action type EXISTS (404 if not) — a raw
-//      permission probe always returns granted/denied regardless of
-//      whether the action is real
-//   2. Single GET (no body) so it fits naturally in row-render code
-//      where a POST + body would be awkward
+//  1. Validates that the action type EXISTS (404 if not) — a raw
+//     permission probe always returns granted/denied regardless of
+//     whether the action is real
+//  2. Single GET (no body) so it fits naturally in row-render code
+//     where a POST + body would be awkward
 //
 // 401 when no User. 404 OntologyNotFound when ontology missing,
 // 404 ActionTypeNotFound when action missing. Otherwise 200 with
@@ -74,20 +74,20 @@ func ActionCheckHandler(ontResolver OntologyResolver, actionResolver ActionTypeR
 			return
 		}
 
-		ontApiName := chi.URLParam(r, "ontologyApiName")
-		actionApiName := chi.URLParam(r, "actionApiName")
-		if actionApiName == "" {
+		ontAPIName := chi.URLParam(r, "ontologyApiName")
+		actionAPIName := chi.URLParam(r, "actionApiName")
+		if actionAPIName == "" {
 			apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingActionApiName", map[string]string{
-				"reason": "actionApiName path parameter is required",
+				"reason": "actionAPIName path parameter is required",
 			}))
 			return
 		}
 
-		o, err := ontResolver.GetOntology(r.Context(), ontApiName)
+		o, err := ontResolver.GetOntology(r.Context(), ontAPIName)
 		if err != nil {
 			if errors.Is(err, ErrOntologyNotFound) {
 				apierror.WriteJSON(w, apierror.NewNotFound("OntologyNotFound", map[string]string{
-					"ontologyApiName": ontApiName,
+					"ontologyApiName": ontAPIName,
 				}))
 				return
 			}
@@ -95,12 +95,12 @@ func ActionCheckHandler(ontResolver OntologyResolver, actionResolver ActionTypeR
 			return
 		}
 
-		at, err := actionResolver.GetActionType(r.Context(), o.RID, actionApiName)
+		at, err := actionResolver.GetActionType(r.Context(), o.RID, actionAPIName)
 		if err != nil {
 			if errors.Is(err, ErrActionTypeNotFound) {
 				apierror.WriteJSON(w, apierror.NewNotFound("ActionTypeNotFound", map[string]string{
-					"ontologyApiName": ontApiName,
-					"actionApiName":   actionApiName,
+					"ontologyApiName": ontAPIName,
+					"actionApiName":   actionAPIName,
 				}))
 				return
 			}

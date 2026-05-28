@@ -96,7 +96,7 @@ func NewInternal(name string, params map[string]string) *APIError {
 }
 
 // NewNotImplemented creates an UNIMPLEMENTED API error (HTTP 501).
-// Used by surfaces that recognise the request shape but don't yet
+// Used by surfaces that recognize the request shape but don't yet
 // support the requested variant — e.g. round-117 GetObjectType
 // returning this for versioned-RID lookups (Gap-T4 step-2): the
 // system knows what @vN means but the snapshot system isn't built

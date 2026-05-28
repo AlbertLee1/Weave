@@ -38,7 +38,7 @@ type ServiceImpl struct {
 	// policyEngine is the optional query-time row-level policy compiler
 	// (US-046). When attached every Load/Search path AND-combines the
 	// per-user policy query into the Bleve request BEFORE the search runs,
-	// so denied rows never materialise. A nil engine short-circuits to
+	// so denied rows never materialize. A nil engine short-circuits to
 	// bleve.NewMatchAllQuery() so existing callers are unaffected.
 	policyEngine *security.Engine
 
@@ -105,7 +105,7 @@ func (s *ServiceImpl) SetRowPolicyEngine(e *rls.Engine) {
 
 // SetColumnMaskEngine attaches the US-257 column_masks engine. Compiled
 // transforms are applied to every WireObject returned from the service's
-// read paths BEFORE serialisation, so masked property values reach the wire
+// read paths BEFORE serialization, so masked property values reach the wire
 // but never leak to the caller's network. Pass nil to detach.
 func (s *ServiceImpl) SetColumnMaskEngine(e *masking.Engine) {
 	s.columnMaskEngine = e
@@ -716,7 +716,7 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	}
 	page.TotalCount = strconv.Itoa(int(result.Total))
 
-	// US-236: materialise facet buckets. Every requested field is
+	// US-236: materialize facet buckets. Every requested field is
 	// registered — including ones with zero matching terms — so SDK
 	// consumers see a stable key set. Map iteration order over the
 	// underlying `map[string]*search.FacetResult` is nondeterministic;
@@ -796,7 +796,7 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 //  2. Filtered path (req.Where != nil): run the same where → Bleve
 //     query → mergePolicyQuery pipeline SearchObjects uses, but with
 //     Size=0 so Bleve returns the total match count without paying
-//     to materialise documents. This is the path Foundry's OSv2
+//     to materialize documents. This is the path Foundry's OSv2
 //     count endpoint takes on every request, and it is the only
 //     path that respects the row-level policy filter — never let a
 //     filtered count short-circuit through DocCount, or a user with

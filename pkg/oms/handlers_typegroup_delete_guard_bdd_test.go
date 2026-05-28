@@ -24,11 +24,11 @@ import (
 //
 // Wire shape:
 //
-//   DELETE /api/admin/type-groups/{tgRID}
-//     204 + empty body                  → was unused, row removed
-//     409 TypeGroupInUse + {typeGroupRid, usageCount}
-//                                       → at least one ObjectType
-//                                         still assigned; refused
+//	DELETE /api/admin/type-groups/{tgRID}
+//	  204 + empty body                  → was unused, row removed
+//	  409 TypeGroupInUse + {typeGroupRid, usageCount}
+//	                                    → at least one ObjectType
+//	                                      still assigned; refused
 //
 // Scenarios:
 //   - Unused TypeGroup deletes cleanly with 204.

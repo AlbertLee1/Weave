@@ -29,7 +29,7 @@ type RID struct {
 // versionPattern matches a canonical version digit string: positive
 // decimal, no leading zero. Rejects "0", "0123" so persisted RIDs stay
 // byte-identical across reads (same rationale as uuidPattern).
-var versionPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
+var versionPattern = regexp.MustCompile(`^[1-9]\d*$`)
 
 // uuidPattern is the canonical RFC 4122 textual form, lowercase only.
 // We intentionally reject uppercase to keep persisted RIDs byte-identical

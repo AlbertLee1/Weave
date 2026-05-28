@@ -16,7 +16,7 @@ import (
 // every N seconds; today the SPA has to GET
 // /api/v2/notifications?unread=true and `length` the response
 // just to render a single integer. With 100 users × 100
-// notifications each, this means 10K rows serialised + parsed +
+// notifications each, this means 10K rows serialized + parsed +
 // GC'd per minute for a badge that only needs an int. A
 // dedicated COUNT(*) endpoint backed by the existing
 // idx_notifications_user_unread partial index returns the answer
@@ -24,9 +24,9 @@ import (
 //
 // Wire shape:
 //
-//   GET /api/v2/notifications/unread-count
-//     200 + {count: N}  → number of unread rows belonging to the
-//                         authenticated user
+//	GET /api/v2/notifications/unread-count
+//	  200 + {count: N}  → number of unread rows belonging to the
+//	                      authenticated user
 //
 // Scenarios:
 //   - Empty inbox returns count=0 (empty array surfaces as 0).
@@ -132,7 +132,7 @@ func TestBDD_NotificationsUnreadCount(t *testing.T) {
 
 	t.Run("Response body carries count only, no data array", func(t *testing.T) {
 		// Perf invariant: the count endpoint must NEVER return rows.
-		// Foundry's navbar polls every few seconds; serialising even
+		// Foundry's navbar polls every few seconds; serializing even
 		// a few KB of row data per poll defeats the point of the
 		// endpoint.
 		now := time.Now().UTC()

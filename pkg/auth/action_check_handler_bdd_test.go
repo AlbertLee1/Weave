@@ -48,7 +48,7 @@ func TestBDD_ActionCheckHandler(t *testing.T) {
 		ontRID = "ri.ontology.main.ontology.northwind"
 		actRID = "ri.action-type.main.createCustomer"
 	)
-	ontResolver := &fakeResolver{byApiName: map[string]*auth.ResolvedOntology{
+	ontResolver := &fakeResolver{byAPIName: map[string]*auth.ResolvedOntology{
 		"northwind": {RID: ontRID, APIName: "northwind", DisplayName: "Northwind"},
 	}}
 	actResolver := &fakeActionResolver{byKey: map[string]*auth.ResolvedActionType{

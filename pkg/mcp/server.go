@@ -155,9 +155,9 @@ func (s *Server) handleInitialize(req *Request) *Response {
 	result := map[string]any{
 		"protocolVersion": ProtocolVersion,
 		"capabilities": map[string]any{
-			"tools":      map[string]any{"listChanged": false},
-			"resources":  map[string]any{"listChanged": false, "subscribe": true},
-			"prompts":    map[string]any{"listChanged": false},
+			"tools":       map[string]any{"listChanged": false},
+			"resources":   map[string]any{"listChanged": false, "subscribe": true},
+			"prompts":     map[string]any{"listChanged": false},
 			"completions": map[string]any{},
 		},
 		"serverInfo": map[string]any{

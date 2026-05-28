@@ -28,9 +28,9 @@ import (
 //
 // Wire shape:
 //
-//   GET /api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceRid}/objectTypes
-//     200 + {"data": [ObjectType, ObjectType, ...]}
-//         non-nil empty when interface has no implementors
+//	GET /api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceRid}/objectTypes
+//	  200 + {"data": [ObjectType, ObjectType, ...]}
+//	      non-nil empty when interface has no implementors
 //
 // Scenarios:
 //   - Known interface with 3 implementors returns all three.
@@ -38,7 +38,7 @@ import (
 //     per the round-68/69/73 pattern.
 //   - The reverse-direction handler stays untouched (regression
 //     guard so the new endpoint doesn't accidentally drift the
-//     existing one's behaviour).
+//     existing one's behavior).
 //   - Object-types from other interfaces don't leak in.
 //   - Response shape is {data: [...]}, not a bare array — matches
 //     the existing OMS list-endpoint convention so SDK

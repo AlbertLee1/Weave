@@ -24,7 +24,7 @@ type NNVectorQuery struct {
 	Model           string
 }
 
-// NearestNeighborMatch is one row of an nearest-neighbours search. Distance
+// NearestNeighborMatch is one row of an nearest-neighbors search. Distance
 // is the cosine distance between the query vector and the stored embedding.
 type NearestNeighborMatch struct {
 	PrimaryKey string
@@ -111,7 +111,7 @@ func (e *Executor) executeNearestNeighbors(ctx context.Context, def *Definition)
 	}
 
 	// Single-column fast path preserves byte-for-byte the legacy
-	// behaviour — same store call shape, same ordering.
+	// behavior — same store call shape, same ordering.
 	if len(propAPINames) == 1 {
 		q := baseQ
 		q.PropertyAPIName = propAPINames[0]

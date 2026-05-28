@@ -208,14 +208,14 @@ type CreatePropertyRequest struct {
 	// Classification (US-262) is an optional label from KnownClassifications().
 	// Empty means "unspecified". Unknown labels are rejected 400.
 	Classification string `json:"classification,omitempty"`
-	// SharedPropertyTypeApiName (round 55) binds the Property to a
+	// SharedPropertyTypeAPIName (round 55) binds the Property to a
 	// SharedProperty in the same ontology by api-name. When set, the
 	// handler resolves the api-name → RID, validates that baseType and
 	// isArray match the SharedProperty exactly, and stores the
 	// resolved RID on Property.SharedPropertyRID. Mismatches are
 	// rejected at write time so admins can't ship an inconsistent
 	// schema that silently produces wrong-typed loads later.
-	SharedPropertyTypeApiName string `json:"sharedPropertyTypeApiName,omitempty"`
+	SharedPropertyTypeAPIName string `json:"sharedPropertyTypeApiName,omitempty"`
 }
 
 // CreateLinkTypeRequest is the request body for creating a link type.
@@ -233,7 +233,7 @@ type CreateLinkTypeRequest struct {
 	// PropagateMarkings (US-261) opts the LinkType into automatic marking
 	// inheritance: every LINK_CREATE event copies the source object's
 	// `_markings` set into the target's. Default false preserves the
-	// pre-US-261 behaviour where link creation never touches markings.
+	// pre-US-261 behavior where link creation never touches markings.
 	PropagateMarkings bool `json:"propagateMarkings,omitempty"`
 	// TypeClasses (VTX-010) tags the LinkType with Vertex-graph rendering
 	// labels (see oms.KnownVertexLinkTypeClasses). Unknown tags are rejected
@@ -760,13 +760,13 @@ func (h *OMSHandler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Round 55: resolve sharedPropertyTypeApiName → RID inside the
+	// Round 55: resolve sharedPropertyTypeAPIName → RID inside the
 	// owning ontology and validate baseType / isArray match the
 	// SharedProperty. Resolution happens BEFORE any write so a
 	// failure leaves the repo untouched. Empty field = no binding,
-	// preserving the round-54-era behaviour bit-for-bit.
+	// preserving the round-54-era behavior bit-for-bit.
 	var resolvedSharedPropertyRID string
-	if req.SharedPropertyTypeApiName != "" {
+	if req.SharedPropertyTypeAPIName != "" {
 		ot, otErr := h.repo.GetObjectType(r.Context(), objectTypeRID)
 		if otErr != nil || ot == nil {
 			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
@@ -781,7 +781,7 @@ func (h *OMSHandler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 		}
 		var matched *SharedProperty
 		for i := range spList {
-			if spList[i].APIName == req.SharedPropertyTypeApiName {
+			if spList[i].APIName == req.SharedPropertyTypeAPIName {
 				matched = &spList[i]
 				break
 			}
@@ -789,13 +789,13 @@ func (h *OMSHandler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 		if matched == nil {
 			apierror.WriteJSON(w, apierror.NewInvalidParameter("SharedPropertyTypeNotFound", map[string]string{
 				"ontology":           ot.OntologyRID,
-				"sharedPropertyType": req.SharedPropertyTypeApiName,
+				"sharedPropertyType": req.SharedPropertyTypeAPIName,
 			}))
 			return
 		}
 		if matched.BaseType != req.BaseType {
 			apierror.WriteJSON(w, apierror.NewInvalidParameter("SharedPropertyTypeMismatch", map[string]string{
-				"sharedPropertyType":     req.SharedPropertyTypeApiName,
+				"sharedPropertyType":     req.SharedPropertyTypeAPIName,
 				"sharedPropertyBaseType": matched.BaseType,
 				"propertyBaseType":       req.BaseType,
 			}))
@@ -803,7 +803,7 @@ func (h *OMSHandler) CreateProperty(w http.ResponseWriter, r *http.Request) {
 		}
 		if matched.IsArray != req.IsArray {
 			apierror.WriteJSON(w, apierror.NewInvalidParameter("SharedPropertyTypeMismatch", map[string]string{
-				"sharedPropertyType":    req.SharedPropertyTypeApiName,
+				"sharedPropertyType":    req.SharedPropertyTypeAPIName,
 				"sharedPropertyIsArray": strconv.FormatBool(matched.IsArray),
 				"propertyIsArray":       strconv.FormatBool(req.IsArray),
 			}))
@@ -1605,9 +1605,9 @@ func (h *OMSHandler) DeleteActionType(w http.ResponseWriter, r *http.Request) {
 
 // ListAllLinkTypes handles GET /api/admin/ontologies/{ontologyApiName}/linkTypes.
 func (h *OMSHandler) ListAllLinkTypes(w http.ResponseWriter, r *http.Request) {
-	ontologyApiName := chi.URLParam(r, "ontologyApiName")
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
 
-	linkTypes, err := h.repo.ListLinkTypes(r.Context(), ontologyApiName)
+	linkTypes, err := h.repo.ListLinkTypes(r.Context(), ontologyAPIName)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("ListLinkTypesFailed", nil))
 		return
@@ -1629,15 +1629,15 @@ func (h *OMSHandler) ListAllLinkTypes(w http.ResponseWriter, r *http.Request) {
 // had to parse the bulky /fullMetadata response. This restores
 // access at the canonical Foundry path. Envelope is {"data":[...]}
 // to match ListLinkTypesForOntologyAdmin / ListInterfacesForOntologyAdmin;
-// the list MUST serialise as `[]` rather than `null` so SDK iterators
+// the list MUST serialize as `[]` rather than `null` so SDK iterators
 // don't NPE on an empty ontology.
 func (h *OMSHandler) ListSharedPropertyTypesV2(w http.ResponseWriter, r *http.Request) {
 	repo, ok := h.resolveRepo(w, r)
 	if !ok {
 		return
 	}
-	ontologyApiName := chi.URLParam(r, "ontologyApiName")
-	list, err := repo.ListSharedProperties(r.Context(), ontologyApiName)
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	list, err := repo.ListSharedProperties(r.Context(), ontologyAPIName)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("ListSharedPropertyTypesFailed", map[string]string{
 			"reason": err.Error(),
@@ -1666,7 +1666,7 @@ func (h *OMSHandler) GetSharedPropertyTypeByAPIName(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	ontologyApiName := chi.URLParam(r, "ontologyApiName")
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
 	apiName := chi.URLParam(r, "sharedPropertyType")
 	if apiName == "" {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingSharedPropertyType", map[string]string{
@@ -1675,11 +1675,11 @@ func (h *OMSHandler) GetSharedPropertyTypeByAPIName(w http.ResponseWriter, r *ht
 		return
 	}
 	if rejectVersionedRID(w, apiName, "sharedPropertyType", map[string]string{
-		"ontologyApiName": ontologyApiName,
+		"ontologyApiName": ontologyAPIName,
 	}) {
 		return
 	}
-	list, err := repo.ListSharedProperties(r.Context(), ontologyApiName)
+	list, err := repo.ListSharedProperties(r.Context(), ontologyAPIName)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("GetSharedPropertyTypeFailed", map[string]string{
 			"reason": err.Error(),
@@ -1693,7 +1693,7 @@ func (h *OMSHandler) GetSharedPropertyTypeByAPIName(w http.ResponseWriter, r *ht
 		}
 	}
 	apierror.WriteJSON(w, apierror.NewNotFound("SharedPropertyTypeNotFound", map[string]string{
-		"ontology":           ontologyApiName,
+		"ontology":           ontologyAPIName,
 		"sharedPropertyType": apiName,
 	}))
 }
@@ -1718,20 +1718,20 @@ func (h *OMSHandler) ListTypeGroupsForObjectTypeV2(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	ontologyApiName := chi.URLParam(r, "ontologyApiName")
-	objectTypeApiName := chi.URLParam(r, "objectTypeApiName")
-	if objectTypeApiName == "" {
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	objectTypeAPIName := chi.URLParam(r, "objectTypeApiName")
+	if objectTypeAPIName == "" {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingObjectType", map[string]string{
-			"reason": "objectTypeApiName path parameter is required",
+			"reason": "objectTypeAPIName path parameter is required",
 		}))
 		return
 	}
-	ot, err := repo.GetObjectTypeByAPIName(r.Context(), ontologyApiName, objectTypeApiName)
+	ot, err := repo.GetObjectTypeByAPIName(r.Context(), ontologyAPIName, objectTypeAPIName)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
-				"ontology":   ontologyApiName,
-				"objectType": objectTypeApiName,
+				"ontology":   ontologyAPIName,
+				"objectType": objectTypeAPIName,
 			}))
 			return
 		}
@@ -1767,8 +1767,8 @@ func (h *OMSHandler) ListTypeGroupsV2(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ontologyApiName := chi.URLParam(r, "ontologyApiName")
-	list, err := repo.ListTypeGroups(r.Context(), ontologyApiName)
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	list, err := repo.ListTypeGroups(r.Context(), ontologyAPIName)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("ListTypeGroupsFailed", map[string]string{
 			"reason": err.Error(),
@@ -1793,7 +1793,7 @@ func (h *OMSHandler) GetTypeGroupByAPIName(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	ontologyApiName := chi.URLParam(r, "ontologyApiName")
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
 	apiName := chi.URLParam(r, "typeGroup")
 	if apiName == "" {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingTypeGroup", map[string]string{
@@ -1802,11 +1802,11 @@ func (h *OMSHandler) GetTypeGroupByAPIName(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if rejectVersionedRID(w, apiName, "typeGroup", map[string]string{
-		"ontologyApiName": ontologyApiName,
+		"ontologyApiName": ontologyAPIName,
 	}) {
 		return
 	}
-	list, err := repo.ListTypeGroups(r.Context(), ontologyApiName)
+	list, err := repo.ListTypeGroups(r.Context(), ontologyAPIName)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("GetTypeGroupFailed", map[string]string{
 			"reason": err.Error(),
@@ -1820,7 +1820,7 @@ func (h *OMSHandler) GetTypeGroupByAPIName(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	apierror.WriteJSON(w, apierror.NewNotFound("TypeGroupNotFound", map[string]string{
-		"ontology":  ontologyApiName,
+		"ontology":  ontologyAPIName,
 		"typeGroup": apiName,
 	}))
 }
@@ -1841,25 +1841,25 @@ func (h *OMSHandler) GetLinkTypeByAPIName(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	ontologyApiName := chi.URLParam(r, "ontologyApiName")
-	linkTypeApiName := chi.URLParam(r, "linkType")
-	if linkTypeApiName == "" {
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	linkTypeAPIName := chi.URLParam(r, "linkType")
+	if linkTypeAPIName == "" {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingLinkType", map[string]string{
 			"reason": "linkType path parameter is required",
 		}))
 		return
 	}
-	if rejectVersionedRID(w, linkTypeApiName, "linkType", map[string]string{
-		"ontologyApiName": ontologyApiName,
+	if rejectVersionedRID(w, linkTypeAPIName, "linkType", map[string]string{
+		"ontologyApiName": ontologyAPIName,
 	}) {
 		return
 	}
-	lt, err := repo.GetLinkTypeByAPIName(r.Context(), ontologyApiName, linkTypeApiName)
+	lt, err := repo.GetLinkTypeByAPIName(r.Context(), ontologyAPIName, linkTypeAPIName)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			apierror.WriteJSON(w, apierror.NewNotFound("LinkTypeNotFound", map[string]string{
-				"ontology": ontologyApiName,
-				"linkType": linkTypeApiName,
+				"ontology": ontologyAPIName,
+				"linkType": linkTypeAPIName,
 			}))
 			return
 		}
@@ -1880,8 +1880,8 @@ func (h *OMSHandler) ListLinkTypesForOntologyAdmin(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	ontologyApiName := chi.URLParam(r, "ontologyApiName")
-	list, err := repo.ListLinkTypes(r.Context(), ontologyApiName)
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	list, err := repo.ListLinkTypes(r.Context(), ontologyAPIName)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("ListLinkTypesFailed", nil))
 		return
@@ -1902,8 +1902,8 @@ func (h *OMSHandler) ListActionTypesForOntologyAdmin(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
-	ontologyApiName := chi.URLParam(r, "ontologyApiName")
-	list, err := repo.ListActionTypes(r.Context(), ontologyApiName)
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	list, err := repo.ListActionTypes(r.Context(), ontologyAPIName)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("ListActionTypesFailed", nil))
 		return
@@ -1929,8 +1929,8 @@ func (h *OMSHandler) ListInterfacesForOntologyAdmin(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	ontologyApiName := chi.URLParam(r, "ontologyApiName")
-	list, err := repo.ListInterfaces(r.Context(), ontologyApiName)
+	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
+	list, err := repo.ListInterfaces(r.Context(), ontologyAPIName)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("ListInterfacesFailed", nil))
 		return
@@ -2879,7 +2879,7 @@ func (h *OMSHandler) DeleteValueType(w http.ResponseWriter, r *http.Request) {
 //
 // ValueTypes are global, not ontology-scoped, but the route is mounted
 // under /ontologies/... to keep URL conventions consistent with the rest
-// of the admin surface. The ontologyApiName URL segment is intentionally
+// of the admin surface. The ontologyAPIName URL segment is intentionally
 // not used for filtering — a single ValueType may be referenced by
 // Properties on ObjectTypes belonging to any ontology, and the admin view
 // must surface all of them.

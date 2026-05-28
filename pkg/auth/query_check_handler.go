@@ -25,7 +25,7 @@ type ResolvedQueryType struct {
 // and round-105 ObjectTypeResolver. cmd/server wires the concrete
 // oms.Repository adapter at boot.
 type QueryTypeResolver interface {
-	GetQueryType(ctx context.Context, ontologyRID, queryTypeApiName string) (*ResolvedQueryType, error)
+	GetQueryType(ctx context.Context, ontologyRID, queryTypeAPIName string) (*ResolvedQueryType, error)
 }
 
 // ErrQueryTypeNotFound is the sentinel resolvers return when the
@@ -74,20 +74,20 @@ func QueryCheckHandler(ontResolver OntologyResolver, queryResolver QueryTypeReso
 			return
 		}
 
-		ontApiName := chi.URLParam(r, "ontologyApiName")
-		qtApiName := chi.URLParam(r, "queryTypeApiName")
-		if qtApiName == "" {
+		ontAPIName := chi.URLParam(r, "ontologyApiName")
+		qtAPIName := chi.URLParam(r, "queryTypeApiName")
+		if qtAPIName == "" {
 			apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingQueryTypeApiName", map[string]string{
-				"reason": "queryTypeApiName path parameter is required",
+				"reason": "queryTypeAPIName path parameter is required",
 			}))
 			return
 		}
 
-		o, err := ontResolver.GetOntology(r.Context(), ontApiName)
+		o, err := ontResolver.GetOntology(r.Context(), ontAPIName)
 		if err != nil {
 			if errors.Is(err, ErrOntologyNotFound) {
 				apierror.WriteJSON(w, apierror.NewNotFound("OntologyNotFound", map[string]string{
-					"ontologyApiName": ontApiName,
+					"ontologyApiName": ontAPIName,
 				}))
 				return
 			}
@@ -95,12 +95,12 @@ func QueryCheckHandler(ontResolver OntologyResolver, queryResolver QueryTypeReso
 			return
 		}
 
-		qt, err := queryResolver.GetQueryType(r.Context(), o.RID, qtApiName)
+		qt, err := queryResolver.GetQueryType(r.Context(), o.RID, qtAPIName)
 		if err != nil {
 			if errors.Is(err, ErrQueryTypeNotFound) {
 				apierror.WriteJSON(w, apierror.NewNotFound("QueryTypeNotFound", map[string]string{
-					"ontologyApiName":  ontApiName,
-					"queryTypeApiName": qtApiName,
+					"ontologyApiName":  ontAPIName,
+					"queryTypeApiName": qtAPIName,
 				}))
 				return
 			}

@@ -46,7 +46,7 @@ import (
 //   - prompt argument "objectType"  → matching ObjectType apiNames
 //   - prompt argument "actionType"  → matching ActionType apiNames
 //
-// Any unrecognised (ref, argument) pair returns an empty completion
+// Any unrecognized (ref, argument) pair returns an empty completion
 // set, which is valid per the spec. Future rounds can extend the
 // provider with more sources (LinkType names, ValueType names,
 // arbitrary registered enums, etc.) without touching the handler.

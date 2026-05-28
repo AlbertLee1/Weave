@@ -993,8 +993,8 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 		`case "resources/read":`,
 		`case "resources/subscribe":`,
 		`case "resources/unsubscribe":`,
-		`"resources":  map[string]any{"listChanged": false, "subscribe": true}`,
-		`"prompts":    map[string]any{"listChanged": false}`,
+		`"resources":   map[string]any{"listChanged": false, "subscribe": true}`,
+		`"prompts":     map[string]any{"listChanged": false}`,
 		// Gap-D4 round 46: completion/complete capability +
 		// dispatcher case must both appear so AI clients see the
 		// method and can call it.

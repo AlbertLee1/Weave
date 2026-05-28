@@ -14,38 +14,38 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given criteria [{type:"parameterCompare",
-//                    value:{leftParameter:"endTime",
-//                           operator:"gt",
-//                           rightParameter:"startTime"}}]
-//         and an ActionContext where endTime=2 and startTime=1
-//   When  EvaluateCriteria runs
-//   Then  it returns nil (constraint satisfied)
+//	Given criteria [{type:"parameterCompare",
+//	                 value:{leftParameter:"endTime",
+//	                        operator:"gt",
+//	                        rightParameter:"startTime"}}]
+//	      and an ActionContext where endTime=2 and startTime=1
+//	When  EvaluateCriteria runs
+//	Then  it returns nil (constraint satisfied)
 //
-//   Given the same criteria but endTime=1 and startTime=2
-//   When  EvaluateCriteria runs
-//   Then  it returns a "submission criteria not met" error
-//         mentioning the left parameter name
+//	Given the same criteria but endTime=1 and startTime=2
+//	When  EvaluateCriteria runs
+//	Then  it returns a "submission criteria not met" error
+//	      mentioning the left parameter name
 //
-//   Given criteria where rightParameter is missing from the
-//         action context
-//   When  EvaluateCriteria runs
-//   Then  it returns "parameter X not present" naming the missing one
+//	Given criteria where rightParameter is missing from the
+//	      action context
+//	When  EvaluateCriteria runs
+//	Then  it returns "parameter X not present" naming the missing one
 //
-//   Given an array combining parameterCompare AND parameterMatch
-//         (AND semantics — both must pass)
-//   When  EvaluateCriteria runs against a context that satisfies
-//         both
-//   Then  it returns nil
+//	Given an array combining parameterCompare AND parameterMatch
+//	      (AND semantics — both must pass)
+//	When  EvaluateCriteria runs against a context that satisfies
+//	      both
+//	Then  it returns nil
 //
-//   Given an unknown operator inside parameterCompare
-//   When  EvaluateCriteria runs
-//   Then  it returns an unknown-operator error from compareValues
+//	Given an unknown operator inside parameterCompare
+//	When  EvaluateCriteria runs
+//	Then  it returns an unknown-operator error from compareValues
 //
-//   Given parameterCompare with leftParameter omitted (empty string)
-//   When  EvaluateCriteria runs
-//   Then  it returns a config-validation error mentioning
-//         "leftParameter is required"
+//	Given parameterCompare with leftParameter omitted (empty string)
+//	When  EvaluateCriteria runs
+//	Then  it returns a config-validation error mentioning
+//	      "leftParameter is required"
 func TestBDD_SubmissionCriteria_ParameterCompare(t *testing.T) {
 	t.Run("end > start: constraint satisfied", func(t *testing.T) {
 		criteria := mustCriteriaJSON(t, []SubmissionCriteria{{

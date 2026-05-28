@@ -18,28 +18,28 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given a request with NEITHER query param NOR header
-//   When  ResolveBranchFromRequest runs
-//   Then  it returns DefaultBranch ("main")
+//	Given a request with NEITHER query param NOR header
+//	When  ResolveBranchFromRequest runs
+//	Then  it returns DefaultBranch ("main")
 //
-//   Given a request with ONLY ?branch=feature-x
-//   When  ResolveBranchFromRequest runs
-//   Then  it returns "feature-x"
+//	Given a request with ONLY ?branch=feature-x
+//	When  ResolveBranchFromRequest runs
+//	Then  it returns "feature-x"
 //
-//   Given a request with ONLY X-Weave-Branch: feature-y header
-//   When  ResolveBranchFromRequest runs
-//   Then  it returns "feature-y" (round 39 / Gap-T4 addition)
+//	Given a request with ONLY X-Weave-Branch: feature-y header
+//	When  ResolveBranchFromRequest runs
+//	Then  it returns "feature-y" (round 39 / Gap-T4 addition)
 //
-//   Given a request with BOTH ?branch=from-query AND
-//         X-Weave-Branch: from-header
-//   When  ResolveBranchFromRequest runs
-//   Then  it returns "from-query" (query wins — explicit beats
-//         implicit; matches Foundry's request-param-authoritative
-//         rule)
+//	Given a request with BOTH ?branch=from-query AND
+//	      X-Weave-Branch: from-header
+//	When  ResolveBranchFromRequest runs
+//	Then  it returns "from-query" (query wins — explicit beats
+//	      implicit; matches Foundry's request-param-authoritative
+//	      rule)
 //
-//   Given a nil *http.Request
-//   When  ResolveBranchFromRequest runs
-//   Then  it returns DefaultBranch (defensive — never panics)
+//	Given a nil *http.Request
+//	When  ResolveBranchFromRequest runs
+//	Then  it returns DefaultBranch (defensive — never panics)
 func TestBDD_ResolveBranchFromRequest(t *testing.T) {
 	t.Run("neither query nor header → DefaultBranch", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/whatever", nil)

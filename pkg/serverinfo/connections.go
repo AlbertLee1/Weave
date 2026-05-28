@@ -12,13 +12,13 @@ import (
 // or many max-lifetime-destroyed in a short window, usually means
 // the app is leaking or PG is rejecting connections.
 type PostgresStats struct {
-	AcquiredConns              int32 `json:"acquiredConns"`
-	IdleConns                  int32 `json:"idleConns"`
-	TotalConns                 int32 `json:"totalConns"`
-	MaxConns                   int32 `json:"maxConns"`
-	NewConnsCount              int64 `json:"newConnsCount"`
-	MaxLifetimeDestroyCount    int64 `json:"maxLifetimeDestroyCount"`
-	MaxIdleDestroyCount        int64 `json:"maxIdleDestroyCount"`
+	AcquiredConns           int32 `json:"acquiredConns"`
+	IdleConns               int32 `json:"idleConns"`
+	TotalConns              int32 `json:"totalConns"`
+	MaxConns                int32 `json:"maxConns"`
+	NewConnsCount           int64 `json:"newConnsCount"`
+	MaxLifetimeDestroyCount int64 `json:"maxLifetimeDestroyCount"`
+	MaxIdleDestroyCount     int64 `json:"maxIdleDestroyCount"`
 }
 
 // NATSStats wraps nats.Conn.Status + a couple of useful counters

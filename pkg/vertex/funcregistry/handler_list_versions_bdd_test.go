@@ -21,11 +21,11 @@ import (
 //
 // Wire shape:
 //
-//   GET /api/vertex/v1/ontologies/{ontologyApiName}/functions/{name}/versions
-//     200 + {"versions": [Function, Function, ...]}
-//         sorted version DESC (newest first — same ordering as
-//         the registry's internal default).
-//     404 + OntologyNotFound when the ontology slug is unknown.
+//	GET /api/vertex/v1/ontologies/{ontologyApiName}/functions/{name}/versions
+//	  200 + {"versions": [Function, Function, ...]}
+//	      sorted version DESC (newest first — same ordering as
+//	      the registry's internal default).
+//	  404 + OntologyNotFound when the ontology slug is unknown.
 //
 // An unknown function name returns 200 + {"versions": []} — name
 // is a filter here, not a key. This matches round 68 (Scenario

@@ -24,7 +24,7 @@ const (
 	// StatusCancelled (round 63) is the terminal state a row enters
 	// when the requester withdraws their own pending request. Stored
 	// alongside APPROVED / REJECTED so the audit trail keeps the row
-	// rather than hard-deleting; the inbox UI hides cancelled rows
+	// rather than hard-deleting; the inbox UI hides canceled rows
 	// by default.
 	StatusCancelled = "CANCELLED"
 )

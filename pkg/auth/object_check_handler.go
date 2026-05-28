@@ -23,7 +23,7 @@ type ResolvedObjectType struct {
 // a specific ontology RID. Sibling of round-103 ActionTypeResolver.
 // cmd/server wires the concrete oms.Repository adapter at boot.
 type ObjectTypeResolver interface {
-	GetObjectType(ctx context.Context, ontologyRID, objectTypeApiName string) (*ResolvedObjectType, error)
+	GetObjectType(ctx context.Context, ontologyRID, objectTypeAPIName string) (*ResolvedObjectType, error)
 }
 
 // ErrObjectTypeNotFound is the sentinel resolvers return when the
@@ -74,20 +74,20 @@ func ObjectCheckHandler(ontResolver OntologyResolver, objResolver ObjectTypeReso
 			return
 		}
 
-		ontApiName := chi.URLParam(r, "ontologyApiName")
-		otApiName := chi.URLParam(r, "objectTypeApiName")
-		if otApiName == "" {
+		ontAPIName := chi.URLParam(r, "ontologyApiName")
+		otAPIName := chi.URLParam(r, "objectTypeApiName")
+		if otAPIName == "" {
 			apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingObjectTypeApiName", map[string]string{
-				"reason": "objectTypeApiName path parameter is required",
+				"reason": "objectTypeAPIName path parameter is required",
 			}))
 			return
 		}
 
-		o, err := ontResolver.GetOntology(r.Context(), ontApiName)
+		o, err := ontResolver.GetOntology(r.Context(), ontAPIName)
 		if err != nil {
 			if errors.Is(err, ErrOntologyNotFound) {
 				apierror.WriteJSON(w, apierror.NewNotFound("OntologyNotFound", map[string]string{
-					"ontologyApiName": ontApiName,
+					"ontologyApiName": ontAPIName,
 				}))
 				return
 			}
@@ -95,12 +95,12 @@ func ObjectCheckHandler(ontResolver OntologyResolver, objResolver ObjectTypeReso
 			return
 		}
 
-		ot, err := objResolver.GetObjectType(r.Context(), o.RID, otApiName)
+		ot, err := objResolver.GetObjectType(r.Context(), o.RID, otAPIName)
 		if err != nil {
 			if errors.Is(err, ErrObjectTypeNotFound) {
 				apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
-					"ontologyApiName":   ontApiName,
-					"objectTypeApiName": otApiName,
+					"ontologyApiName":   ontAPIName,
+					"objectTypeApiName": otAPIName,
 				}))
 				return
 			}

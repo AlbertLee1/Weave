@@ -111,7 +111,7 @@ func (h *OMSHandler) FunctionExecutionStore() FunctionExecutionStore {
 // quota enforcement so cached responses still respect both gates.
 //
 // A nil or unset cache disables result caching — the handler dispatches
-// every call directly to the executor, matching the legacy behaviour
+// every call directly to the executor, matching the legacy behavior
 // US-221 introduced this hook on top of.
 func (h *OMSHandler) SetFunctionResultCache(c FunctionResultCache) {
 	h.functionResultCache = c
@@ -190,17 +190,17 @@ func (h *OMSHandler) ColumnLineageStore() ColumnLineageStore {
 }
 
 // rejectVersionedRID is the round-117/119 Gap-T4 step-2 short-circuit:
-// when ``input`` parses as a RID with a version pin (round-91 @vN
+// when “input“ parses as a RID with a version pin (round-91 @vN
 // suffix), the handler writes a 501 VersionedLookupNotSupported
 // response and returns true so the caller can early-exit. Returns
-// false when ``input`` is a plain API name or an un-versioned RID,
+// false when “input“ is a plain API name or an un-versioned RID,
 // in which case the caller proceeds with its normal lookup.
 //
-// ``identifierField`` is the JSON key under which the original input
+// “identifierField“ is the JSON key under which the original input
 // is echoed into the response parameters (e.g. "objectTypeApiName",
 // "actionTypeRid") so the SPA can surface a "version pinned, snapshots
 // pending" banner without having to remember which parameter it sent.
-// ``extraParams`` accumulates any additional context (typically
+// “extraParams“ accumulates any additional context (typically
 // {"ontologyApiName": ...}); the helper merges identifierField + the
 // parsed version into the same map.
 //
@@ -219,9 +219,9 @@ func rejectVersionedRID(
 		return false
 	}
 	params := map[string]string{
-		"reason":          "RID @vN version suffix is recognised but snapshot lookups are not yet implemented",
-		identifierField:   input,
-		"version":         parsed.Version,
+		"reason":        "RID @vN version suffix is recognized but snapshot lookups are not yet implemented",
+		identifierField: input,
+		"version":       parsed.Version,
 	}
 	for k, v := range extraParams {
 		params[k] = v
@@ -309,7 +309,7 @@ func (h *OMSHandler) ListObjectTypes(w http.ResponseWriter, r *http.Request) {
 //
 // Round 117 (Gap-T4 step-2 pilot): the path parameter accepts either
 // an API name or a RID. When the input parses as a RID AND carries
-// the round-91 @vN version suffix, the system recognises the version
+// the round-91 @vN version suffix, the system recognizes the version
 // semantics but refuses the lookup with 501 NotImplemented (errorName
 // VersionedLookupNotSupported) — the snapshot system isn't built yet,
 // and 501 is clearer than masquerading as 404 (which would mislead

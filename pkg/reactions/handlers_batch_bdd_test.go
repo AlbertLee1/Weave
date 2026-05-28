@@ -2,6 +2,7 @@ package reactions
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,13 +21,13 @@ import (
 //
 // Wire shape:
 //
-//   POST /api/v2/reactions/batch
-//   {"targetRids": ["ri.a", "ri.b", "ri.c"]}
-//     200 + {"summaries": [Summary{a}, Summary{b}, Summary{c}]}
-//          summaries[i] always corresponds to targetRids[i] so
-//          callers can index without re-keying.
-//     400 InvalidRequestBody / InvalidReactionTarget on a malformed
-//         body or a non-ri.* prefix in the array.
+//	POST /api/v2/reactions/batch
+//	{"targetRids": ["ri.a", "ri.b", "ri.c"]}
+//	  200 + {"summaries": [Summary{a}, Summary{b}, Summary{c}]}
+//	       summaries[i] always corresponds to targetRids[i] so
+//	       callers can index without re-keying.
+//	  400 InvalidRequestBody / InvalidReactionTarget on a malformed
+//	      body or a non-ri.* prefix in the array.
 //
 // Scenarios:
 //   - Empty input array returns 200 + {summaries: []} (no error;
@@ -69,7 +70,7 @@ func TestBDD_Reactions_BatchAggregate(t *testing.T) {
 			// targetC: intentionally empty
 		}
 		for _, s := range seed {
-			err := store.Create(nil, &Reaction{
+			err := store.Create(context.TODO(), &Reaction{
 				ID:        "r-" + s.user.ID + "-" + s.targetRID + "-" + s.emoji,
 				UserID:    s.user.ID,
 				TargetRID: s.targetRID,

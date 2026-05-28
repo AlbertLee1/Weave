@@ -21,22 +21,22 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given an ActionType with a webhook side effect pointing at an
-//         httptest.Server that returns 200
-//   When  the executor applies the action
-//   Then  the action_logs row's SideEffectStatus carries a single
-//         outcome with status=success, attempts=1, type=webhook
+//	Given an ActionType with a webhook side effect pointing at an
+//	      httptest.Server that returns 200
+//	When  the executor applies the action
+//	Then  the action_logs row's SideEffectStatus carries a single
+//	      outcome with status=success, attempts=1, type=webhook
 //
-//   Given an ActionType with NO side effects
-//   When  the executor applies the action
-//   Then  the action_logs row's SideEffectStatus is nil
-//         (don't churn the column for actions with no side effects)
+//	Given an ActionType with NO side effects
+//	When  the executor applies the action
+//	Then  the action_logs row's SideEffectStatus is nil
+//	      (don't churn the column for actions with no side effects)
 //
-//   Given an ActionType with a webhook side effect that always
-//         returns 500
-//   When  the executor applies the action
-//   Then  the action_logs row's SideEffectStatus carries
-//         status=failed and the error message mentions "gave up"
+//	Given an ActionType with a webhook side effect that always
+//	      returns 500
+//	When  the executor applies the action
+//	Then  the action_logs row's SideEffectStatus carries
+//	      status=failed and the error message mentions "gave up"
 func TestBDD_Executor_PersistsSideEffectOutcomesToActionLog(t *testing.T) {
 	t.Run("webhook success outcome persisted to action_logs.side_effect_status", func(t *testing.T) {
 		var calls int32
@@ -198,16 +198,16 @@ func assertActionLogSideEffectStatus(t *testing.T, repo *mockOmsRepo, result *Ap
 		if w.ErrorEmpty && got[i].Error != "" {
 			t.Errorf("outcomes[%d].error = %q, want empty", i, got[i].Error)
 		}
-		if w.ErrorContains != "" && !contains_(got[i].Error, w.ErrorContains) {
+		if w.ErrorContains != "" && !containsStr(got[i].Error, w.ErrorContains) {
 			t.Errorf("outcomes[%d].error = %q, want it to mention %q", i, got[i].Error, w.ErrorContains)
 		}
 	}
 }
 
-// contains_ is a local strings.Contains shim so this file doesn't have
+// containsStr is a local strings.Contains shim so this file doesn't have
 // to import strings just for one call. Trailing underscore avoids any
 // conflict with the existing `contains` helper in this package.
-func contains_(s, sub string) bool {
+func containsStr(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {
 			return true

@@ -98,7 +98,7 @@ type LagSizer interface {
 
 // RunFunnelConsumerLagPollLoop polls `sizer.Lag()` every `interval` and
 // pushes the result onto the funnel lag gauge. The loop exits when ctx
-// is cancelled. Nil sizer or non-positive interval makes the loop a
+// is canceled. Nil sizer or non-positive interval makes the loop a
 // no-op so degraded-mode boot can wire the goroutine unconditionally.
 // `onError`, if supplied, is invoked once per sizer failure; the loop
 // continues on error AND the gauge is NOT clobbered — a transient
@@ -130,7 +130,7 @@ func RunFunnelConsumerLagPollLoop(ctx context.Context, sizer LagSizer, interval 
 
 // RunFunnelDLQSizePollLoop polls `sizer.Size(ctx)` every `interval` and
 // pushes the result onto the funnel DLQ gauge. The loop exits when ctx is
-// cancelled. Nil sizer or non-positive interval makes the loop a no-op so
+// canceled. Nil sizer or non-positive interval makes the loop a no-op so
 // degraded-mode boot can wire the goroutine unconditionally. `onError`, if
 // supplied, is invoked once per sizer failure; the loop continues on error.
 func RunFunnelDLQSizePollLoop(ctx context.Context, sizer DLQSizer, interval time.Duration, onError func(error)) {

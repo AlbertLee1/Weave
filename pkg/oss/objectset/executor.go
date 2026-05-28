@@ -206,7 +206,7 @@ type Result struct {
 // Execute evaluates an ObjectSet definition and returns matching primary keys.
 //
 // PRD-V2 §4.6 Gap-O1 wiring: the call is wrapped with a deferred Observe
-// onto weave_objectset_execute_duration_seconds, labelled by definition
+// onto weave_objectset_execute_duration_seconds, labeled by definition
 // kind (base / filter / union / …) and outcome (ok | error). The metric
 // is captured at THIS layer rather than inside the per-kind helpers so
 // composite ObjectSets (union/intersect/subtract) record one observation
@@ -461,7 +461,7 @@ func (e *Executor) executeInterfaceLinkSearchAround(ctx context.Context, def *De
 //   - Hot-only window (From ≥ now-hotWindow): skip the cold lookup entirely.
 //   - Cold-only window (To ≤ now-hotWindow): skip the Bleve search and
 //     pass the request's upper bound to the cold tier as the cutoff so
-//     materialise rows beyond the window are clipped before merge.
+//     materialize rows beyond the window are clipped before merge.
 //   - Cross-window (straddles now-hotWindow): both tiers, classic union.
 func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, error) {
 	policyQ, err := e.resolvePolicyQuery(ctx, def.ObjectType)
@@ -531,7 +531,7 @@ func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, e
 // rebuilt, hiding live data behind the rolling window.
 //
 // When no cold tier is wired this returns an empty result. That is the
-// correct degraded-mode behaviour: the rebuild was operator-initiated
+// correct degraded-mode behavior: the rebuild was operator-initiated
 // and the operator accepted that base reads degrade until the rebuild
 // completes.
 func (e *Executor) executeBaseDuringRebuild(ctx context.Context, def *Definition) (*Result, error) {
@@ -728,7 +728,7 @@ func (e *Executor) executeSearchAround(ctx context.Context, def *Definition) (*R
 		return nil, fmt.Errorf("searchAround direction: %w", err)
 	}
 
-	// Forward: use legacy API name path (unchanged behaviour).
+	// Forward: use legacy API name path (unchanged behavior).
 	// Reverse: the inner set's ObjectType is the link's *target*, so we cannot
 	// use ResolveLinkedObjectsByAPIName (which scans outgoing links from the
 	// source). Instead, find the link via the OMS repo-backed resolver and

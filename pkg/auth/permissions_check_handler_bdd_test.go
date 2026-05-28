@@ -53,7 +53,7 @@ func doPermissionsCheck(
 
 func TestBDD_PermissionsCheckHandler(t *testing.T) {
 	const ontRID = "ri.ontology.main.ontology.northwind"
-	resolver := &fakeResolver{byApiName: map[string]*auth.ResolvedOntology{
+	resolver := &fakeResolver{byAPIName: map[string]*auth.ResolvedOntology{
 		"northwind": {RID: ontRID, APIName: "northwind"},
 	}}
 

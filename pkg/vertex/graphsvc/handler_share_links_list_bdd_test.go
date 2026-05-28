@@ -21,17 +21,17 @@ import (
 //
 // Wire shape:
 //
-//   GET /api/vertex/v1/graphs/{rid}/share-links
-//     200 + {"shareLinks": [
-//             {tokenSuffix, createdBy, createdAt, expiresAt,
-//              revoked, revokedAt},
-//             ...
-//           ]}
-//         sorted by createdAt DESC (newest first)
-//     401 / 403 when caller isn't the graph owner — same
-//         canManageShareLinks check as createShareLink so the
-//         management surface mirrors the mutation surface
-//     404 when graph doesn't exist
+//	GET /api/vertex/v1/graphs/{rid}/share-links
+//	  200 + {"shareLinks": [
+//	          {tokenSuffix, createdBy, createdAt, expiresAt,
+//	           revoked, revokedAt},
+//	          ...
+//	        ]}
+//	      sorted by createdAt DESC (newest first)
+//	  401 / 403 when caller isn't the graph owner — same
+//	      canManageShareLinks check as createShareLink so the
+//	      management surface mirrors the mutation surface
+//	  404 when graph doesn't exist
 //
 // Security note: the full Token is NOT included in the list
 // response (only `tokenSuffix` = last 8 chars for identification).

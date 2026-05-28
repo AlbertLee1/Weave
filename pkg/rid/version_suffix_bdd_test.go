@@ -15,9 +15,9 @@ import (
 //
 // Wire shape:
 //
-//   ri.{service}.{realm}.{resourceType}.{uuid}        -> Version=""
-//   ri.{service}.{realm}.{resourceType}.{uuid}@v3     -> Version="3"
-//   ri.{service}.{realm}.{resourceType}.{uuid}@v123   -> Version="123"
+//	ri.{service}.{realm}.{resourceType}.{uuid}        -> Version=""
+//	ri.{service}.{realm}.{resourceType}.{uuid}@v3     -> Version="3"
+//	ri.{service}.{realm}.{resourceType}.{uuid}@v123   -> Version="123"
 //
 // Invariants:
 //   - Backwards-compatible: every existing un-versioned RID still

@@ -17,30 +17,30 @@ import (
 // --- Mock Repository ---
 
 type mockRepo struct {
-	ontologies    []oms.Ontology
-	objectTypes   []oms.ObjectType
-	linkTypes     []oms.LinkType
-	actionTypes   []oms.ActionType
-	properties    []oms.Property
-	interfaces    []oms.Interface
-	valueTypes    []oms.ValueType
-	queryTypes    []oms.QueryType
-	actionLogs    []oms.ActionLog
+	ontologies       []oms.Ontology
+	objectTypes      []oms.ObjectType
+	linkTypes        []oms.LinkType
+	actionTypes      []oms.ActionType
+	properties       []oms.Property
+	interfaces       []oms.Interface
+	valueTypes       []oms.ValueType
+	queryTypes       []oms.QueryType
+	actionLogs       []oms.ActionLog
 	functions        []oms.Function
 	sharedProperties []oms.SharedProperty
 	typeGroups       []oms.TypeGroup
 	// typeGroupAssignments maps objectTypeRID → []typeGroupRID for the
 	// reverse-lookup path exercised by ListTypeGroupsForObjectType.
 	// nil by default so the no-assignment majority of tests keep their
-	// historical empty-result behaviour.
+	// historical empty-result behavior.
 	typeGroupAssignments map[string][]string
-	branches        []oms.OntologyBranch
-	branchChanges   []oms.BranchChange
-	proposals       []oms.OntologyProposal
-	proposalReviews []oms.ProposalReview
-	automationRules []oms.AutomationRule
-	executions      []oms.AutomationExecution
-	notifications   []oms.Notification
+	branches             []oms.OntologyBranch
+	branchChanges        []oms.BranchChange
+	proposals            []oms.OntologyProposal
+	proposalReviews      []oms.ProposalReview
+	automationRules      []oms.AutomationRule
+	executions           []oms.AutomationExecution
+	notifications        []oms.Notification
 	// datasourceBindings backs CreateDatasourceBinding /
 	// GetDatasourceBinding / ListDatasourceBindings /
 	// UpdateDatasourceBinding / DeleteDatasourceBinding so US-052 tests
@@ -69,8 +69,8 @@ type mockRepo struct {
 	countTypeGroupAssignmentsErr   error
 
 	// CountNotifications call tracking — round 66.
-	countNotificationsCalls           int
-	countNotificationsLastUnreadOnly  bool
+	countNotificationsCalls          int
+	countNotificationsLastUnreadOnly bool
 
 	// Version tracking
 	ontologyVersion int
@@ -715,7 +715,7 @@ func (m *mockRepo) ListPropertyUsagesByBaseType(_ context.Context, baseType stri
 		out = append(out, oms.PropertyUsage{
 			PropertyRID:       m.properties[i].RID,
 			PropertyAPIName:   m.properties[i].APIName,
-			ObjectTypeRID:    m.properties[i].ObjectTypeRID,
+			ObjectTypeRID:     m.properties[i].ObjectTypeRID,
 			ObjectTypeAPIName: otAPIName,
 		})
 	}
@@ -861,7 +861,7 @@ func (m *mockRepo) ListActionLogs(_ context.Context, _ string, limit, offset int
 	}
 	return m.actionLogs[start:end], nil
 }
-func (m *mockRepo) CountActionLogs(_ context.Context, _ string) (int, error)    { return 0, nil }
+func (m *mockRepo) CountActionLogs(_ context.Context, _ string) (int, error)         { return 0, nil }
 func (m *mockRepo) UpdateActionLogStatus(_ context.Context, _ int64, _ string) error { return nil }
 func (m *mockRepo) UpdateActionLogSideEffectStatus(_ context.Context, _ int64, _ json.RawMessage) error {
 	return nil

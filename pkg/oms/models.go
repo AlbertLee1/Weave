@@ -637,16 +637,16 @@ type ActionLog struct {
 // Outcome carries the full SideEffectOutcome JSON for diagnostic
 // rendering.
 type SideEffectDLQRow struct {
-	ID            int64           `json:"id"`
-	ActionLogID   int64           `json:"actionLogId"`
-	EffectIndex   int             `json:"effectIndex"`
-	EffectType    string          `json:"effectType"`
-	EffectConfig  json.RawMessage `json:"effectConfig,omitempty"`
-	Outcome       json.RawMessage `json:"outcome"`
-	CreatedAt     time.Time       `json:"createdAt"`
-	ReplayStatus  string          `json:"replayStatus"`
-	ReplayedAt    *time.Time      `json:"replayedAt,omitempty"`
-	ReplayCount   int             `json:"replayCount"`
+	ID           int64           `json:"id"`
+	ActionLogID  int64           `json:"actionLogId"`
+	EffectIndex  int             `json:"effectIndex"`
+	EffectType   string          `json:"effectType"`
+	EffectConfig json.RawMessage `json:"effectConfig,omitempty"`
+	Outcome      json.RawMessage `json:"outcome"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	ReplayStatus string          `json:"replayStatus"`
+	ReplayedAt   *time.Time      `json:"replayedAt,omitempty"`
+	ReplayCount  int             `json:"replayCount"`
 }
 
 // Side-effect DLQ replay-status taxonomy. Stable strings so admin UI
@@ -819,8 +819,8 @@ type AutomationRule struct {
 	OntologyRID   string          `json:"ontologyRid"`
 	Name          string          `json:"name"`
 	Description   string          `json:"description,omitempty"`
-	Status        string          `json:"status"`        // active, paused, disabled
-	TriggerType   string          `json:"triggerType"`    // schedule, dataChange, manual
+	Status        string          `json:"status"`      // active, paused, disabled
+	TriggerType   string          `json:"triggerType"` // schedule, dataChange, manual
 	TriggerConfig json.RawMessage `json:"triggerConfig"`
 	Effects       json.RawMessage `json:"effects"`
 	RetryPolicy   json.RawMessage `json:"retryPolicy,omitempty"`

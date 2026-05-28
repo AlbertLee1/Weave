@@ -20,12 +20,12 @@ import (
 //
 // Wire shape (mirror of the established pattern):
 //
-//   POST /api/v2/ontologies/{ontologyApiName}/valueTypes/getByRidBatch
-//   {"rids": ["vt-1", "vt-2", "vt-3"]}
-//     200 + {"data": [ValueType, ValueType, ValueType]}
-//         missing RIDs SKIPPED SILENTLY — matches the convention
-//         shared with the other four batch surfaces so SDK
-//         partial-render logic stays portable.
+//	POST /api/v2/ontologies/{ontologyApiName}/valueTypes/getByRidBatch
+//	{"rids": ["vt-1", "vt-2", "vt-3"]}
+//	  200 + {"data": [ValueType, ValueType, ValueType]}
+//	      missing RIDs SKIPPED SILENTLY — matches the convention
+//	      shared with the other four batch surfaces so SDK
+//	      partial-render logic stays portable.
 //
 // Scenarios:
 //   - Three RIDs all resolve.

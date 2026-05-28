@@ -177,7 +177,7 @@ type ValidateActionResponse struct {
 
 // SubmissionCriterionResult is one entry in ValidateActionResponse.SubmissionCriteria.
 // Foundry's submission-criteria pipeline emits one envelope per declared
-// criterion; Weave's MVP synthesises a single entry on INVALID that
+// criterion; Weave's MVP synthesizes a single entry on INVALID that
 // carries the underlying validation error verbatim into
 // configuredFailureMessage so the SDK has something to render in the
 // form-level summary banner.
@@ -1593,7 +1593,7 @@ func (e *Executor) checkExpectedVersions(ctx context.Context, ontologyRID string
 // lookupObjectVersion resolves an ObjectType API name to its RID and
 // returns the current object_history version count for (RID, primaryKey).
 // Falls back to the raw API name when no mapping is configured, mirroring
-// pkg/funnel consumer behaviour for degraded-mode test routers.
+// pkg/funnel consumer behavior for degraded-mode test routers.
 func (e *Executor) lookupObjectVersion(ctx context.Context, ontologyRID, objectType, primaryKey string) (int64, error) {
 	otRID := objectType
 	if e.omsRepo != nil {

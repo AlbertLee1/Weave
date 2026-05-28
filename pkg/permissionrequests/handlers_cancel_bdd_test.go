@@ -1,6 +1,7 @@
 package permissionrequests
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -22,18 +23,18 @@ import (
 //
 // Wire shape:
 //
-//   DELETE /api/v2/permission-requests/{id}
-//     204 (no body) → row transitioned to CANCELLED. DecidedBy is
-//                     stamped with the requester's user ID and
-//                     DecidedAt with the cancel time so the audit
-//                     trail is preserved (NOT a hard delete).
-//     401 → no authenticated user
-//     403 → caller is not the original requester (admins cannot
-//           cancel on behalf — that would be a separate audit
-//           event)
-//     404 → no row with that id
-//     409 → row is already APPROVED / REJECTED / CANCELLED
-//           (terminal states are immutable)
+//	DELETE /api/v2/permission-requests/{id}
+//	  204 (no body) → row transitioned to CANCELLED. DecidedBy is
+//	                  stamped with the requester's user ID and
+//	                  DecidedAt with the cancel time so the audit
+//	                  trail is preserved (NOT a hard delete).
+//	  401 → no authenticated user
+//	  403 → caller is not the original requester (admins cannot
+//	        cancel on behalf — that would be a separate audit
+//	        event)
+//	  404 → no row with that id
+//	  409 → row is already APPROVED / REJECTED / CANCELLED
+//	        (terminal states are immutable)
 //
 // Scenarios:
 //   - Requester cancels own pending request: 204; row status flips
@@ -62,7 +63,7 @@ func TestBDD_PermissionRequest_Cancel(t *testing.T) {
 			CreatedAt:   time.Now().UTC().Add(-time.Hour),
 			UpdatedAt:   time.Now().UTC().Add(-time.Hour),
 		}
-		if err := store.Create(nil, row); err != nil {
+		if err := store.Create(context.TODO(), row); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 		return row
@@ -84,7 +85,7 @@ func TestBDD_PermissionRequest_Cancel(t *testing.T) {
 		if rec.Code != http.StatusNoContent {
 			t.Fatalf("status=%d, want 204; body=%s", rec.Code, rec.Body.String())
 		}
-		updated, err := store.Get(nil, row.ID)
+		updated, err := store.Get(context.TODO(), row.ID)
 		if err != nil {
 			t.Fatalf("Get after cancel: %v", err)
 		}
@@ -107,7 +108,7 @@ func TestBDD_PermissionRequest_Cancel(t *testing.T) {
 			t.Fatalf("status=%d, want 403; body=%s", rec.Code, rec.Body.String())
 		}
 		// Row must remain PENDING — no privilege escalation via 403 path.
-		updated, _ := store.Get(nil, row.ID)
+		updated, _ := store.Get(context.TODO(), row.ID)
 		if updated.Status != StatusPending {
 			t.Errorf("status=%q, want %q (must not transition on 403)", updated.Status, StatusPending)
 		}
@@ -117,7 +118,7 @@ func TestBDD_PermissionRequest_Cancel(t *testing.T) {
 		store := NewMemoryStore()
 		row := seedPending(t, store, "pr-3")
 		// Decide it first.
-		if err := store.Decide(nil, row.ID, Decision{
+		if err := store.Decide(context.TODO(), row.ID, Decision{
 			Status: StatusApproved,
 			By:     "u-admin",
 			Note:   "ok",
@@ -133,7 +134,7 @@ func TestBDD_PermissionRequest_Cancel(t *testing.T) {
 		if body["errorName"] != "PermissionRequestAlreadyDecided" {
 			t.Errorf("errorName=%v, want PermissionRequestAlreadyDecided", body["errorName"])
 		}
-		updated, _ := store.Get(nil, row.ID)
+		updated, _ := store.Get(context.TODO(), row.ID)
 		if updated.Status != StatusApproved {
 			t.Errorf("status=%q must remain %q", updated.Status, StatusApproved)
 		}
@@ -142,7 +143,7 @@ func TestBDD_PermissionRequest_Cancel(t *testing.T) {
 	t.Run("Cancel on REJECTED row returns 409", func(t *testing.T) {
 		store := NewMemoryStore()
 		row := seedPending(t, store, "pr-4")
-		_ = store.Decide(nil, row.ID, Decision{Status: StatusRejected, By: "u-admin"})
+		_ = store.Decide(context.TODO(), row.ID, Decision{Status: StatusRejected, By: "u-admin"})
 		rec := doDelete(t, store, requester, row.ID)
 		if rec.Code != http.StatusConflict {
 			t.Errorf("status=%d, want 409", rec.Code)
@@ -166,7 +167,7 @@ func TestBDD_PermissionRequest_Cancel(t *testing.T) {
 		}
 	})
 
-	t.Run("Double-cancel returns 409 (cancelled is terminal)", func(t *testing.T) {
+	t.Run("Double-cancel returns 409 (canceled is terminal)", func(t *testing.T) {
 		store := NewMemoryStore()
 		row := seedPending(t, store, "pr-6")
 		rec1 := doDelete(t, store, requester, row.ID)

@@ -155,7 +155,7 @@ func (m *MemoryStore) AggregateForTarget(_ context.Context, userID, targetRID st
 // SELECT … WHERE target_rid = ANY($1) for an O(1)-roundtrip path.
 // Empty input yields ([], nil) without holding the lock. Each
 // summary slot is guaranteed non-nil (empty slice, not nil) so the
-// handler can safely serialise [].
+// handler can safely serialize [].
 func (m *MemoryStore) AggregateForTargets(ctx context.Context, userID string, targetRIDs []string) ([][]EmojiCount, error) {
 	if len(targetRIDs) == 0 {
 		return [][]EmojiCount{}, nil

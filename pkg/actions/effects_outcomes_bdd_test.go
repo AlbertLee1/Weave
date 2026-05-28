@@ -22,15 +22,15 @@ import (
 // existing call sites compile unchanged — internally it delegates
 // to the new function and discards the outcomes.
 //
-// Outcome schema (will be marshalled to JSON for action_logs):
+// Outcome schema (will be marshaled to JSON for action_logs):
 //
-//   {
-//     "type":       "webhook" | "log" | (unknown effect type echoed back),
-//     "status":     "success" | "failed" | "non_retryable" | "unknown_type",
-//     "attempts":   <int — number of HTTP calls; 1 for log, 1..N for webhook>,
-//     "error":      "<optional final error message>",
-//     "durationMs": <int — total dispatch wall-clock time>
-//   }
+//	{
+//	  "type":       "webhook" | "log" | (unknown effect type echoed back),
+//	  "status":     "success" | "failed" | "non_retryable" | "unknown_type",
+//	  "attempts":   <int — number of HTTP calls; 1 for log, 1..N for webhook>,
+//	  "error":      "<optional final error message>",
+//	  "durationMs": <int — total dispatch wall-clock time>
+//	}
 //
 // Status taxonomy:
 //   - success      — dispatched successfully (possibly after retries)
@@ -40,44 +40,44 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given an empty effects JSON (null / [] / "")
-//   When  ExecuteSideEffectsWithOutcomes runs
-//   Then  it returns (nil, nil) — no work, no error
+//	Given an empty effects JSON (null / [] / "")
+//	When  ExecuteSideEffectsWithOutcomes runs
+//	Then  it returns (nil, nil) — no work, no error
 //
-//   Given a single webhook that succeeds on 1st attempt
-//   When  ExecuteSideEffectsWithOutcomes runs
-//   Then  outcomes[0] = {type=webhook, status=success, attempts=1, error=""}
+//	Given a single webhook that succeeds on 1st attempt
+//	When  ExecuteSideEffectsWithOutcomes runs
+//	Then  outcomes[0] = {type=webhook, status=success, attempts=1, error=""}
 //
-//   Given a webhook that returns 503 once then 200
-//   When  ExecuteSideEffectsWithOutcomes runs
-//   Then  outcomes[0] = {type=webhook, status=success, attempts=2}
+//	Given a webhook that returns 503 once then 200
+//	When  ExecuteSideEffectsWithOutcomes runs
+//	Then  outcomes[0] = {type=webhook, status=success, attempts=2}
 //
-//   Given a webhook that returns 500 persistently with MaxRetries=2
-//   When  ExecuteSideEffectsWithOutcomes runs
-//   Then  outcomes[0] = {type=webhook, status=failed, attempts=3,
-//                        error includes "gave up after 3 attempts"}
+//	Given a webhook that returns 500 persistently with MaxRetries=2
+//	When  ExecuteSideEffectsWithOutcomes runs
+//	Then  outcomes[0] = {type=webhook, status=failed, attempts=3,
+//	                     error includes "gave up after 3 attempts"}
 //
-//   Given a webhook that returns 400 Bad Request
-//   When  ExecuteSideEffectsWithOutcomes runs
-//   Then  outcomes[0] = {type=webhook, status=non_retryable, attempts=1}
+//	Given a webhook that returns 400 Bad Request
+//	When  ExecuteSideEffectsWithOutcomes runs
+//	Then  outcomes[0] = {type=webhook, status=non_retryable, attempts=1}
 //
-//   Given a log effect
-//   When  ExecuteSideEffectsWithOutcomes runs
-//   Then  outcomes[0] = {type=log, status=success, attempts=1}
+//	Given a log effect
+//	When  ExecuteSideEffectsWithOutcomes runs
+//	Then  outcomes[0] = {type=log, status=success, attempts=1}
 //
-//   Given an unknown effect type "carrier-pigeon"
-//   When  ExecuteSideEffectsWithOutcomes runs
-//   Then  outcomes[0] = {type=carrier-pigeon, status=unknown_type, attempts=0}
+//	Given an unknown effect type "carrier-pigeon"
+//	When  ExecuteSideEffectsWithOutcomes runs
+//	Then  outcomes[0] = {type=carrier-pigeon, status=unknown_type, attempts=0}
 //
-//   Given an array of [webhook-success, webhook-fail, log]
-//   When  ExecuteSideEffectsWithOutcomes runs
-//   Then  3 outcomes are returned in input order;
-//         the failing webhook does NOT abort dispatch of the others
-//         (per-effect isolation matches Foundry's best-effort contract)
+//	Given an array of [webhook-success, webhook-fail, log]
+//	When  ExecuteSideEffectsWithOutcomes runs
+//	Then  3 outcomes are returned in input order;
+//	      the failing webhook does NOT abort dispatch of the others
+//	      (per-effect isolation matches Foundry's best-effort contract)
 //
-//   Given a malformed effects JSON
-//   When  ExecuteSideEffectsWithOutcomes runs
-//   Then  it returns (nil, parse error)
+//	Given a malformed effects JSON
+//	When  ExecuteSideEffectsWithOutcomes runs
+//	Then  it returns (nil, parse error)
 //
 // Persistence wiring (executor.go call sites, repo
 // UpdateActionLogSideEffectStatus, migration 000213) is deferred to

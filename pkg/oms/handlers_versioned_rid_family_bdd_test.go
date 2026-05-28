@@ -14,7 +14,7 @@ import (
 // TestBDD_VersionedRIDGuard_Family covers round 119: the
 // rejectVersionedRID helper extracted from round-117 GetObjectType
 // is now applied uniformly across the metadata-Get surface. Each
-// of the 7 Get endpoints recognises @vN and returns 501
+// of the 7 Get endpoints recognizes @vN and returns 501
 // VersionedLookupNotSupported.
 //
 // Table-driven so adding a new Get endpoint costs one row + one

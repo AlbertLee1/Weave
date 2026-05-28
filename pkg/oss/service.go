@@ -84,7 +84,7 @@ type GetLinkedObjectRequest struct {
 // overhead). When non-nil the implementation MUST run the same
 // where → Bleve query pipeline SearchObjects uses, including the
 // row-level policy merge, so filtered counts can never over-report
-// rows the caller is not authorised to see. PRD-V2 §4.1 OSv2-1:1.
+// rows the caller is not authorized to see. PRD-V2 §4.1 OSv2-1:1.
 type CountObjectsRequest struct {
 	OntologyRID string
 	ObjectType  string

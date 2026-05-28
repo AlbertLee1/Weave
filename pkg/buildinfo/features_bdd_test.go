@@ -14,7 +14,7 @@ import (
 
 func TestBDD_FeaturesHandler(t *testing.T) {
 	// Always restore the global state after each test so subtests
-	// don't leak to neighbours or to other tests in the package.
+	// don't leak to neighbors or to other tests in the package.
 	origState := currentFeatures()
 	t.Cleanup(func() { SetFeatures(origState) })
 
@@ -160,7 +160,7 @@ func TestBDD_FeaturesHandler(t *testing.T) {
 	t.Run("Sort applies on each SetFeatures call (not lazily on read)", func(t *testing.T) {
 		// Round-127 sorts at SetFeatures time, not in the handler —
 		// so reads stay O(1) (modulo copy). Confirm the order
-		// hasn't been re-randomised by ensuring two calls with the
+		// hasn't been re-randomized by ensuring two calls with the
 		// same input yield identical bytes.
 		input := []Feature{
 			{Name: "b", Enabled: true},

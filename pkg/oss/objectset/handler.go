@@ -157,7 +157,7 @@ func (h *Handler) SetTransactionResolver(r TransactionResolver) {
 // deletions). Passing nil detaches the hook — non-default branches then
 // surface as BranchLookupUnavailable 400. The default branch ("main") is
 // never sent to the provider; that path stays byte-for-byte identical to
-// the pre-US-381 behaviour.
+// the pre-US-381 behavior.
 func (h *Handler) SetBranchScopeProvider(p BranchScopeProvider) {
 	h.branchScopes = p
 }
@@ -269,7 +269,7 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 	// scan object_history for the snapshot covering that instant and skip
 	// the Bleve fetch entirely. Only "base" ObjectSets are supported
 	// because composite types (filter / union / ...) need a per-instant
-	// Bleve index that we don't materialise.
+	// Bleve index that we don't materialize.
 	if asOfRaw := r.URL.Query().Get("asOf"); asOfRaw != "" {
 		asOf, apiErr := h.resolveAsOf(ctx, asOfRaw)
 		if apiErr != nil {
@@ -444,7 +444,7 @@ func branchFromRequest(r *http.Request) string {
 // resolveBranch normalises the branch input (US-381 ?branch= query
 // + round-39 X-Weave-Branch header). An empty or whitespace-only
 // value resolves to DefaultBranch ("main") so callers that omit
-// both keep their pre-US-381 behaviour. A non-empty value with
+// both keep their pre-US-381 behavior. A non-empty value with
 // leading/trailing whitespace is rejected as InvalidBranch rather
 // than silently trimmed — branch identifiers are user-visible
 // labels and a stray space almost always indicates a client bug.
@@ -573,7 +573,7 @@ func (h *Handler) loadObjectsAsOf(w http.ResponseWriter, r *http.Request, ctx co
 	// snapshot list through the wired BranchScopeProvider so branch
 	// overlays remain visible even on time-travel reads. The provider
 	// receives the snapshot PKs as the live set; branch deletions /
-	// substitutions are honoured by intersecting against the returned
+	// substitutions are honored by intersecting against the returned
 	// authoritative set. Branch-only adds that the snapshot path can't
 	// produce (the provider would emit PKs not present in snapshots) are
 	// silently dropped here — the caller only sees rows the history scan

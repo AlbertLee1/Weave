@@ -39,11 +39,11 @@ import (
 //   - Empty markings produce empty array (not null)
 
 type fakeResolver struct {
-	byApiName map[string]*auth.ResolvedOntology
+	byAPIName map[string]*auth.ResolvedOntology
 }
 
 func (f *fakeResolver) GetOntology(_ context.Context, apiNameOrRID string) (*auth.ResolvedOntology, error) {
-	if r, ok := f.byApiName[apiNameOrRID]; ok {
+	if r, ok := f.byAPIName[apiNameOrRID]; ok {
 		return r, nil
 	}
 	return nil, auth.ErrOntologyNotFound
@@ -53,7 +53,7 @@ func TestBDD_OntologyMeHandler(t *testing.T) {
 	const ontRID = "ri.ontology.main.ontology.northwind"
 
 	newServer := func() *chi.Mux {
-		resolver := &fakeResolver{byApiName: map[string]*auth.ResolvedOntology{
+		resolver := &fakeResolver{byAPIName: map[string]*auth.ResolvedOntology{
 			"northwind": {RID: ontRID, APIName: "northwind"},
 		}}
 		r := chi.NewRouter()
@@ -62,10 +62,10 @@ func TestBDD_OntologyMeHandler(t *testing.T) {
 		return r
 	}
 
-	doGet := func(t *testing.T, r *chi.Mux, ontApiName string, u *auth.User, markings []string) *httptest.ResponseRecorder {
+	doGet := func(t *testing.T, r *chi.Mux, ontAPIName string, u *auth.User, markings []string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet,
-			"/api/v2/ontologies/"+ontApiName+"/me", nil)
+			"/api/v2/ontologies/"+ontAPIName+"/me", nil)
 		if u != nil {
 			if markings != nil {
 				if u.Attributes == nil {

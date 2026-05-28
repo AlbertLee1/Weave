@@ -18,10 +18,10 @@ import (
 // GetObjectType. Lets the BDD scenarios drive the "non-ErrNotFound"
 // branch of the dataset handlers' error ladder.
 type errorInjectingOntologyResolver struct {
-	getOntErr  error
-	getOntRet  *oms.Ontology
-	getObjErr  error
-	getObjRet  *oms.ObjectType
+	getOntErr error
+	getOntRet *oms.Ontology
+	getObjErr error
+	getObjRet *oms.ObjectType
 }
 
 func (r *errorInjectingOntologyResolver) GetOntology(_ context.Context, _ string) (*oms.Ontology, error) {
@@ -42,12 +42,12 @@ func (r *errorInjectingOntologyResolver) GetObjectType(_ context.Context, _ stri
 // write to drive the rollback / history handlers' downstream-failure
 // branches. nil err yields empty results so happy paths can also run.
 type errorInjectingTxStore struct {
-	getErr        error
-	latestErr     error
-	listByErr     error
-	recordErr     error
-	listAfterErr  error
-	markErr       error
+	getErr       error
+	latestErr    error
+	listByErr    error
+	recordErr    error
+	listAfterErr error
+	markErr      error
 }
 
 func (s *errorInjectingTxStore) GetDatasetTransaction(_ context.Context, _ string) (*oms.DatasetTransaction, error) {
@@ -183,7 +183,7 @@ func TestBDD_DatasetHandlers_DownstreamErrorsReturnHTTP500(t *testing.T) {
 		// Record but force ListAfterCommittedAt to fail.
 		wrapped := &listAfterErrorTxStore{
 			datasetTransactionWriter: txStore,
-			err:                       errors.New("postgres: query cancelled"),
+			err:                      errors.New("postgres: query canceled"),
 		}
 
 		repo := &errorInjectingOntologyResolver{
@@ -196,7 +196,7 @@ func TestBDD_DatasetHandlers_DownstreamErrorsReturnHTTP500(t *testing.T) {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
-		assertDatasetInternalError(t, rec, "DatasetRollbackFailed", "postgres: query cancelled")
+		assertDatasetInternalError(t, rec, "DatasetRollbackFailed", "postgres: query canceled")
 	})
 
 	t.Run("DatasetHistory genuine ErrNotFound regression guard still returns HTTP 404", func(t *testing.T) {

@@ -297,7 +297,7 @@ func (h *OMSHandler) GetActionTypesByRidBatchV2(w http.ResponseWriter, r *http.R
 // as metadata — round out the set; a saved-query palette
 // rendering N saved queries no longer needs N round-trips.
 // Reuses shared getByRidBatchRequest. Missing RIDs silently
-// skipped (same convention). QueryType serialises directly via
+// skipped (same convention). QueryType serializes directly via
 // the JSON encoder — no ToWireJSON helper.
 func (h *OMSHandler) GetQueryTypesByRidBatchV2(w http.ResponseWriter, r *http.Request) {
 	var req getByRidBatchRequest
@@ -327,7 +327,7 @@ func (h *OMSHandler) GetQueryTypesByRidBatchV2(w http.ResponseWriter, r *http.Re
 // a time; without a batch surface a 50-group list needed 50
 // round-trips to label them. Reuses shared getByRidBatchRequest.
 // Missing RIDs silently skipped (same convention). TypeGroup
-// serialises directly via the JSON encoder — same as Interface
+// serializes directly via the JSON encoder — same as Interface
 // / ValueType / SharedProperty, no ToWireJSON helper.
 func (h *OMSHandler) GetTypeGroupsByRidBatchV2(w http.ResponseWriter, r *http.Request) {
 	var req getByRidBatchRequest
@@ -359,7 +359,7 @@ func (h *OMSHandler) GetTypeGroupsByRidBatchV2(w http.ResponseWriter, r *http.Re
 // interface designers rendering many shared-property metadatas
 // no longer need N round-trips. Reuses shared getByRidBatchRequest.
 // Missing RIDs silently skipped (same convention). SharedProperty
-// serialises directly via the JSON encoder — no ToWireJSON helper.
+// serializes directly via the JSON encoder — no ToWireJSON helper.
 func (h *OMSHandler) GetSharedPropertyTypesByRidBatchV2(w http.ResponseWriter, r *http.Request) {
 	var req getByRidBatchRequest
 	if err := httputil.ReadJSON(r, &req); err != nil {
@@ -388,7 +388,7 @@ func (h *OMSHandler) GetSharedPropertyTypesByRidBatchV2(w http.ResponseWriter, r
 // unit-suggestion panels rendering many value-type metadatas no
 // longer need N round-trips to label N RIDs. Reuses shared
 // getByRidBatchRequest. Missing RIDs silently skipped (convention
-// across all five surfaces). ValueType serialises directly via
+// across all five surfaces). ValueType serializes directly via
 // the JSON encoder — no ToWireJSON helper.
 func (h *OMSHandler) GetValueTypesByRidBatchV2(w http.ResponseWriter, r *http.Request) {
 	var req getByRidBatchRequest
@@ -417,9 +417,9 @@ func (h *OMSHandler) GetValueTypesByRidBatchV2(w http.ResponseWriter, r *http.Re
 // SDK callers rendering many interface metadatas previously needed
 // N round-trips. Reuses shared getByRidBatchRequest. Missing RIDs
 // silently skipped (matches the established convention across the
-// other three surfaces). Interface struct serialises directly via
+// other three surfaces). Interface struct serializes directly via
 // the JSON encoder — no ToWireJSON helper needed because Interface
-// has no signature-style fields requiring re-marshalling.
+// has no signature-style fields requiring re-marshaling.
 func (h *OMSHandler) GetInterfaceTypesByRidBatchV2(w http.ResponseWriter, r *http.Request) {
 	var req getByRidBatchRequest
 	if err := httputil.ReadJSON(r, &req); err != nil {
@@ -464,7 +464,7 @@ func (h *OMSHandler) GetLinkTypesByRidBatchV2(w http.ResponseWriter, r *http.Req
 		lt, err := h.repo.GetLinkType(r.Context(), rid)
 		if err != nil {
 			// Skip missing entries silently — matches existing
-			// objectTypes / actionTypes batch behaviour.
+			// objectTypes / actionTypes batch behavior.
 			continue
 		}
 		data, err := lt.ToWireJSON()

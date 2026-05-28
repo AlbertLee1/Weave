@@ -519,7 +519,7 @@ func splitRegexQueryParam(raw string) (field, pattern string, ok bool) {
 // countRequestBody is the optional JSON body for the count endpoint.
 // Foundry OSv2 wire shape: {"where": <whereClause>}. An empty body or
 // {} (no where field) means "count everything of this type" and keeps
-// the pre-Where backward-compatible behaviour.
+// the pre-Where backward-compatible behavior.
 type countRequestBody struct {
 	Where *where.WhereClause `json:"where,omitempty"`
 }
@@ -530,7 +530,7 @@ type countRequestBody struct {
 // supplied with a where clause, the response counts ONLY matching
 // objects (subject to row-level policy). An empty body keeps the
 // fast indexMgr.DocCount path so SDK callers that never sent a body
-// see no behaviour change.
+// see no behavior change.
 func (h *Handler) CountObjects(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	objectType := chi.URLParam(r, "objectType")

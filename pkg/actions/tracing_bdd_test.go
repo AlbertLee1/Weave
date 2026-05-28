@@ -46,7 +46,7 @@ func TestBDD_Actions_TraceSpans_PRD_Gap_O2(t *testing.T) {
 	// Shared fixture: a single createEmployee action type with one
 	// required parameter and a single createObject rule that wires
 	// the parameter onto the new Employee. Mirrors the existing
-	// TestExecutor_* fixtures so behaviour is consistent.
+	// TestExecutor_* fixtures so behavior is consistent.
 	newFixture := func() *Executor {
 		repo := &mockOmsRepo{
 			actionTypes: []oms.ActionType{

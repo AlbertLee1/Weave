@@ -17,12 +17,12 @@ const BranchHeader = "X-Weave-Branch"
 
 // ResolveBranchFromRequest returns the effective branch name for r.
 // Precedence:
-//   1. ?branch=<name> query parameter (back-compat — every existing
-//      caller in pkg/oms, pkg/oss, pkg/actions reads this first).
-//   2. X-Weave-Branch HTTP header (round 39 / Gap-T4 addition —
-//      lets a client pin to a non-main branch without rewriting
-//      every URL).
-//   3. DefaultBranch ("main") when neither is set.
+//  1. ?branch=<name> query parameter (back-compat — every existing
+//     caller in pkg/oms, pkg/oss, pkg/actions reads this first).
+//  2. X-Weave-Branch HTTP header (round 39 / Gap-T4 addition —
+//     lets a client pin to a non-main branch without rewriting
+//     every URL).
+//  3. DefaultBranch ("main") when neither is set.
 //
 // Returns the raw, untrimmed value so callers can decide whether
 // to reject leading/trailing whitespace (pkg/oss/objectset's

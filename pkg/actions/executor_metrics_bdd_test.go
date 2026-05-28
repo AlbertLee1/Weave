@@ -25,20 +25,20 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given an Executor + a successful Apply call for action type X
-//   When  we scrape the prometheus registry
-//   Then  weave_actions_applied_total{action_type="X",status="ok"}
-//         increments by 1
+//	Given an Executor + a successful Apply call for action type X
+//	When  we scrape the prometheus registry
+//	Then  weave_actions_applied_total{action_type="X",status="ok"}
+//	      increments by 1
 //
-//   Given an Executor + a failing Apply call (unknown action)
-//   When  we scrape the prometheus registry
-//   Then  weave_actions_applied_total{action_type="X",status="error"}
-//         increments by 1
+//	Given an Executor + a failing Apply call (unknown action)
+//	When  we scrape the prometheus registry
+//	Then  weave_actions_applied_total{action_type="X",status="error"}
+//	      increments by 1
 //
-//   Given an Executor + multiple Apply calls for two different
-//         action types
-//   When  we scrape the prometheus registry
-//   Then  the per-type counters are independent
+//	Given an Executor + multiple Apply calls for two different
+//	      action types
+//	When  we scrape the prometheus registry
+//	Then  the per-type counters are independent
 func TestBDD_ExecutorApply_EmitsActionMetrics(t *testing.T) {
 	t.Run("successful Apply increments status=ok counter", func(t *testing.T) {
 		r := freshActionMetricsRegistry(t)

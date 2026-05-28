@@ -22,11 +22,11 @@ import (
 //
 // Wire shape (mirror of the established pattern):
 //
-//   POST /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/getByRidBatch
-//   {"rids": ["sp-1", "sp-2", "sp-3"]}
-//     200 + {"data": [SharedProperty, SharedProperty, SharedProperty]}
-//         missing RIDs SKIPPED SILENTLY — same convention as the
-//         five core-metadata batch surfaces.
+//	POST /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/getByRidBatch
+//	{"rids": ["sp-1", "sp-2", "sp-3"]}
+//	  200 + {"data": [SharedProperty, SharedProperty, SharedProperty]}
+//	      missing RIDs SKIPPED SILENTLY — same convention as the
+//	      five core-metadata batch surfaces.
 //
 // Scenarios:
 //   - Three RIDs all resolve.

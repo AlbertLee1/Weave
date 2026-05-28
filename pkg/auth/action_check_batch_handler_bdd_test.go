@@ -55,7 +55,7 @@ func TestBDD_ActionCheckBatchHandler(t *testing.T) {
 		actCust = "ri.action-type.main.createCustomer"
 		actOrd  = "ri.action-type.main.createOrder"
 	)
-	ontResolver := &fakeResolver{byApiName: map[string]*auth.ResolvedOntology{
+	ontResolver := &fakeResolver{byAPIName: map[string]*auth.ResolvedOntology{
 		"northwind": {RID: ontRID, APIName: "northwind", DisplayName: "Northwind"},
 	}}
 	actResolver := &fakeActionResolver{byKey: map[string]*auth.ResolvedActionType{

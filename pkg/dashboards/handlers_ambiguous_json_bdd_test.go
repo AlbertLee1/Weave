@@ -36,7 +36,7 @@ func TestBDD_Dashboards_RejectAmbiguousJSONBody(t *testing.T) {
 		// — the first decoded value would land as a private "Public"
 		// dashboard; the smuggled trailer could be observed by an
 		// audit pipeline re-parsing the raw bytes as if the operator
-		// authorised creating a second public "Smuggled" dashboard.
+		// authorized creating a second public "Smuggled" dashboard.
 		body := `{"name":"Public"}{"name":"Smuggled","isPublic":true}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v2/dashboards", bytes.NewReader([]byte(body)))
 		req.Header.Set("Content-Type", "application/json")

@@ -24,7 +24,7 @@ import (
 // The new endpoint:
 //   - GET /api/v2/ontologies/{ontology}/objectTypes/{objectTypeApiName}/typeGroups
 //     → {"data": [TypeGroup, ...]} for the groups this ObjectType
-//       belongs to.
+//     belongs to.
 //
 // Envelope NEVER null; ObjectType with no TypeGroup assignments
 // returns {"data":[]}. Unknown ObjectType returns 404

@@ -23,11 +23,11 @@ import (
 //
 // Wire shape (mirror of the established pattern):
 //
-//   POST /api/v2/ontologies/{ontologyApiName}/queryTypes/getByRidBatch
-//   {"rids": ["qt-1", "qt-2", "qt-3"]}
-//     200 + {"data": [QueryType, QueryType, QueryType]}
-//         missing RIDs SKIPPED SILENTLY — same convention shared
-//         with the seven other batch surfaces.
+//	POST /api/v2/ontologies/{ontologyApiName}/queryTypes/getByRidBatch
+//	{"rids": ["qt-1", "qt-2", "qt-3"]}
+//	  200 + {"data": [QueryType, QueryType, QueryType]}
+//	      missing RIDs SKIPPED SILENTLY — same convention shared
+//	      with the seven other batch surfaces.
 //
 // Scenarios:
 //   - Three RIDs all resolve.

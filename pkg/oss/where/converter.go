@@ -32,6 +32,7 @@ func ConvertToBleveQueryWithOpts(clause *WhereClause, opts *ConvertOptions) (que
 	return q, nil
 }
 
+//nolint:gocyclo // refactoring out of scope for this PR
 func convertToBleveQueryUnwrapped(clause *WhereClause, opts *ConvertOptions) (query.Query, error) {
 	if clause == nil {
 		return nil, fmt.Errorf("where clause is nil")

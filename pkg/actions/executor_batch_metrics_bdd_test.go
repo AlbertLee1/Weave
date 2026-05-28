@@ -18,24 +18,24 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given a batch of 3 actions (2 unique types: typeA x2, typeB x1)
-//         that all succeed
-//   When  ApplyBatchAtomic returns
-//   Then  weave_actions_applied_total receives 3 ok observations
-//         partitioned correctly per action_type label (typeA=2,
-//         typeB=1) AND histogram observation count totals 3
+//	Given a batch of 3 actions (2 unique types: typeA x2, typeB x1)
+//	      that all succeed
+//	When  ApplyBatchAtomic returns
+//	Then  weave_actions_applied_total receives 3 ok observations
+//	      partitioned correctly per action_type label (typeA=2,
+//	      typeB=1) AND histogram observation count totals 3
 //
-//   Given a batch where action index 1 fails at Prepare
-//   When  ApplyBatchAtomic returns
-//   Then  EVERY action in the batch (including the ones that
-//         prepared successfully but never committed) gets a
-//         status=error observation — honest accounting of "all-or-
-//         nothing aborted the whole batch"
+//	Given a batch where action index 1 fails at Prepare
+//	When  ApplyBatchAtomic returns
+//	Then  EVERY action in the batch (including the ones that
+//	      prepared successfully but never committed) gets a
+//	      status=error observation — honest accounting of "all-or-
+//	      nothing aborted the whole batch"
 //
-//   Given a batch of zero requests
-//   When  ApplyBatchAtomic returns
-//   Then  no metric observations are emitted (no requests = no
-//         per-action observations)
+//	Given a batch of zero requests
+//	When  ApplyBatchAtomic returns
+//	Then  no metric observations are emitted (no requests = no
+//	      per-action observations)
 func TestBDD_ExecutorApplyBatchAtomic_EmitsActionMetrics(t *testing.T) {
 	t.Run("happy path: per-type counters reflect mixed batch", func(t *testing.T) {
 		_ = freshActionMetricsRegistry(t)

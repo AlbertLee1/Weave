@@ -49,7 +49,7 @@ func TestBDD_QueryCheckBatchHandler(t *testing.T) {
 		qtTop  = "ri.qt.topCustomers"
 		qtLate = "ri.qt.lateShipments"
 	)
-	ontResolver := &fakeResolver{byApiName: map[string]*auth.ResolvedOntology{
+	ontResolver := &fakeResolver{byAPIName: map[string]*auth.ResolvedOntology{
 		"northwind": {RID: ontRID, APIName: "northwind", DisplayName: "Northwind"},
 	}}
 	queryResolver := &fakeQueryResolver{byKey: map[string]*auth.ResolvedQueryType{

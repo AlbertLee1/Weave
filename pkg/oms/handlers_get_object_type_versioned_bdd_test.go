@@ -13,16 +13,17 @@ import (
 
 // TestBDD_GetObjectType_VersionedRID covers round-117 Gap-T4 step-2.
 // First production wiring of the round-91 RID @vN parser: the
-// GetObjectType handler now recognises versioned RIDs and returns
+// GetObjectType handler now recognizes versioned RIDs and returns
 // 501 NotImplemented (errorName VersionedLookupNotSupported) instead
 // of letting them fall through to GetObjectTypeByAPIName (which
 // would return a misleading 404).
 //
 // Wire contract:
-//   GET /api/v2/ontologies/{ont}/objectTypes/{otApiName-or-RID}
-//   - apiName="Customer"              -> 200 (existing behaviour)
-//   - apiName="ri.x.y.z.{uuid}"       -> 200 (un-versioned RID — existing)
-//   - apiName="ri.x.y.z.{uuid}@v3"    -> 501 VersionedLookupNotSupported
+//
+//	GET /api/v2/ontologies/{ont}/objectTypes/{otApiName-or-RID}
+//	- apiName="Customer"              -> 200 (existing behavior)
+//	- apiName="ri.x.y.z.{uuid}"       -> 200 (un-versioned RID — existing)
+//	- apiName="ri.x.y.z.{uuid}@v3"    -> 501 VersionedLookupNotSupported
 //
 // The 501 carries the parsed version + the original input so the
 // SPA/SDK can show "version 3 of Customer is pinned but snapshots
@@ -64,7 +65,7 @@ func TestBDD_GetObjectType_VersionedRID(t *testing.T) {
 		return rec
 	}
 
-	t.Run("API name lookup still works (existing behaviour preserved)", func(t *testing.T) {
+	t.Run("API name lookup still works (existing behavior preserved)", func(t *testing.T) {
 		r := newServer(t)
 		rec := doGet(t, r, otAPI)
 		if rec.Code != http.StatusOK {

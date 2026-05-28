@@ -49,8 +49,8 @@ var ErrOntologyNotFound = errors.New("ontology not found")
 // OntologyMeResponse is the JSON shape returned by
 // GET /api/v2/ontologies/{ontologyApiName}/me.
 type OntologyMeResponse struct {
-	OntologyRID     string   `json:"ontologyRid"`
-	OntologyAPIName string   `json:"ontologyApiName"`
+	OntologyRID     string `json:"ontologyRid"`
+	OntologyAPIName string `json:"ontologyApiName"`
 	// Role is the scoped per-ontology role the caller holds for this
 	// specific ontology — empty string when none. Distinct from the
 	// global Roles array on MeResponse: callers can have multiple

@@ -20,12 +20,12 @@ import (
 //
 // Wire shape (mirror of the existing actionTypes/linkTypes pattern):
 //
-//   POST /api/v2/ontologies/{ontologyApiName}/interfaceTypes/getByRidBatch
-//   {"rids": ["if-1", "if-2", "if-3"]}
-//     200 + {"data": [Interface, Interface, Interface]}
-//         missing RIDs are SKIPPED SILENTLY — matches the
-//         established round-79 convention so SDK partial-render
-//         logic stays portable across all four batch surfaces.
+//	POST /api/v2/ontologies/{ontologyApiName}/interfaceTypes/getByRidBatch
+//	{"rids": ["if-1", "if-2", "if-3"]}
+//	  200 + {"data": [Interface, Interface, Interface]}
+//	      missing RIDs are SKIPPED SILENTLY — matches the
+//	      established round-79 convention so SDK partial-render
+//	      logic stays portable across all four batch surfaces.
 //
 // Scenarios:
 //   - Three RIDs all resolve: response carries all three.

@@ -24,13 +24,13 @@ import (
 // employees?") had no choice but to fall back to a full /search with
 // pageSize=1 and read totalCount.
 //
-// The new behaviour:
+// The new behavior:
 //
 //   - Empty body keeps the existing fast path (DocCount). Backwards-
 //     compatible for SDKs that never sent a body.
 //   - {"where": {...}} runs the same where-clause → Bleve query pipeline
 //     SearchObjects uses, but with Size=0 so Bleve returns the total
-//     match count without paying to materialise documents.
+//     match count without paying to materialize documents.
 //   - Malformed where surfaces as 400 CountObjectsFailed, mirroring
 //     SearchObjects' error contract. (Note: a downstream PG/Bleve
 //     failure DOES surface here too with the same envelope; round 26

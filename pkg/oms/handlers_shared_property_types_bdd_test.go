@@ -43,14 +43,14 @@ func TestBDD_SharedPropertyTypes_V2_FoundryAlignment(t *testing.T) {
 		})
 		repo.sharedProperties = append(repo.sharedProperties,
 			oms.SharedProperty{
-				RID: "ri.ontology.main.shared-property.email",
+				RID:         "ri.ontology.main.shared-property.email",
 				OntologyRID: ontRID,
 				APIName:     "email",
 				DisplayName: "Email",
 				BaseType:    "string",
 			},
 			oms.SharedProperty{
-				RID: "ri.ontology.main.shared-property.priority",
+				RID:         "ri.ontology.main.shared-property.priority",
 				OntologyRID: ontRID,
 				APIName:     "priority",
 				DisplayName: "Priority",

@@ -35,9 +35,9 @@ import (
 //   - GET /api/v2/ontologies                  ListOntologies
 //   - GET /api/v2/ontologies/{ontologyApiName} GetOntology
 //   - GET /api/v2/ontologies/{ontologyApiName}/objectTypes
-//                                             ListObjectTypes
+//     ListObjectTypes
 //   - GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}
-//                                             GetObjectType
+//     GetObjectType
 //
 // Each injects a generic (non-ErrNotFound) error into the mock
 // repo and asserts HTTP 500 + errorCode INTERNAL. The remaining
@@ -88,7 +88,7 @@ func TestBDD_OMSHandlers_InternalErrorsReturnHTTP500(t *testing.T) {
 	})
 
 	t.Run("GetObjectType repo error (non-NotFound) returns HTTP 500 INTERNAL", func(t *testing.T) {
-		repo := &mockRepo{getErr: errors.New("postgres: query cancelled")}
+		repo := &mockRepo{getErr: errors.New("postgres: query canceled")}
 		repo.ontologies = append(repo.ontologies, oms.Ontology{
 			RID: "ri.ontology.main.ontology.1", APIName: "test",
 		})

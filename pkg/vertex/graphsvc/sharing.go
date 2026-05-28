@@ -55,7 +55,7 @@ type ShareLinkStore interface {
 	// graphRID, sorted by CreatedAt DESC so the newest link surfaces
 	// first. Implementations must NOT redact the Token field — the
 	// HTTP handler is the security boundary that masks the token into
-	// a tokenSuffix before serialisation, so this layer stays a thin
+	// a tokenSuffix before serialization, so this layer stays a thin
 	// data accessor.
 	ListByGraph(ctx context.Context, graphRID string) ([]*ShareLink, error)
 }
@@ -152,7 +152,7 @@ func newShareToken() (string, error) {
 // keeps its shape.
 //
 // On any decode error the original payload is returned unchanged: the share
-// reader has already been authorised, so leaking the raw bytes is no worse
+// reader has already been authorized, so leaking the raw bytes is no worse
 // than refusing the request, and refusing wholly opaque payloads would be a
 // regression for graphs whose schema we don't yet enforce.
 func maskLayerPropertyValues(payload json.RawMessage) json.RawMessage {

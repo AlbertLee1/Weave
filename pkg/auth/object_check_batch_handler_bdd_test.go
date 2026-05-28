@@ -63,7 +63,7 @@ func TestBDD_ObjectCheckBatchHandler(t *testing.T) {
 		custOT = "ri.object-type.main.Customer"
 		ordOT  = "ri.object-type.main.Order"
 	)
-	ontResolver := &fakeResolver{byApiName: map[string]*auth.ResolvedOntology{
+	ontResolver := &fakeResolver{byAPIName: map[string]*auth.ResolvedOntology{
 		"northwind": {RID: ontRID, APIName: "northwind", DisplayName: "Northwind"},
 	}}
 	objResolver := &fakeObjectResolver{byKey: map[string]*auth.ResolvedObjectType{

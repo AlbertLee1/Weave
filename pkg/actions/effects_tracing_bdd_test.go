@@ -79,14 +79,14 @@ func TestBDD_Webhook_InjectsTraceContextOnOutboundCall(t *testing.T) {
 		t.Fatalf("outcome = %+v, want success", outcomes)
 	}
 	mu.Lock()
-	tp_str := captured
+	tpStr := captured
 	mu.Unlock()
-	if tp_str == "" {
+	if tpStr == "" {
 		t.Fatal("webhook server received empty traceparent — propagator was not invoked")
 	}
-	parts := strings.Split(tp_str, "-")
+	parts := strings.Split(tpStr, "-")
 	if len(parts) != 4 {
-		t.Fatalf("malformed traceparent %q", tp_str)
+		t.Fatalf("malformed traceparent %q", tpStr)
 	}
 	parentTraceHex := parent.SpanContext().TraceID().String()
 	if parts[1] != parentTraceHex {

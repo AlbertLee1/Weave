@@ -29,7 +29,7 @@ var objectSetExecuteDuration = prometheus.NewHistogramVec(
 
 // ObserveObjectSetExecute records one Executor.Execute call's wall-clock
 // duration onto the histogram. Negative durations are clamped to zero so a
-// bad system clock or a goroutine scheduling artefact can't poison the
+// bad system clock or a goroutine scheduling artifact can't poison the
 // bucket; this matches the defensive shape SetFunnelConsumerLag uses.
 //
 // definitionType is the ObjectSet kind from Definition.Type — one of

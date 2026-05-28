@@ -50,7 +50,7 @@ func TestBDD_ObjectCheckHandler(t *testing.T) {
 		ontRID = "ri.ontology.main.ontology.northwind"
 		otRID  = "ri.object-type.main.Customer"
 	)
-	ontResolver := &fakeResolver{byApiName: map[string]*auth.ResolvedOntology{
+	ontResolver := &fakeResolver{byAPIName: map[string]*auth.ResolvedOntology{
 		"northwind": {RID: ontRID, APIName: "northwind", DisplayName: "Northwind"},
 	}}
 	objResolver := &fakeObjectResolver{byKey: map[string]*auth.ResolvedObjectType{

@@ -70,11 +70,11 @@ type adminSideEffectDLQAbandonResponse struct {
 // row status so the admin UI can render "succeeded on 1st replay"
 // or "still failing — 3rd replay also gave up".
 type adminSideEffectDLQReplayResponse struct {
-	ID           int64                     `json:"id"`
-	Replayed     bool                      `json:"replayed"`
-	Status       string                    `json:"status"`
-	ReplayCount  int                       `json:"replayCount"`
-	Outcome      actions.SideEffectOutcome `json:"outcome"`
+	ID          int64                     `json:"id"`
+	Replayed    bool                      `json:"replayed"`
+	Status      string                    `json:"status"`
+	ReplayCount int                       `json:"replayCount"`
+	Outcome     actions.SideEffectOutcome `json:"outcome"`
 }
 
 // defaultSideEffectDLQListLimit caps the per-call list to 100 when the
@@ -186,21 +186,21 @@ func NewAdminSideEffectDLQAbandonHandler(deps AdminSideEffectDLQDeps) http.Handl
 // /api/admin/side-effect-dlq/{id}/replay handler (Gap-A4 round 35).
 //
 // Flow:
-//   1. Load the DLQ row (404 if missing).
-//   2. Reject if status != 'pending' (409 — replay is only valid from
-//      'pending'; replayed rows must not double-fire, abandoned rows
-//      need an explicit un-abandon flow we don't expose here).
-//   3. Load the linked action_logs row so we can reconstruct an
-//      ActionResult shaped the same way the original dispatch saw —
-//      ActionRID + Edits come straight from the row; BatchID is
-//      stamped as "replay-<dlq.id>" so receivers can distinguish a
-//      replayed payload from the original.
-//   4. Call actions.ReplaySideEffect to fire the webhook through the
-//      same round-30 retry loop the original dispatch used.
-//   5. UpdateSideEffectDLQAfterReplay records the new outcome,
-//      bumps replay_count, sets replayed_at, and flips replay_status
-//      to 'replayed' on success. On failure replay_status stays
-//      'pending' so the operator can try again.
+//  1. Load the DLQ row (404 if missing).
+//  2. Reject if status != 'pending' (409 — replay is only valid from
+//     'pending'; replayed rows must not double-fire, abandoned rows
+//     need an explicit un-abandon flow we don't expose here).
+//  3. Load the linked action_logs row so we can reconstruct an
+//     ActionResult shaped the same way the original dispatch saw —
+//     ActionRID + Edits come straight from the row; BatchID is
+//     stamped as "replay-<dlq.id>" so receivers can distinguish a
+//     replayed payload from the original.
+//  4. Call actions.ReplaySideEffect to fire the webhook through the
+//     same round-30 retry loop the original dispatch used.
+//  5. UpdateSideEffectDLQAfterReplay records the new outcome,
+//     bumps replay_count, sets replayed_at, and flips replay_status
+//     to 'replayed' on success. On failure replay_status stays
+//     'pending' so the operator can try again.
 //
 // Returns 200 with the outcome regardless of whether the webhook
 // itself succeeded — the operator needs to see the per-attempt
@@ -268,7 +268,7 @@ func NewAdminSideEffectDLQReplayHandler(deps AdminSideEffectDLQDeps) http.Handle
 		}
 
 		// Reconstruct ActionResult from the action_logs row. Edits is
-		// the same JSON the original dispatch marshalled into its
+		// the same JSON the original dispatch marshaled into its
 		// webhook body. BatchID is stamped "replay-<dlq.id>" so the
 		// receiver can tell this is a manual replay (the original
 		// BatchID isn't stored).

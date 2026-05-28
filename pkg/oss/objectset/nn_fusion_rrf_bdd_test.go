@@ -29,7 +29,7 @@ import (
 // Scenarios:
 //   - RRF reorders results so a two-column hit outranks a one-column
 //     better-distance hit (the property min-distance cannot deliver).
-//   - Empty FusionStrategy is treated as "min" — round-49 behaviour
+//   - Empty FusionStrategy is treated as "min" — round-49 behavior
 //     preserved bit-for-bit.
 //   - Explicit "min" matches the default exactly.
 //   - Unknown strategies are rejected at Validate() (fail-fast so

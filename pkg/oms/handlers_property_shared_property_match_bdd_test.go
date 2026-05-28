@@ -23,19 +23,19 @@ import (
 //
 // Wire shape:
 //
-//   POST /api/admin/objectTypes/{otRID}/properties
-//   {
-//     "apiName": "email",
-//     "baseType": "string",      // MUST match the SP's baseType
-//     "isArray": false,           // MUST match the SP's isArray
-//     "sharedPropertyTypeApiName": "email"   // round 55 — new field
-//   }
+//	POST /api/admin/objectTypes/{otRID}/properties
+//	{
+//	  "apiName": "email",
+//	  "baseType": "string",      // MUST match the SP's baseType
+//	  "isArray": false,           // MUST match the SP's isArray
+//	  "sharedPropertyTypeApiName": "email"   // round 55 — new field
+//	}
 //
-//   201 + Property body          → ok; Property.sharedPropertyRid
-//                                  set to the resolved SP's RID
-//   400 SharedPropertyTypeNotFound  → api-name absent in this ontology
-//   400 SharedPropertyTypeMismatch  → baseType / isArray differ; body
-//                                     carries both sides for the SDK
+//	201 + Property body          → ok; Property.sharedPropertyRid
+//	                               set to the resolved SP's RID
+//	400 SharedPropertyTypeNotFound  → api-name absent in this ontology
+//	400 SharedPropertyTypeMismatch  → baseType / isArray differ; body
+//	                                  carries both sides for the SDK
 //
 // Scenarios:
 //   - Matched binding stores resolved RID and returns 201.
@@ -45,7 +45,7 @@ import (
 //   - isArray mismatch returns 400 with sharedPropertyIsArray +
 //     propertyIsArray reported.
 //   - No sharedPropertyTypeApiName in the body keeps the existing
-//     behaviour exactly (Property created with empty SharedPropertyRID).
+//     behavior exactly (Property created with empty SharedPropertyRID).
 func TestBDD_CreateProperty_SharedPropertyTypeBinding(t *testing.T) {
 	const ontRID = "ri.ontology.main.ontology.1"
 	const otRID = "ri.ontology.main.object-type.user"
@@ -96,9 +96,9 @@ func TestBDD_CreateProperty_SharedPropertyTypeBinding(t *testing.T) {
 	t.Run("Matched binding stores resolved RID and returns 201", func(t *testing.T) {
 		r, repo := newServer(t)
 		rec := doPost(t, r, map[string]interface{}{
-			"apiName":                  "email",
-			"baseType":                 "string",
-			"isArray":                  false,
+			"apiName":                   "email",
+			"baseType":                  "string",
+			"isArray":                   false,
 			"sharedPropertyTypeApiName": "email",
 		})
 		if rec.Code != http.StatusCreated {
@@ -124,9 +124,9 @@ func TestBDD_CreateProperty_SharedPropertyTypeBinding(t *testing.T) {
 	t.Run("Unknown api-name returns 400 SharedPropertyTypeNotFound", func(t *testing.T) {
 		r, repo := newServer(t)
 		rec := doPost(t, r, map[string]interface{}{
-			"apiName":                  "phone",
-			"baseType":                 "string",
-			"isArray":                  false,
+			"apiName":                   "phone",
+			"baseType":                  "string",
+			"isArray":                   false,
 			"sharedPropertyTypeApiName": "ghost",
 		})
 		if rec.Code != http.StatusBadRequest {
@@ -150,9 +150,9 @@ func TestBDD_CreateProperty_SharedPropertyTypeBinding(t *testing.T) {
 	t.Run("baseType mismatch returns 400 with both sides reported", func(t *testing.T) {
 		r, repo := newServer(t)
 		rec := doPost(t, r, map[string]interface{}{
-			"apiName":                  "email",
-			"baseType":                 "integer", // SP says "string"
-			"isArray":                  false,
+			"apiName":                   "email",
+			"baseType":                  "integer", // SP says "string"
+			"isArray":                   false,
 			"sharedPropertyTypeApiName": "email",
 		})
 		if rec.Code != http.StatusBadRequest {
@@ -178,9 +178,9 @@ func TestBDD_CreateProperty_SharedPropertyTypeBinding(t *testing.T) {
 	t.Run("isArray mismatch returns 400 with both sides reported", func(t *testing.T) {
 		r, repo := newServer(t)
 		rec := doPost(t, r, map[string]interface{}{
-			"apiName":                  "email",
-			"baseType":                 "string",
-			"isArray":                  true, // SP says false
+			"apiName":                   "email",
+			"baseType":                  "string",
+			"isArray":                   true, // SP says false
 			"sharedPropertyTypeApiName": "email",
 		})
 		if rec.Code != http.StatusBadRequest {
@@ -203,7 +203,7 @@ func TestBDD_CreateProperty_SharedPropertyTypeBinding(t *testing.T) {
 		}
 	})
 
-	t.Run("No sharedPropertyTypeApiName preserves existing behaviour", func(t *testing.T) {
+	t.Run("No sharedPropertyTypeApiName preserves existing behavior", func(t *testing.T) {
 		r, repo := newServer(t)
 		rec := doPost(t, r, map[string]interface{}{
 			"apiName":  "phone",

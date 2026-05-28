@@ -20,21 +20,21 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given a LoadObjects request with X-Weave-Branch: feature-y
-//         and NO ?branch= query parameter
-//   When  the handler runs
-//   Then  the BranchScopeProvider is consulted with branch=feature-y
+//	Given a LoadObjects request with X-Weave-Branch: feature-y
+//	      and NO ?branch= query parameter
+//	When  the handler runs
+//	Then  the BranchScopeProvider is consulted with branch=feature-y
 //
-//   Given a LoadObjects request with BOTH ?branch=from-query and
-//         X-Weave-Branch: from-header
-//   When  the handler runs
-//   Then  the BranchScopeProvider is consulted with
-//         branch=from-query (query wins; matches round-39 contract)
+//	Given a LoadObjects request with BOTH ?branch=from-query and
+//	      X-Weave-Branch: from-header
+//	When  the handler runs
+//	Then  the BranchScopeProvider is consulted with
+//	      branch=from-query (query wins; matches round-39 contract)
 //
-//   Given a LoadObjects request with neither
-//   When  the handler runs
-//   Then  the BranchScopeProvider is NOT consulted (main-branch
-//         fast path, no overlay required)
+//	Given a LoadObjects request with neither
+//	When  the handler runs
+//	Then  the BranchScopeProvider is NOT consulted (main-branch
+//	      fast path, no overlay required)
 func TestBDD_LoadObjects_HonoursBranchHeader(t *testing.T) {
 	t.Run("X-Weave-Branch header pins to feature-y branch", func(t *testing.T) {
 		handler, _, _ := setupHandlerTest(t)
@@ -55,7 +55,7 @@ func TestBDD_LoadObjects_HonoursBranchHeader(t *testing.T) {
 		}
 		seen := prov.LastBranch()
 		if seen != "feature-y" {
-			t.Errorf("provider got branch = %q, want feature-y (X-Weave-Branch should be honoured)", seen)
+			t.Errorf("provider got branch = %q, want feature-y (X-Weave-Branch should be honored)", seen)
 		}
 	})
 

@@ -43,16 +43,16 @@ type parameterMatchValue struct {
 //
 // Semantics:
 //   - "and" — every child must pass; first failure returned
-//             (matches the existing top-level array AND).
-//             Zero children is vacuously true.
+//     (matches the existing top-level array AND).
+//     Zero children is vacuously true.
 //   - "or"  — first passing child short-circuits; if none pass,
-//             returns an aggregated "submission criteria not met"
-//             error that mentions every child's failure so action
-//             authors can debug all branches at once. Zero children
-//             is vacuously false.
+//     returns an aggregated "submission criteria not met"
+//     error that mentions every child's failure so action
+//     authors can debug all branches at once. Zero children
+//     is vacuously false.
 //   - "not" — exactly one child required; passes iff the child
-//             FAILS. Empty or >1 children rejected as config error
-//             so authoring mistakes surface loudly.
+//     FAILS. Empty or >1 children rejected as config error
+//     so authoring mistakes surface loudly.
 type groupValue struct {
 	Operator string               `json:"operator"`
 	Criteria []SubmissionCriteria `json:"criteria"`
@@ -206,6 +206,7 @@ func ValidateCriteriaSchema(criteriaJSON json.RawMessage) error {
 	return validateSingleCriteriaSchema(single)
 }
 
+//nolint:gocyclo // refactoring out of scope for this PR
 func validateSingleCriteriaSchema(c SubmissionCriteria) error {
 	switch c.Type {
 	case "always", "":
@@ -296,11 +297,11 @@ func evaluateGroupCriteria(cfg groupValue, ctx ActionContext) error {
 		}
 		var failures []string
 		for _, child := range cfg.Criteria {
-			if err := evaluateSingleCriteria(child, ctx); err == nil {
+			err := evaluateSingleCriteria(child, ctx)
+			if err == nil {
 				return nil
-			} else {
-				failures = append(failures, err.Error())
 			}
+			failures = append(failures, err.Error())
 		}
 		return fmt.Errorf("submission criteria not met: no OR child passed: [%s]",
 			strings.Join(failures, " | "))

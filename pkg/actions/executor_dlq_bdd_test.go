@@ -18,32 +18,32 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given a webhook that always returns 500 (exhausts retries)
-//   When  the executor applies the action
-//   Then  ONE DLQ row is inserted with:
-//           action_log_id matching the action's log id
-//           effect_index = 0
-//           effect_type  = "webhook"
-//           effect_config carrying the original SideEffect.Config blob
-//                         (so a future replay can dispatch without re-
-//                         reading the ActionType)
-//           outcome      = the SideEffectOutcome JSON (status=failed,
-//                          attempts=2, error mentions "gave up")
-//           replay_status = "pending"
+//	Given a webhook that always returns 500 (exhausts retries)
+//	When  the executor applies the action
+//	Then  ONE DLQ row is inserted with:
+//	        action_log_id matching the action's log id
+//	        effect_index = 0
+//	        effect_type  = "webhook"
+//	        effect_config carrying the original SideEffect.Config blob
+//	                      (so a future replay can dispatch without re-
+//	                      reading the ActionType)
+//	        outcome      = the SideEffectOutcome JSON (status=failed,
+//	                       attempts=2, error mentions "gave up")
+//	        replay_status = "pending"
 //
-//   Given an action with both a successful and a failing webhook
-//   When  the executor applies the action
-//   Then  ONLY the failing webhook produces a DLQ row;
-//         the successful webhook's outcome stays out of the DLQ.
+//	Given an action with both a successful and a failing webhook
+//	When  the executor applies the action
+//	Then  ONLY the failing webhook produces a DLQ row;
+//	      the successful webhook's outcome stays out of the DLQ.
 //
-//   Given an action with NO side effects
-//   When  the executor applies the action
-//   Then  NO DLQ rows are inserted (we don't churn the table for
-//         zero-effects actions)
+//	Given an action with NO side effects
+//	When  the executor applies the action
+//	Then  NO DLQ rows are inserted (we don't churn the table for
+//	      zero-effects actions)
 //
-//   Given an action whose only side effect succeeds on 1st attempt
-//   When  the executor applies the action
-//   Then  NO DLQ rows are inserted (success path never queues)
+//	Given an action whose only side effect succeeds on 1st attempt
+//	When  the executor applies the action
+//	Then  NO DLQ rows are inserted (success path never queues)
 func TestBDD_Executor_RoutesFailedSideEffectsToDLQ(t *testing.T) {
 	t.Run("exhausted-retry webhook lands one DLQ row with effect_config snapshot", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

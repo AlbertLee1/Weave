@@ -30,34 +30,34 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given a loadObjects request with an unknown ObjectSet type
-//   When  the handler runs
-//   Then  it returns HTTP 400 with errorName "InvalidObjectSet"
-//         and reason mentioning the bad type
+//	Given a loadObjects request with an unknown ObjectSet type
+//	When  the handler runs
+//	Then  it returns HTTP 400 with errorName "InvalidObjectSet"
+//	      and reason mentioning the bad type
 //
-//   Given a loadObjects request whose definition shape is invalid
-//         (e.g. "base" type missing objectType field)
-//   When  the handler runs
-//   Then  it returns HTTP 400 with errorName "InvalidObjectSet"
+//	Given a loadObjects request whose definition shape is invalid
+//	      (e.g. "base" type missing objectType field)
+//	When  the handler runs
+//	Then  it returns HTTP 400 with errorName "InvalidObjectSet"
 //
-//   Given a loadObjects request whose base ObjectType has no index
-//         (simulates a server-side Bleve outage — base executor
-//         fails on the index manager call)
-//   When  the handler runs
-//   Then  it returns HTTP 500 with errorName "ObjectSetFailed"
-//         (was incorrectly 400 before round 37)
+//	Given a loadObjects request whose base ObjectType has no index
+//	      (simulates a server-side Bleve outage — base executor
+//	      fails on the index manager call)
+//	When  the handler runs
+//	Then  it returns HTTP 500 with errorName "ObjectSetFailed"
+//	      (was incorrectly 400 before round 37)
 //
-//   Given a loadLinks request with a filter sub-objectSet missing
-//         the required where clause
-//   When  the handler runs
-//   Then  it returns HTTP 400 with errorName "InvalidObjectSet"
+//	Given a loadLinks request with a filter sub-objectSet missing
+//	      the required where clause
+//	When  the handler runs
+//	Then  it returns HTTP 400 with errorName "InvalidObjectSet"
 func TestBDD_ObjectSetExecutor_SplitsUserSideFromServerSide(t *testing.T) {
 	t.Run("LoadObjects unknown objectSet type → 400 InvalidObjectSet", func(t *testing.T) {
 		handler, _, _ := setupHandlerTest(t)
 		r := chi.NewRouter()
 		r.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjects", handler.LoadObjects)
 
-		// Definition.Validate accepts shapes it doesn't recognise (no
+		// Definition.Validate accepts shapes it doesn't recognize (no
 		// case in the validator). The executor's catch-all default
 		// case ("unknown objectSet type") rejects it — that's our
 		// round-37 sentinel-wrapped path.

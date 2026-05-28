@@ -21,11 +21,11 @@ import (
 //
 // Wire shape:
 //
-//   GET /api/vertex/v1/scenarios/{scenarioRid}/runs
-//     200 + {"runs": [Run, Run, ...]}
-//         runs sorted by startedAt DESC so the newest run is first
-//         (matches the Foundry "Recent runs" panel ordering).
-//         Empty array (non-nil) when the scenario has no runs.
+//	GET /api/vertex/v1/scenarios/{scenarioRid}/runs
+//	  200 + {"runs": [Run, Run, ...]}
+//	      runs sorted by startedAt DESC so the newest run is first
+//	      (matches the Foundry "Recent runs" panel ordering).
+//	      Empty array (non-nil) when the scenario has no runs.
 //
 // Scenarios:
 //   - Empty scenario (no runs at all) returns 200 + {"runs": []}.
@@ -193,4 +193,3 @@ type stubReader struct{}
 func (stubReader) ListActivities(context.Context, string) ([]scenarioruns.Activity, error) {
 	return nil, nil
 }
-

@@ -31,32 +31,32 @@ import (
 //   - errors.Is(err, oms.ErrNotFound)             → 404 ObjectTypeNotFound
 //   - errors.Is(err, where.ErrInvalidWhereClause) → 400 InvalidWhereClause
 //   - else                                        → 500 SearchObjectsFailed
-//                                                 / CountObjectsFailed
+//     / CountObjectsFailed
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given a SearchObjects request whose where clause uses an
-//         unsupported operator
-//   When  the handler runs
-//   Then  it returns HTTP 400 with errorName "InvalidWhereClause"
-//         and reason mentioning the unsupported operator
+//	Given a SearchObjects request whose where clause uses an
+//	      unsupported operator
+//	When  the handler runs
+//	Then  it returns HTTP 400 with errorName "InvalidWhereClause"
+//	      and reason mentioning the unsupported operator
 //
-//   Given a SearchObjects request whose service layer fails with a
-//         non-ErrNotFound, non-where error (simulating a Bleve outage)
-//   When  the handler runs
-//   Then  it returns HTTP 500 with errorName "SearchObjectsFailed"
-//         (was incorrectly HTTP 400 before round 36)
+//	Given a SearchObjects request whose service layer fails with a
+//	      non-ErrNotFound, non-where error (simulating a Bleve outage)
+//	When  the handler runs
+//	Then  it returns HTTP 500 with errorName "SearchObjectsFailed"
+//	      (was incorrectly HTTP 400 before round 36)
 //
-//   Given a CountObjects request with an unsupported where operator
-//   When  the handler runs
-//   Then  it returns HTTP 400 with errorName "InvalidWhereClause"
+//	Given a CountObjects request with an unsupported where operator
+//	When  the handler runs
+//	Then  it returns HTTP 400 with errorName "InvalidWhereClause"
 //
-//   Given a CountObjects request whose service layer fails downstream
-//   When  the handler runs
-//   Then  it returns HTTP 500 with errorName "CountObjectsFailed"
+//	Given a CountObjects request whose service layer fails downstream
+//	When  the handler runs
+//	Then  it returns HTTP 500 with errorName "CountObjectsFailed"
 //
-//   Regression guard: genuine ErrNotFound continues to surface as
-//   HTTP 404 ObjectTypeNotFound (untouched by round 36).
+//	Regression guard: genuine ErrNotFound continues to surface as
+//	HTTP 404 ObjectTypeNotFound (untouched by round 36).
 func TestBDD_SearchAndCountObjects_SplitsUserSideFromServerSide(t *testing.T) {
 	// Where-clause conversion happens inside the service layer (see
 	// ServiceImpl.SearchObjects + .CountObjects calling

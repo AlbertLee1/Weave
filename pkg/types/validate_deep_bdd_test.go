@@ -19,32 +19,32 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given an Array(SubType: Integer) and value [true, false]
-//   When  types.Validate runs
-//   Then  it returns an error mentioning the element type mismatch
+//	Given an Array(SubType: Integer) and value [true, false]
+//	When  types.Validate runs
+//	Then  it returns an error mentioning the element type mismatch
 //
-//   Given a Struct(Fields: {"a": String}) and value {"a": 42}
-//   When  types.Validate runs
-//   Then  it returns an error mentioning the field type mismatch
+//	Given a Struct(Fields: {"a": String}) and value {"a": 42}
+//	When  types.Validate runs
+//	Then  it returns an error mentioning the field type mismatch
 //
-//   Given a nested Struct({"inner": Struct({"k": Integer})}) and
-//         value {"inner": {"k": "wrong"}}
-//   When  types.Validate runs
-//   Then  it recurses and returns an error mentioning "inner" / "k"
+//	Given a nested Struct({"inner": Struct({"k": Integer})}) and
+//	      value {"inner": {"k": "wrong"}}
+//	When  types.Validate runs
+//	Then  it recurses and returns an error mentioning "inner" / "k"
 //
-//   Given an Array(SubType: Struct({"k": Integer})) and value
-//         [{"k": "wrong"}]
-//   When  types.Validate runs
-//   Then  it recurses and returns an error
+//	Given an Array(SubType: Struct({"k": Integer})) and value
+//	      [{"k": "wrong"}]
+//	When  types.Validate runs
+//	Then  it recurses and returns an error
 //
-//   Given a Struct with extra fields not in schema
-//   When  types.Validate runs
-//   Then  extras are preserved (Foundry round-trips unknown fields)
+//	Given a Struct with extra fields not in schema
+//	When  types.Validate runs
+//	Then  extras are preserved (Foundry round-trips unknown fields)
 //
-//   Given a Struct with FEWER fields than the schema declares
-//   When  types.Validate runs
-//   Then  validation passes — declared-but-absent fields are tolerated
-//         (partial updates / MODIFY edits supply only changed fields)
+//	Given a Struct with FEWER fields than the schema declares
+//	When  types.Validate runs
+//	Then  validation passes — declared-but-absent fields are tolerated
+//	      (partial updates / MODIFY edits supply only changed fields)
 //
 // The 4 "wrong-type" scenarios fail before the fix (shallow
 // validator), pass after. The 2 permissive scenarios stay green

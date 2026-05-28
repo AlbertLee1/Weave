@@ -15,13 +15,13 @@ import (
 //
 // Wire shape (Foundry submissionCriteriaConjunction parity):
 //
-//   {
-//     "type": "group",
-//     "value": {
-//       "operator": "and" | "or" | "not",
-//       "criteria": [<SubmissionCriteria>, ...]
-//     }
-//   }
+//	{
+//	  "type": "group",
+//	  "value": {
+//	    "operator": "and" | "or" | "not",
+//	    "criteria": [<SubmissionCriteria>, ...]
+//	  }
+//	}
 //
 // - "and": every child must pass (same as the top-level array)
 // - "or":  at least one child must pass; aggregated error otherwise
@@ -29,47 +29,47 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given a group with operator=or and two children where the
-//         first fails and the second passes
-//   When  EvaluateCriteria runs
-//   Then  it returns nil (OR short-circuits on first pass)
+//	Given a group with operator=or and two children where the
+//	      first fails and the second passes
+//	When  EvaluateCriteria runs
+//	Then  it returns nil (OR short-circuits on first pass)
 //
-//   Given a group with operator=or where both children fail
-//   When  EvaluateCriteria runs
-//   Then  it returns a "submission criteria not met" error whose
-//         message mentions BOTH child failures (aggregated)
+//	Given a group with operator=or where both children fail
+//	When  EvaluateCriteria runs
+//	Then  it returns a "submission criteria not met" error whose
+//	      message mentions BOTH child failures (aggregated)
 //
-//   Given a group with operator=and where all children pass
-//   When  EvaluateCriteria runs
-//   Then  it returns nil
+//	Given a group with operator=and where all children pass
+//	When  EvaluateCriteria runs
+//	Then  it returns nil
 //
-//   Given a group with operator=and where one child fails
-//   When  EvaluateCriteria runs
-//   Then  it returns the first failing child's error
+//	Given a group with operator=and where one child fails
+//	When  EvaluateCriteria runs
+//	Then  it returns the first failing child's error
 //
-//   Given a group with operator=not whose single child PASSES
-//   When  EvaluateCriteria runs
-//   Then  it returns a "submission criteria not met" error
-//         (NOT negates the inner result)
+//	Given a group with operator=not whose single child PASSES
+//	When  EvaluateCriteria runs
+//	Then  it returns a "submission criteria not met" error
+//	      (NOT negates the inner result)
 //
-//   Given a group with operator=not whose single child FAILS
-//   When  EvaluateCriteria runs
-//   Then  it returns nil
+//	Given a group with operator=not whose single child FAILS
+//	When  EvaluateCriteria runs
+//	Then  it returns nil
 //
-//   Given a group nested two deep — outer AND[ inner OR[a,b], c ]
-//   When  EvaluateCriteria runs against a context where 'a' fails,
-//         'b' passes, and 'c' passes
-//   Then  it returns nil (OR short-circuits on b, outer AND passes)
+//	Given a group nested two deep — outer AND[ inner OR[a,b], c ]
+//	When  EvaluateCriteria runs against a context where 'a' fails,
+//	      'b' passes, and 'c' passes
+//	Then  it returns nil (OR short-circuits on b, outer AND passes)
 //
-//   Given a group with an unknown operator
-//   When  EvaluateCriteria runs
-//   Then  it returns an error mentioning the unknown operator
+//	Given a group with an unknown operator
+//	When  EvaluateCriteria runs
+//	Then  it returns an error mentioning the unknown operator
 //
-//   Given a group with operator=not but the children array is empty
-//   When  EvaluateCriteria runs
-//   Then  it returns a config-error mentioning that NOT requires
-//         exactly one child (defensive — Foundry rejects this at
-//         metadata-validation time)
+//	Given a group with operator=not but the children array is empty
+//	When  EvaluateCriteria runs
+//	Then  it returns a config-error mentioning that NOT requires
+//	      exactly one child (defensive — Foundry rejects this at
+//	      metadata-validation time)
 //
 // Tests are written FIRST (RED) before adding the "group" branch
 // to evaluateSingleCriteria — confirming the existing implementation

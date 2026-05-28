@@ -25,7 +25,7 @@ const sideEffectTracerName = "github.com/liyang/weave/pkg/actions/sideeffects"
 
 // SideEffect defines an effect triggered after successful action execution.
 type SideEffect struct {
-	Type   string          `json:"type"`   // "webhook", "log"
+	Type   string          `json:"type"` // "webhook", "log"
 	Config json.RawMessage `json:"config"`
 }
 
@@ -79,7 +79,7 @@ type SideEffectOutcome struct {
 	// Status taxonomy — see the SideEffectStatus* constants below.
 	Status string `json:"status"`
 	// Attempts is the number of dispatch attempts performed. 0 when
-	// the effect type was unrecognised and no dispatch happened. 1 for
+	// the effect type was unrecognized and no dispatch happened. 1 for
 	// log effects, 1..(MaxRetries+1) for webhooks.
 	Attempts int `json:"attempts"`
 	// Error is the final error message on a non-success outcome.
@@ -101,7 +101,7 @@ const (
 	SideEffectStatusSuccess      = "success"       // dispatched (possibly after retries)
 	SideEffectStatusFailed       = "failed"        // retry budget exhausted on transient failure
 	SideEffectStatusNonRetryable = "non_retryable" // 4xx other than 408/429 (caller bug)
-	SideEffectStatusUnknownType  = "unknown_type"  // dispatcher does not recognise effect.Type
+	SideEffectStatusUnknownType  = "unknown_type"  // dispatcher does not recognize effect.Type
 )
 
 // ExecuteSideEffects executes side effects after a successful action.
@@ -203,6 +203,8 @@ func ReplaySideEffect(e SideEffect, result ActionResult) SideEffectOutcome {
 // Per-effect failures populate outcome.Error and outcome.Status — never
 // returned as a Go error, because the caller's per-effect isolation
 // guarantee depends on this method being non-panicking.
+//
+//nolint:unused // backward-compat wrapper retained for downstream callers
 func dispatchSingleEffect(e SideEffect, result ActionResult) SideEffectOutcome {
 	return dispatchSingleEffectCtx(context.Background(), e, result)
 }
@@ -349,6 +351,8 @@ func executeWebhookEffectTrackedImpl(ctx context.Context, configJSON json.RawMes
 // shim retained so older tests / call sites that don't have a context
 // keep compiling; it delegates to doWebhookAttemptCtx with
 // context.Background and attempt=1.
+//
+//nolint:unused // backward-compat wrapper retained for downstream callers
 func doWebhookAttempt(client *http.Client, cfg webhookConfig, body []byte) (int, error) {
 	return doWebhookAttemptCtx(context.Background(), client, cfg, body, 1)
 }

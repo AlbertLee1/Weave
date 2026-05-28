@@ -21,49 +21,49 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given a valid criteria array of mixed parameterMatch +
-//         parameterCompare + group(and(...))
-//   When  ValidateCriteriaSchema runs
-//   Then  it returns nil
+//	Given a valid criteria array of mixed parameterMatch +
+//	      parameterCompare + group(and(...))
+//	When  ValidateCriteriaSchema runs
+//	Then  it returns nil
 //
-//   Given criteria with an unknown type
-//   When  ValidateCriteriaSchema runs
-//   Then  it returns an error naming the unknown type
+//	Given criteria with an unknown type
+//	When  ValidateCriteriaSchema runs
+//	Then  it returns an error naming the unknown type
 //
-//   Given a parameterMatch with an unknown operator
-//   When  ValidateCriteriaSchema runs
-//   Then  it returns an error naming the operator
+//	Given a parameterMatch with an unknown operator
+//	When  ValidateCriteriaSchema runs
+//	Then  it returns an error naming the operator
 //
-//   Given a parameterMatch missing the parameter field
-//   When  ValidateCriteriaSchema runs
-//   Then  it returns an error mentioning "parameter"
+//	Given a parameterMatch missing the parameter field
+//	When  ValidateCriteriaSchema runs
+//	Then  it returns an error mentioning "parameter"
 //
-//   Given a parameterCompare missing leftParameter
-//   When  ValidateCriteriaSchema runs
-//   Then  it returns an error mentioning "leftParameter"
+//	Given a parameterCompare missing leftParameter
+//	When  ValidateCriteriaSchema runs
+//	Then  it returns an error mentioning "leftParameter"
 //
-//   Given a group with an unknown operator
-//   When  ValidateCriteriaSchema runs
-//   Then  it returns an error naming the operator
+//	Given a group with an unknown operator
+//	When  ValidateCriteriaSchema runs
+//	Then  it returns an error naming the operator
 //
-//   Given a NOT group whose children array is not exactly one
-//   When  ValidateCriteriaSchema runs
-//   Then  it returns an error mentioning NOT and the count
+//	Given a NOT group whose children array is not exactly one
+//	When  ValidateCriteriaSchema runs
+//	Then  it returns an error mentioning NOT and the count
 //
-//   Given an empty JSON / null / empty array (no criteria)
-//   When  ValidateCriteriaSchema runs
-//   Then  it returns nil (matches EvaluateCriteria's empty
-//         short-circuit — vacuously valid)
+//	Given an empty JSON / null / empty array (no criteria)
+//	When  ValidateCriteriaSchema runs
+//	Then  it returns nil (matches EvaluateCriteria's empty
+//	      short-circuit — vacuously valid)
 //
-//   Given malformed JSON (truncated object)
-//   When  ValidateCriteriaSchema runs
-//   Then  it returns a parse error mentioning "submission criteria"
+//	Given malformed JSON (truncated object)
+//	When  ValidateCriteriaSchema runs
+//	Then  it returns a parse error mentioning "submission criteria"
 //
-//   Given a deeply nested group(AND(OR(NOT(parameterMatch)))) where
-//         the innermost parameterMatch has a bad operator
-//   When  ValidateCriteriaSchema runs
-//   Then  the error bubbles up from the inner validator (proves
-//         recursive validation, not just top-level)
+//	Given a deeply nested group(AND(OR(NOT(parameterMatch)))) where
+//	      the innermost parameterMatch has a bad operator
+//	When  ValidateCriteriaSchema runs
+//	Then  the error bubbles up from the inner validator (proves
+//	      recursive validation, not just top-level)
 //
 // Tests written FIRST (RED) before adding ValidateCriteriaSchema.
 func TestBDD_ValidateCriteriaSchema(t *testing.T) {

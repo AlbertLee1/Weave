@@ -25,7 +25,7 @@ import (
 //     apiNames within that ontology
 //   - resource URI "weave://ontology/" → ontology apiNames
 //
-// Plus defensive behaviours: nil repo, unknown ontology, unknown
+// Plus defensive behaviors: nil repo, unknown ontology, unknown
 // prompt-name shape, unknown argument, malformed URI all yield
 // nil (handler maps to empty completion envelope — never errors).
 func TestBDD_OntologyCompletionSource(t *testing.T) {
@@ -193,7 +193,7 @@ func TestBDD_OntologyCompletionSource(t *testing.T) {
 
 	t.Run("ListObjectTypes error yields empty (not error)", func(t *testing.T) {
 		failingRepo := &fakeOMSCompletionRepo{
-			ontologies:                     []oms.Ontology{{RID: "ri.x", APIName: "x"}},
+			ontologies:                      []oms.Ontology{{RID: "ri.x", APIName: "x"}},
 			listObjectTypesErrByOntologyRID: map[string]error{"ri.x": errors.New("pg: unreachable")},
 		}
 		out, err := NewOntologyCompletionSource(failingRepo).Complete(context.Background(),

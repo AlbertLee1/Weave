@@ -22,43 +22,43 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given the DLQ has 2 pending rows
-//   When  GET /api/admin/side-effect-dlq
-//   Then  it returns 200 with both entries in the JSON `entries`
-//         array, newest-first ordering (DESC by created_at)
+//	Given the DLQ has 2 pending rows
+//	When  GET /api/admin/side-effect-dlq
+//	Then  it returns 200 with both entries in the JSON `entries`
+//	      array, newest-first ordering (DESC by created_at)
 //
-//   Given a degraded boot where deps.Repo is nil
-//   When  GET /api/admin/side-effect-dlq
-//   Then  it returns 503 SERVICE_UNAVAILABLE with errorName
-//         SideEffectDLQNotConfigured
+//	Given a degraded boot where deps.Repo is nil
+//	When  GET /api/admin/side-effect-dlq
+//	Then  it returns 503 SERVICE_UNAVAILABLE with errorName
+//	      SideEffectDLQNotConfigured
 //
-//   Given ?limit=2 query parameter
-//   When  GET /api/admin/side-effect-dlq?limit=2
-//   Then  the response truncates to 2 entries (limit is honored)
+//	Given ?limit=2 query parameter
+//	When  GET /api/admin/side-effect-dlq?limit=2
+//	Then  the response truncates to 2 entries (limit is honored)
 //
-//   Given a pending row with id 42
-//   When  POST /api/admin/side-effect-dlq/42/abandon
-//   Then  it returns 200 {id:42, abandoned:true, status:"abandoned"}
-//         AND the underlying row's replay_status flipped
+//	Given a pending row with id 42
+//	When  POST /api/admin/side-effect-dlq/42/abandon
+//	Then  it returns 200 {id:42, abandoned:true, status:"abandoned"}
+//	      AND the underlying row's replay_status flipped
 //
-//   Given an already-abandoned row
-//   When  POST /api/admin/side-effect-dlq/{id}/abandon
-//   Then  it returns 200 (idempotent on rows already in abandoned)
+//	Given an already-abandoned row
+//	When  POST /api/admin/side-effect-dlq/{id}/abandon
+//	Then  it returns 200 (idempotent on rows already in abandoned)
 //
-//   Given a replayed row (Status="replayed")
-//   When  POST /api/admin/side-effect-dlq/{id}/abandon
-//   Then  it returns 409 CONFLICT with errorName
-//         SideEffectDLQCannotAbandonReplayed (can't mask a
-//         successful replay)
+//	Given a replayed row (Status="replayed")
+//	When  POST /api/admin/side-effect-dlq/{id}/abandon
+//	Then  it returns 409 CONFLICT with errorName
+//	      SideEffectDLQCannotAbandonReplayed (can't mask a
+//	      successful replay)
 //
-//   Given a missing id
-//   When  POST /api/admin/side-effect-dlq/{id}/abandon
-//   Then  it returns 404 NOT_FOUND with errorName
-//         SideEffectDLQEntryNotFound
+//	Given a missing id
+//	When  POST /api/admin/side-effect-dlq/{id}/abandon
+//	Then  it returns 404 NOT_FOUND with errorName
+//	      SideEffectDLQEntryNotFound
 //
-//   Given a non-numeric id
-//   When  POST /api/admin/side-effect-dlq/abc/abandon
-//   Then  it returns 400 INVALID_ARGUMENT
+//	Given a non-numeric id
+//	When  POST /api/admin/side-effect-dlq/abc/abandon
+//	Then  it returns 400 INVALID_ARGUMENT
 func TestBDD_AdminSideEffectDLQ_ListAndAbandon(t *testing.T) {
 	t.Run("list returns pending rows newest-first", func(t *testing.T) {
 		fake := &fakeSideEffectDLQRepo{

@@ -159,7 +159,7 @@ func TestBDD_MeOntologiesHandler(t *testing.T) {
 		u := &auth.User{
 			ID: "u-4",
 			OntologyRoles: map[string]string{
-				nwRID:                                  "ontology-editor",
+				nwRID:                                 "ontology-editor",
 				"ri.ontology.main.ontology.ghost-rid": "ontology-admin",
 			},
 		}

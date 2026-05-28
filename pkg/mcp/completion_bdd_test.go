@@ -14,59 +14,59 @@ import (
 // variables.
 //
 // Three concerns:
-//   1. Protocol contract — params validation matches the MCP spec,
-//      malformed requests get -32602 InvalidParams with clear msgs.
-//   2. Provider integration — a wired CompletionSource's results
-//      flow through verbatim (subject to the 100-value cap).
-//   3. Default no-source state — completion/complete still returns
-//      a valid empty envelope so clients don't see "method not
-//      found" and abandon autocomplete UX.
+//  1. Protocol contract — params validation matches the MCP spec,
+//     malformed requests get -32602 InvalidParams with clear msgs.
+//  2. Provider integration — a wired CompletionSource's results
+//     flow through verbatim (subject to the 100-value cap).
+//  3. Default no-source state — completion/complete still returns
+//     a valid empty envelope so clients don't see "method not
+//     found" and abandon autocomplete UX.
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given a Server with NO completion source wired
-//   When  completion/complete arrives with valid ref+argument
-//   Then  it returns success with completion.values=[],
-//         total=0, hasMore=false
+//	Given a Server with NO completion source wired
+//	When  completion/complete arrives with valid ref+argument
+//	Then  it returns success with completion.values=[],
+//	      total=0, hasMore=false
 //
-//   Given a Server with a provider that yields 3 candidates
-//   When  completion/complete arrives
-//   Then  the values are returned in the provider's order,
-//         total=3, hasMore=false
+//	Given a Server with a provider that yields 3 candidates
+//	When  completion/complete arrives
+//	Then  the values are returned in the provider's order,
+//	      total=3, hasMore=false
 //
-//   Given a provider that yields >100 candidates
-//   When  completion/complete arrives
-//   Then  values is truncated to 100, hasMore=true, total
-//         reflects the pre-truncation count
+//	Given a provider that yields >100 candidates
+//	When  completion/complete arrives
+//	Then  values is truncated to 100, hasMore=true, total
+//	      reflects the pre-truncation count
 //
-//   Given completion/complete with missing ref.type
-//   When  the handler runs
-//   Then  -32602 InvalidParams with a clear message
+//	Given completion/complete with missing ref.type
+//	When  the handler runs
+//	Then  -32602 InvalidParams with a clear message
 //
-//   Given ref.type="ref/prompt" without ref.name
-//   When  the handler runs
-//   Then  -32602 InvalidParams mentioning ref.name is required
+//	Given ref.type="ref/prompt" without ref.name
+//	When  the handler runs
+//	Then  -32602 InvalidParams mentioning ref.name is required
 //
-//   Given ref.type="ref/resource" without ref.uri
-//   When  the handler runs
-//   Then  -32602 InvalidParams mentioning ref.uri is required
+//	Given ref.type="ref/resource" without ref.uri
+//	When  the handler runs
+//	Then  -32602 InvalidParams mentioning ref.uri is required
 //
-//   Given an unknown ref.type
-//   When  the handler runs
-//   Then  -32602 InvalidParams mentioning the unsupported type
+//	Given an unknown ref.type
+//	When  the handler runs
+//	Then  -32602 InvalidParams mentioning the unsupported type
 //
-//   Given missing argument.name
-//   When  the handler runs
-//   Then  -32602 InvalidParams mentioning argument.name
+//	Given missing argument.name
+//	When  the handler runs
+//	Then  -32602 InvalidParams mentioning argument.name
 //
-//   Given an empty params field
-//   When  the handler runs
-//   Then  -32602 InvalidParams (params is required)
+//	Given an empty params field
+//	When  the handler runs
+//	Then  -32602 InvalidParams (params is required)
 //
-//   Given the initialize handshake
-//   When  it runs
-//   Then  capabilities advertises "completions" so clients know
-//         the server supports the method.
+//	Given the initialize handshake
+//	When  it runs
+//	Then  capabilities advertises "completions" so clients know
+//	      the server supports the method.
 func TestBDD_MCP_CompletionComplete(t *testing.T) {
 	t.Run("no source wired → empty completion envelope", func(t *testing.T) {
 		srv := NewServer(nil, nil, nil)

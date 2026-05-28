@@ -1,6 +1,7 @@
 package dashboards
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -21,18 +22,18 @@ import (
 //
 // Wire shape:
 //
-//   POST /api/v2/dashboards/{id}/duplicate
-//     201 + Dashboard wire object  → new dashboard owned by caller,
-//                                    same Definition, name = "<source>
-//                                    (copy)" (auto-suffixed "(copy 2)"
-//                                    / "(copy 3)" on name collision)
-//     401 + Unauthorized            → caller not authenticated
-//     404 + DashboardNotFound       → source missing OR private &
-//                                     not owned by caller
+//	POST /api/v2/dashboards/{id}/duplicate
+//	  201 + Dashboard wire object  → new dashboard owned by caller,
+//	                                 same Definition, name = "<source>
+//	                                 (dup)" (auto-suffixed "(copy 2)"
+//	                                 / "(copy 3)" on name collision)
+//	  401 + Unauthorized            → caller not authenticated
+//	  404 + DashboardNotFound       → source missing OR private &
+//	                                  not owned by caller
 //
 // Scenarios:
 //   - Owner duplicates own dashboard: new id, "(copy)" name, same
-//     Definition body, IsPublic reset to false on the copy.
+//     Definition body, IsPublic reset to false on the dup.
 //   - Caller duplicates a PUBLIC dashboard owned by someone else:
 //     duplicate is owned by caller (not the original owner) and
 //     IsPublic defaults to false.
@@ -58,7 +59,7 @@ func TestBDD_DashboardDuplicate(t *testing.T) {
 			IsPublic:   public,
 			Definition: json.RawMessage(def),
 		}
-		if err := store.Create(nil, row); err != nil {
+		if err := store.Create(context.TODO(), row); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 		return row.ID
@@ -73,7 +74,7 @@ func TestBDD_DashboardDuplicate(t *testing.T) {
 		return rec
 	}
 
-	t.Run("Owner duplicates own dashboard with (copy) suffix", func(t *testing.T) {
+	t.Run("Owner duplicates own dashboard with (dup) suffix", func(t *testing.T) {
 		store := NewMemoryStore()
 		srcDef := `{"widgets":[{"id":"w1","type":"chart"}]}`
 		id := mkSource(t, store, "Sales", false, srcDef)
@@ -82,24 +83,24 @@ func TestBDD_DashboardDuplicate(t *testing.T) {
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status=%d, want 201; body=%s", rec.Code, rec.Body.String())
 		}
-		var copy Dashboard
-		if err := json.Unmarshal(rec.Body.Bytes(), &copy); err != nil {
+		var dup Dashboard
+		if err := json.Unmarshal(rec.Body.Bytes(), &dup); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if copy.ID == id {
+		if dup.ID == id {
 			t.Errorf("copy.ID = source ID — must be a fresh id")
 		}
-		if copy.Name != "Sales (copy)" {
-			t.Errorf("copy.Name = %q, want %q", copy.Name, "Sales (copy)")
+		if dup.Name != "Sales (copy)" {
+			t.Errorf("copy.Name = %q, want %q", dup.Name, "Sales (copy)")
 		}
-		if copy.CreatedBy != owner.ID {
-			t.Errorf("copy.CreatedBy = %q, want %q", copy.CreatedBy, owner.ID)
+		if dup.CreatedBy != owner.ID {
+			t.Errorf("copy.CreatedBy = %q, want %q", dup.CreatedBy, owner.ID)
 		}
-		if string(copy.Definition) != srcDef {
-			t.Errorf("copy.Definition = %s, want %s", string(copy.Definition), srcDef)
+		if string(dup.Definition) != srcDef {
+			t.Errorf("copy.Definition = %s, want %s", string(dup.Definition), srcDef)
 		}
 		// Privacy resets: copies start private even if source was public.
-		if copy.IsPublic {
+		if dup.IsPublic {
 			t.Errorf("copy.IsPublic = true, want false (privacy must reset on clone)")
 		}
 	})
@@ -112,17 +113,17 @@ func TestBDD_DashboardDuplicate(t *testing.T) {
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status=%d, want 201; body=%s", rec.Code, rec.Body.String())
 		}
-		var copy Dashboard
-		_ = json.Unmarshal(rec.Body.Bytes(), &copy)
-		if copy.CreatedBy != other.ID {
-			t.Errorf("copy.CreatedBy = %q, want caller %q", copy.CreatedBy, other.ID)
+		var dup Dashboard
+		_ = json.Unmarshal(rec.Body.Bytes(), &dup)
+		if dup.CreatedBy != other.ID {
+			t.Errorf("copy.CreatedBy = %q, want caller %q", dup.CreatedBy, other.ID)
 		}
-		if !strings.HasSuffix(copy.Name, "(copy)") {
-			t.Errorf("copy.Name = %q, want suffix \"(copy)\"", copy.Name)
+		if !strings.HasSuffix(dup.Name, "(copy)") {
+			t.Errorf("copy.Name = %q, want suffix \"(dup)\"", dup.Name)
 		}
 	})
 
-	t.Run("Other user duplicating a PRIVATE dashboard gets 404", func(t *testing.T) {
+	t.Run("Other user copylicating a PRIVATE dashboard gets 404", func(t *testing.T) {
 		store := NewMemoryStore()
 		id := mkSource(t, store, "Private", false, `{}`)
 
@@ -137,7 +138,7 @@ func TestBDD_DashboardDuplicate(t *testing.T) {
 		}
 	})
 
-	t.Run("Repeat duplicate auto-suffixes (copy 2), (copy 3)", func(t *testing.T) {
+	t.Run("Repeat duplicate auto-suffixes (dup 2), (dup 3)", func(t *testing.T) {
 		store := NewMemoryStore()
 		id := mkSource(t, store, "Inventory", false, `{}`)
 
@@ -175,12 +176,12 @@ func TestBDD_DashboardDuplicate(t *testing.T) {
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status=%d", rec.Code)
 		}
-		var copy Dashboard
-		_ = json.Unmarshal(rec.Body.Bytes(), &copy)
+		var dup Dashboard
+		_ = json.Unmarshal(rec.Body.Bytes(), &dup)
 		// Compare via canonical re-marshal so whitespace doesn't matter.
 		var want, got interface{}
 		_ = json.Unmarshal([]byte(deep), &want)
-		_ = json.Unmarshal(copy.Definition, &got)
+		_ = json.Unmarshal(dup.Definition, &got)
 		wantJSON, _ := json.Marshal(want)
 		gotJSON, _ := json.Marshal(got)
 		if string(wantJSON) != string(gotJSON) {
@@ -233,7 +234,7 @@ func TestBDD_DashboardDuplicate_LongName(t *testing.T) {
 			CreatedBy:  owner.ID,
 			Definition: json.RawMessage("{}"),
 		}
-		if err := store.Create(nil, row); err != nil {
+		if err := store.Create(context.TODO(), row); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 		return row.ID
@@ -314,7 +315,7 @@ func TestBDD_DashboardDuplicate_LongName(t *testing.T) {
 			t.Errorf("10th clone name length=%d > %d (deeper suffix needs more truncation)",
 				len(clone.Name), MaxNameLength)
 		}
-		// The candidate suffix shape stays recognisable.
+		// The candidate suffix shape stays recognizable.
 		if !strings.Contains(clone.Name, " (copy ") {
 			t.Errorf("10th clone name %q lost the (copy N) suffix shape", clone.Name)
 		}
@@ -337,4 +338,3 @@ func TestBDD_DashboardDuplicate_LongName(t *testing.T) {
 		}
 	})
 }
-

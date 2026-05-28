@@ -15,12 +15,14 @@ import (
 // last remaining ambiguous-JSON write surface in pkg/. A body
 // like
 // `{"name":"safe","redirectUris":["https://safe/cb"]}
-//  {"name":"smuggled","redirectUris":["https://evil/cb"]}`
+//
+//	{"name":"smuggled","redirectUris":["https://evil/cb"]}`
+//
 // would create an OAuth application with a safe redirect URI
 // while audit pipelines re-parsing the raw bytes see the
 // trailing evil redirect URI — a particularly bad GDPR/OAuth
 // audit-trail desync since the trailing URI would otherwise look
-// like a legitimately-authorised callback during incident
+// like a legitimately-authorized callback during incident
 // response.
 //
 // Fix mirrors rounds 15-22: swap to httputil.ReadJSON which

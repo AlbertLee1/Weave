@@ -19,26 +19,26 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given a webhook target that responds 200 on first try
-//   When  executeWebhookEffect runs
-//   Then  it returns nil and the target is hit EXACTLY once
+//	Given a webhook target that responds 200 on first try
+//	When  executeWebhookEffect runs
+//	Then  it returns nil and the target is hit EXACTLY once
 //
-//   Given a webhook target that returns 503 twice then 200
-//   When  executeWebhookEffect runs with MaxRetries >= 2
-//   Then  it returns nil after 3 total calls
+//	Given a webhook target that returns 503 twice then 200
+//	When  executeWebhookEffect runs with MaxRetries >= 2
+//	Then  it returns nil after 3 total calls
 //
-//   Given a webhook target that always returns 500
-//   When  executeWebhookEffect runs with MaxRetries = 2
-//   Then  it returns an error mentioning the attempt count, AND
-//         the target is hit (1 + MaxRetries) = 3 times total
+//	Given a webhook target that always returns 500
+//	When  executeWebhookEffect runs with MaxRetries = 2
+//	Then  it returns an error mentioning the attempt count, AND
+//	      the target is hit (1 + MaxRetries) = 3 times total
 //
-//   Given a webhook target that returns 400 Bad Request
-//   When  executeWebhookEffect runs
-//   Then  it fails fast with NO retries (4xx is a caller bug)
+//	Given a webhook target that returns 400 Bad Request
+//	When  executeWebhookEffect runs
+//	Then  it fails fast with NO retries (4xx is a caller bug)
 //
-//   Given a webhook target that returns 429 Too Many Requests
-//   When  executeWebhookEffect runs with MaxRetries = 1
-//   Then  it retries — 429 is retryable per Foundry contract
+//	Given a webhook target that returns 429 Too Many Requests
+//	When  executeWebhookEffect runs with MaxRetries = 1
+//	Then  it retries — 429 is retryable per Foundry contract
 //
 // DLQ + action_logs.side_effect_status persistence are deferred to
 // follow-up rounds; this round just adds the retry loop.

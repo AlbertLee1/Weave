@@ -22,38 +22,38 @@ import (
 //
 // Acceptance criteria (Given → When → Then):
 //
-//   Given a pending DLQ row whose snapshotted webhook target is now
-//         responding 200
-//   When  POST /api/admin/side-effect-dlq/{id}/replay
-//   Then  HTTP 200 with replayed:true, status:"replayed",
-//         outcome.status:"success", replayCount=1
-//         AND UpdateSideEffectDLQAfterReplay was called with success=true
+//	Given a pending DLQ row whose snapshotted webhook target is now
+//	      responding 200
+//	When  POST /api/admin/side-effect-dlq/{id}/replay
+//	Then  HTTP 200 with replayed:true, status:"replayed",
+//	      outcome.status:"success", replayCount=1
+//	      AND UpdateSideEffectDLQAfterReplay was called with success=true
 //
-//   Given a pending DLQ row whose webhook still returns 500
-//   When  POST /api/admin/side-effect-dlq/{id}/replay
-//   Then  HTTP 200 with replayed:false, status:"pending" (NOT
-//         replayed), outcome.status:"failed", replayCount=1
-//         AND UpdateSideEffectDLQAfterReplay was called with success=false
+//	Given a pending DLQ row whose webhook still returns 500
+//	When  POST /api/admin/side-effect-dlq/{id}/replay
+//	Then  HTTP 200 with replayed:false, status:"pending" (NOT
+//	      replayed), outcome.status:"failed", replayCount=1
+//	      AND UpdateSideEffectDLQAfterReplay was called with success=false
 //
-//   Given a row already in 'replayed' status
-//   When  POST .../replay
-//   Then  HTTP 409 with errorName SideEffectDLQNotReplayable
+//	Given a row already in 'replayed' status
+//	When  POST .../replay
+//	Then  HTTP 409 with errorName SideEffectDLQNotReplayable
 //
-//   Given a missing DLQ row id
-//   When  POST .../replay
-//   Then  HTTP 404 SideEffectDLQEntryNotFound
+//	Given a missing DLQ row id
+//	When  POST .../replay
+//	Then  HTTP 404 SideEffectDLQEntryNotFound
 //
-//   Given a DLQ row whose linked action_log_id no longer exists
-//   When  POST .../replay
-//   Then  HTTP 404 SideEffectDLQActionLogMissing
+//	Given a DLQ row whose linked action_log_id no longer exists
+//	When  POST .../replay
+//	Then  HTTP 404 SideEffectDLQActionLogMissing
 //
-//   Given a non-numeric id
-//   When  POST .../replay
-//   Then  HTTP 400 InvalidParameter:id
+//	Given a non-numeric id
+//	When  POST .../replay
+//	Then  HTTP 400 InvalidParameter:id
 //
-//   Given a degraded boot (Repo nil)
-//   When  POST .../replay
-//   Then  HTTP 503 SideEffectDLQNotConfigured
+//	Given a degraded boot (Repo nil)
+//	When  POST .../replay
+//	Then  HTTP 503 SideEffectDLQNotConfigured
 func TestBDD_AdminSideEffectDLQ_Replay(t *testing.T) {
 	t.Run("pending row + now-healthy webhook → 200, replayed, status=replayed, count=1", func(t *testing.T) {
 		var calls int32
@@ -240,9 +240,9 @@ func mustWebhookCfg(t *testing.T, url string, maxRetries, backoffMs int) json.Ra
 	t.Helper()
 	// Embed the raw JSON so we don't import pkg/actions internals.
 	body := map[string]interface{}{
-		"url":                       url,
-		"maxRetries":                maxRetries,
-		"retryBackoffMilliseconds":  backoffMs,
+		"url":                      url,
+		"maxRetries":               maxRetries,
+		"retryBackoffMilliseconds": backoffMs,
 	}
 	b, err := json.Marshal(body)
 	if err != nil {

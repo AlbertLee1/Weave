@@ -13,7 +13,7 @@ import (
 // MeHandler implementation never populated them — the struct
 // literal at the bottom set only ID / Roles / OntologyRoles /
 // Permissions / Markings, so both Email and Name silently
-// serialised as `""` even when the authenticated User carried
+// serialized as `""` even when the authenticated User carried
 // non-empty values.
 //
 // Symptom: an SDK rendering "Welcome, {user.name}" on a dashboard

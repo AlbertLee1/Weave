@@ -92,6 +92,13 @@ linters:
         - whyNoLint
     misspell:
       locale: US
+      # 'cancelled' / 'CANCELLED' is the on-the-wire value of the
+      # permission_requests.status DB enum (migration 000215). We keep
+      # the en-GB spelling there for compatibility; do not flag it.
+      ignore-words:
+        - cancelled
+        - Cancelled
+        - CANCELLED
     unparam:
       check-exported: false
 
@@ -120,6 +127,12 @@ linters:
           - unparam
           - noctx
           - bodyclose
+      # CANCELLED is the on-the-wire DB enum value for the
+      # permission_requests.status column (migration 000215). en-GB
+      # spelling is required for compatibility — do not flag it.
+      - path: ^pkg/permissionrequests/
+        linters:
+          - misspell
       - path: ^test/
         linters:
           - errcheck

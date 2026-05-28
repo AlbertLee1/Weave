@@ -1,6 +1,7 @@
 package transactions_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -23,16 +24,16 @@ import (
 //
 // Wire shape (gated on the existing ?preview=true flag):
 //
-//   GET    /api/v2/ontologies/{o}/transactions/{tx}?preview=true
-//     200 + {transactionId, totalEdits, edits} (edits in append order;
-//                                                empty array for
-//                                                unknown txn — same
-//                                                "auto-created on first
-//                                                use" semantic as POST)
+//	GET    /api/v2/ontologies/{o}/transactions/{tx}?preview=true
+//	  200 + {transactionId, totalEdits, edits} (edits in append order;
+//	                                             empty array for
+//	                                             unknown txn — same
+//	                                             "auto-created on first
+//	                                             use" semantic as POST)
 //
-//   DELETE /api/v2/ontologies/{o}/transactions/{tx}?preview=true
-//     204 (idempotent; deleting an unknown txn is not an error so
-//          retries are safe)
+//	DELETE /api/v2/ontologies/{o}/transactions/{tx}?preview=true
+//	  204 (idempotent; deleting an unknown txn is not an error so
+//	       retries are safe)
 //
 // Both endpoints reject missing ?preview=true with 400 PreviewRequired
 // to match the POST contract.
@@ -42,7 +43,7 @@ func TestBDD_Transactions_GetAndAbort(t *testing.T) {
 
 	appendEdits := func(t *testing.T, store transactions.Store, edits []funnel.Edit) {
 		t.Helper()
-		err := store.AppendEdits(nil, transactions.Key{Ontology: ontology, TransactionID: txID}, edits)
+		err := store.AppendEdits(context.TODO(), transactions.Key{Ontology: ontology, TransactionID: txID}, edits)
 		if err != nil {
 			t.Fatalf("AppendEdits: %v", err)
 		}
@@ -90,7 +91,7 @@ func TestBDD_Transactions_GetAndAbort(t *testing.T) {
 	})
 
 	t.Run("GET for unknown txn returns {totalEdits:0, edits:[]}", func(t *testing.T) {
-		// Auto-created-on-first-use semantic matches POST's behaviour.
+		// Auto-created-on-first-use semantic matches POST's behavior.
 		store := transactions.NewMemoryStore()
 		r := newTestRouter(store)
 		req := httptest.NewRequest(http.MethodGet,
@@ -196,10 +197,10 @@ func TestBDD_Transactions_GetAndAbort(t *testing.T) {
 
 	t.Run("Transactions in different ontologies are isolated", func(t *testing.T) {
 		store := transactions.NewMemoryStore()
-		_ = store.AppendEdits(nil, transactions.Key{Ontology: "ont-a", TransactionID: "shared"}, []funnel.Edit{
+		_ = store.AppendEdits(context.TODO(), transactions.Key{Ontology: "ont-a", TransactionID: "shared"}, []funnel.Edit{
 			{Type: funnel.EditTypeCreate, ObjectType: "User", PrimaryKey: "u1"},
 		})
-		_ = store.AppendEdits(nil, transactions.Key{Ontology: "ont-b", TransactionID: "shared"}, []funnel.Edit{
+		_ = store.AppendEdits(context.TODO(), transactions.Key{Ontology: "ont-b", TransactionID: "shared"}, []funnel.Edit{
 			{Type: funnel.EditTypeCreate, ObjectType: "User", PrimaryKey: "u2"},
 			{Type: funnel.EditTypeCreate, ObjectType: "User", PrimaryKey: "u3"},
 		})

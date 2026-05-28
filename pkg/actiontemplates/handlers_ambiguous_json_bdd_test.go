@@ -25,7 +25,7 @@ import (
 // `{"name":"Daily Reorder","scope":"PRIVATE"}{"scope":"SHARED"}`.
 // The handler creates a private template while audit pipelines
 // re-parsing the raw bytes see the trailing `scope=SHARED` as if
-// the operator authorised a shared template — meaningful because
+// the operator authorized a shared template — meaningful because
 // SHARED templates are visible to teammates by design.
 //
 // Fix mirrors rounds 15-19: swap to httputil.ReadJSON which

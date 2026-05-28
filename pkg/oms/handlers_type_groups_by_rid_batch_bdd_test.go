@@ -16,18 +16,18 @@ import (
 // from the four core metadata kinds (objectTypes / actionTypes /
 // linkTypes / interfaceTypes / valueTypes) to the next layer
 // (sharedPropertyTypes). Round 87 closes the navigation-pane
-// gap: TypeGroups organise ObjectTypes into categories and are
+// gap: TypeGroups organize ObjectTypes into categories and are
 // rendered N at a time in the SPA's Browser sidebar / Explorer
 // faceting controls. Without a batch surface a list view with
 // 50 visible groups needed 50 round-trips to label them.
 //
 // Wire shape (mirror of the established pattern):
 //
-//   POST /api/v2/ontologies/{ontologyApiName}/typeGroups/getByRidBatch
-//   {"rids": ["tg-1", "tg-2", "tg-3"]}
-//     200 + {"data": [TypeGroup, TypeGroup, TypeGroup]}
-//         missing RIDs SKIPPED SILENTLY — same convention shared
-//         with the six other batch surfaces.
+//	POST /api/v2/ontologies/{ontologyApiName}/typeGroups/getByRidBatch
+//	{"rids": ["tg-1", "tg-2", "tg-3"]}
+//	  200 + {"data": [TypeGroup, TypeGroup, TypeGroup]}
+//	      missing RIDs SKIPPED SILENTLY — same convention shared
+//	      with the six other batch surfaces.
 //
 // Scenarios:
 //   - Three RIDs all resolve.

@@ -21,19 +21,19 @@ import (
 //
 // Wire shape (mirror of the existing actionTypes pattern):
 //
-//   POST /api/v2/ontologies/{ontologyApiName}/linkTypes/getByRidBatch
-//   {"rids": ["lt-1", "lt-2", "lt-3"]}
-//     200 + {"data": [LinkType, LinkType, LinkType]}
-//         missing RIDs are SKIPPED SILENTLY — the response carries
-//         only the resolvable ones, matching the existing
-//         getByRidBatch convention so SDK partial-render logic
-//         stays portable across object/action/link batch surfaces.
+//	POST /api/v2/ontologies/{ontologyApiName}/linkTypes/getByRidBatch
+//	{"rids": ["lt-1", "lt-2", "lt-3"]}
+//	  200 + {"data": [LinkType, LinkType, LinkType]}
+//	      missing RIDs are SKIPPED SILENTLY — the response carries
+//	      only the resolvable ones, matching the existing
+//	      getByRidBatch convention so SDK partial-render logic
+//	      stays portable across object/action/link batch surfaces.
 //
 // Scenarios:
 //   - Three RIDs all resolve: response carries all three rows in
 //     request order.
 //   - Mixed known + unknown RIDs: unknowns drop silently, knowns
-//     come through (matches actionTypes/objectTypes behaviour —
+//     come through (matches actionTypes/objectTypes behavior —
 //     callers infer "missing == not in array").
 //   - Empty input array: 200 + {"data": []} (non-nil empty —
 //     no wasted round-trip on the "no rows visible" page state).

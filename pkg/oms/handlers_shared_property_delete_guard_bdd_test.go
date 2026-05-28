@@ -25,11 +25,11 @@ import (
 //
 // Wire shape (Foundry parity):
 //
-//   DELETE /api/admin/shared-properties/{spRID}
-//     200/204 + empty body      → spRID was unused, row removed
-//     409 SharedPropertyInUse + {sharedPropertyRid, usageCount}
-//                                → at least one Property still
-//                                  references spRID; delete refused
+//	DELETE /api/admin/shared-properties/{spRID}
+//	  200/204 + empty body      → spRID was unused, row removed
+//	  409 SharedPropertyInUse + {sharedPropertyRid, usageCount}
+//	                             → at least one Property still
+//	                               references spRID; delete refused
 //
 // Scenarios:
 //   - Unused SharedProperty deletes cleanly with 200/204.

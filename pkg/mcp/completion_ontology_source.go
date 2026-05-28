@@ -14,22 +14,22 @@ import (
 //
 // Sources implemented:
 //
-//   ref/prompt + argument.name in {"objectType", "objectTypeApiName"}
-//     → ObjectType apiNames in the prompt's ontology
+//	ref/prompt + argument.name in {"objectType", "objectTypeApiName"}
+//	  → ObjectType apiNames in the prompt's ontology
 //
-//   ref/prompt + argument.name in {"actionType", "actionTypeApiName"}
-//     → ActionType apiNames in the prompt's ontology
+//	ref/prompt + argument.name in {"actionType", "actionTypeApiName"}
+//	  → ActionType apiNames in the prompt's ontology
 //
-//   ref/prompt + argument.name in {"linkType", "linkTypeApiName"}
-//     → LinkType apiNames in the prompt's ontology (outgoing + incoming)
+//	ref/prompt + argument.name in {"linkType", "linkTypeApiName"}
+//	  → LinkType apiNames in the prompt's ontology (outgoing + incoming)
 //
-//   ref/resource uri starts with "weave://objecttype/<ontology>/"
-//     → next-segment completion of ObjectType apiNames within
-//       that ontology
+//	ref/resource uri starts with "weave://objecttype/<ontology>/"
+//	  → next-segment completion of ObjectType apiNames within
+//	    that ontology
 //
-//   ref/resource uri starts with "weave://ontology/" (no further
-//   segment yet)
-//     → ontology apiNames
+//	ref/resource uri starts with "weave://ontology/" (no further
+//	segment yet)
+//	  → ontology apiNames
 //
 // Any other (ref, argument) pair returns nil — empty completions
 // per the round-46 protocol contract. Argument matching is
@@ -142,7 +142,7 @@ func (s *OntologyCompletionSource) completeForPrompt(ctx context.Context, prompt
 // the typed prefix. ref.URI is the URI shape so far (ending with
 // the "/" the user just typed).
 func (s *OntologyCompletionSource) completeForResource(ctx context.Context, uri string, arg CompletionArgument, limit int) ([]string, error) {
-	// weave://objecttype/<ontology>/  → ObjectType names of that ontology
+	// For URI shape "weave://objecttype/<ontology>/", return ObjectType names of that ontology.
 	const objectTypePrefix = "weave://objecttype/"
 	if strings.HasPrefix(uri, objectTypePrefix) {
 		rest := uri[len(objectTypePrefix):]
@@ -166,7 +166,7 @@ func (s *OntologyCompletionSource) completeForResource(ctx context.Context, uri 
 			return PrefixFilter(names, arg.Value, limit), nil
 		}
 	}
-	// weave://ontology/  → ontology apiNames
+	// For URI shape "weave://ontology/", return ontology apiNames.
 	if uri == "weave://ontology/" {
 		onts, err := s.repo.ListOntologies(ctx)
 		if err != nil {
