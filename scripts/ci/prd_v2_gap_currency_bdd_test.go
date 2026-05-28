@@ -249,6 +249,19 @@ func TestBDD_PRDV2GapEntriesReflectImplementationReality(t *testing.T) {
 			marker: "rehydrate_disaster_recovery_bdd_test.go",
 			why:    "Gap-R3 rehydrate path testing matrix IS now end-to-end covered — pkg/index/rehydrate_disaster_recovery_bdd_test.go::TestBDD_Rehydrate_KillBleveDirAndRebuildFromSource (round 146) drives 'index 3 docs → close mgr → os.RemoveAll(dataDir) → new mgr on the same path → RebuildWithOptions from LatestDocumentSource → country=USA returns 1, country=Mexico returns 2 (equivalent to pre-wipe)'. Complements existing rehydrate_test.go (7 EnsureAllIndexes paths) + rebuild_us408_test.go (RebuildMarker lifecycle + 5 stages) + rebuild_test.go (drop+reindex clears stale docs).",
 		},
+		// Round 147 — Gap-A5 was the most-stale gap remaining: the
+		// PRD claimed the codebase has "only HTTP dispatcher" but
+		// pkg/functions/goja_runtime.go has used dop251/goja as a
+		// sandboxed JS runtime since US-218, pkg/actions/
+		// goja_dispatcher.go routes function-backed actions
+		// (US-066), and pkg/queryexec/goja.go drives executeQuery
+		// through the same runtime (US-067, commit 607dad4) —
+		// Phase 8 W1 fully landed. Pin the runtime entry point.
+		{
+			gap:    "Gap-A5",
+			marker: "goja_runtime.go",
+			why:    "Gap-A5 Function-backed action embedded runtime IS implemented (Phase 8 W1 complete) — pkg/functions/goja_runtime.go embeds github.com/dop251/goja with no fs/net escape; pkg/functions/goja_shim_functions.go exposes the ontology client shim (getObjectsByPk / loadLinks / aggregate); pkg/functions/goja_shim_progress.go reports progress; pkg/functions/cache/ + fnerrors/ + fncall/ provide caching / typed errors / call entry. pkg/actions/goja_dispatcher.go routes function-backed actions (US-066). pkg/queryexec/goja.go drives executeQuery through the same runtime (US-067, commit 607dad4 'QueryType executeQuery Goja/HTTP dispatch'). pkg/oms/function_executor.go::FunctionExecutor abstracts the wiring. Tests: goja_runtime_test.go + goja_runtime_us218_test.go (US-218 sandbox boundaries) + goja_runtime_us476_test.go (US-476 hardening) + goja_shim_functions_test.go + goja_shim_progress_test.go + test/integration/goja_runtime_test.go. Only multi-runtime fan-out / function dependency graph / TypeScript static validation remain on SHOULD layer.",
+		},
 	}
 
 	for _, c := range cases {

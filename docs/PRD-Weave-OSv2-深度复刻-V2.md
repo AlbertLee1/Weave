@@ -277,8 +277,12 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 剩余：notification / function-call 等其它 Foundry side-effect 类型；webhook signed-request (HMAC) 验证保留为 SHOULD 层。
 
 **Gap-A5 — Function-backed action 内嵌运行时**
-- 现状：只有 HTTP dispatcher。
-- 建议：新增 `pkg/functions/` 包，使用 **Goja**（嵌入式 ECMAScript 引擎），提供一个受限运行时（无 fs/net）+ ontology 客户端 shim。这是对 Foundry "Functions on Objects" 的最小可信复刻。
+- 现状：✅ 已落地。`pkg/functions/goja_runtime.go` 用 `github.com/dop251/goja` 嵌入式 ECMAScript 引擎搭建受限运行时（无 fs / net 出口），`pkg/functions/goja_shim_functions.go` 暴露 ontology 客户端 shim（getObjectsByPk / loadLinks / aggregate 等），`pkg/functions/goja_shim_progress.go` 提供 long-running function 的 progress 回调；缓存与错误分类分别在 `pkg/functions/cache/` 与 `pkg/functions/fnerrors/fnerrors.go`，调用入口在 `pkg/functions/fncall/fncall.go`。
+  - **Function-backed action（US-066）**：`pkg/actions/goja_dispatcher.go` 把 ActionType 的 implementation = "function" 路由到 goja runtime，替代纯 HTTP dispatcher 路径；测试 `goja_dispatcher_test.go` 覆盖。
+  - **executeQuery via function（US-067）**：`pkg/queryexec/goja.go` 让 QueryType 通过同一 runtime 执行，含 Goja / HTTP dispatch 二选一（commit 607dad4 Phase 6-8 QueryType executeQuery Goja/HTTP dispatch）。
+  - **OMS 层接入**：`pkg/oms/function_executor.go::FunctionExecutor` 定义抽象，handlers_function 路径调用进 runtime。
+  - **测试矩阵**：单元 `goja_runtime_test.go` / `goja_runtime_us218_test.go`（US-218 sandbox boundaries）/ `goja_runtime_us476_test.go`（US-476 后续硬化）+ shim 测试 `goja_shim_functions_test.go` + `goja_shim_progress_test.go` + 集成 `test/integration/goja_runtime_test.go` 全套覆盖。
+- 剩余：multi-runtime fan-out / 跨 function dependency graph / TypeScript 静态校验仍属 Foundry SHOULD 层；Function-as-a-Service-style horizontal scale 留作部署侧。
 
 ### 4.3 安全与治理层
 
