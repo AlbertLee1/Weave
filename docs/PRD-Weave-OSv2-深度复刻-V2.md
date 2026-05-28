@@ -318,8 +318,8 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 - 剩余：双写 (Kafka Connect 风格) 与背压策略保留运维侧选项。
 
 **Gap-R3 — rehydrate 路径测试矩阵**
-- 现状：`pkg/index/rehydrate_test.go` 存在。
-- 建议：加一个 "杀 Bleve 目录 → 重启 → 从 Parquet/PG 重建 → 查询结果与重建前等价" 的端到端测试。
+- 现状：✅ 已落地。`pkg/index/rehydrate_test.go` 覆盖 EnsureAllIndexes 创建 / 幂等 / 空仓 / nil-guard / analyzer 传播 / ListOntologies 错误共 7 条路径；`pkg/index/rebuild_us408_test.go` 锁定 RebuildWithOptions 的 RebuildMarker 生命周期 + 5 个 RebuildStage 事件 + BatchSize 行为；`pkg/index/rebuild_test.go::TestRebuild_DropsAndReindexesFromSource` 锁定 drop + reindex 把 stale doc 清掉；`pkg/index/rehydrate_disaster_recovery_bdd_test.go::TestBDD_Rehydrate_KillBleveDirAndRebuildFromSource`（round 146）实施 PRD 建议的端到端契约："杀 Bleve 目录（`os.RemoveAll(dataDir)`）→ 新 manager → `RebuildWithOptions` 从源（PG / Parquet 通过 `LatestDocumentSource` 抽象）重建 → 同样的 `country=USA` / `country=Mexico` term 查询返回与重建前等价的命中数（1 + 2）"，IndexedCount 与 ScopedKey 跨重建保持稳定。
+- 剩余：跨 ontology 大规模并发 rebuild、SIGKILL 中断恢复、Parquet snapshot 差量 catch-up 属运维压力测试，由 deploy 侧灾备演练覆盖。
 
 ### 4.5 语义层（Types / Interfaces / Derived）
 

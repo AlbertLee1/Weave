@@ -236,6 +236,19 @@ func TestBDD_PRDV2GapEntriesReflectImplementationReality(t *testing.T) {
 			marker: "RootHashPublisher",
 			why:    "Gap-S4 audit breadth + hardening IS implemented at the code level — pkg/audit/audit.go + pg_store.go + chain.go + context.go + redaction.go + oms/audited_repository.go form the core write path; pkg/audit/export/{exporter,syslog,s3,batched,tee}.go ship SIEM delivery with batched retry, syslog/S3 sinks, and TeeStore fan-out so internal store + SIEM both receive events; pkg/audit/roothash.go::RootHashPublisher periodically anchors the previous UTC day's hash chain (US-266 tamper-proof). Admin query + retention / export / redaction hooks exposed via cmd/server/audit_retention.go AuditExportConfig. Only the operator-facing batch audit UX and root-hash runbook prose remain on the SHOULD / runbook layer.",
 		},
+		// Round 146 — Gap-R3 was a real (not stale) gap: the PRD
+		// asked for an end-to-end "wipe the Bleve dir → fresh
+		// manager → RebuildWithOptions from source → equivalent
+		// query results" scenario, and although RebuildWithOptions
+		// itself has been in place since US-408 the disaster-path
+		// e2e test did NOT exist. We added
+		// rehydrate_disaster_recovery_bdd_test.go this round; pin
+		// the file so a future delete is loudly caught.
+		{
+			gap:    "Gap-R3",
+			marker: "rehydrate_disaster_recovery_bdd_test.go",
+			why:    "Gap-R3 rehydrate path testing matrix IS now end-to-end covered — pkg/index/rehydrate_disaster_recovery_bdd_test.go::TestBDD_Rehydrate_KillBleveDirAndRebuildFromSource (round 146) drives 'index 3 docs → close mgr → os.RemoveAll(dataDir) → new mgr on the same path → RebuildWithOptions from LatestDocumentSource → country=USA returns 1, country=Mexico returns 2 (equivalent to pre-wipe)'. Complements existing rehydrate_test.go (7 EnsureAllIndexes paths) + rebuild_us408_test.go (RebuildMarker lifecycle + 5 stages) + rebuild_test.go (drop+reindex clears stale docs).",
+		},
 	}
 
 	for _, c := range cases {
