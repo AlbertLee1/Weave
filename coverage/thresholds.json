@@ -15,6 +15,7 @@
     "pkg/scenarios/pg_repo.go",
     "pkg/scenarios/archive_db.go",
     "pkg/vertex/graphsvc/pg_repo.go",
+    "pkg/vertex/graphsvc/pg_sharing.go",
     "pkg/vertex/graphsvc/pg_templates.go",
     "pkg/timeseries/pg_store.go",
     "pkg/timeseries/vertex_service_pg.go"
