@@ -79,6 +79,14 @@ Last updated: round 158 (after PR #57 merge).
   `fusionStrategy: min | rrf` (RRF k = 60) for rank fusion.
 * `composite_cursor.go` makes 3-type Northwind HasOwner interface paging
   stable; `us463_interface_cursor_stability_test.go` locks the wire shape.
+* Aggregation result rows can now be ordered by an aggregated value: an
+  `aggregation` metric carrying a `direction` (`ASC`/`DESC`) sorts the groupBy
+  buckets by that metric (Palantir "按聚合值排序", syntax ref L463/L623) — e.g.
+  `{"type":"sum","field":"revenue","name":"total","direction":"DESC"}` returns
+  regions highest-revenue-first. Applied after any `having` filter; an
+  unrecognised direction is a 400. See `orderby.go` +
+  `TestAggregate_MetricDirection_OrdersGroupRows` and the HTTP-level
+  `TestBDD_Aggregate_MetricDirection_OrdersBuckets`.
 * `nearestNeighbors` now enforces the Foundry-documented limits K ≤ 100 and
   vector dimension ≤ 2048 (syntax ref L115): `numNeighbors` > 100 or a raw
   query vector longer than 2048 is rejected at `Definition.Validate` with a

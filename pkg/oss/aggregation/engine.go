@@ -127,6 +127,12 @@ type AggregationSpec struct {
 	MaxItems    *int      `json:"maxItems,omitempty"`    // for collectList: max values to collect (default 100)
 	Precision   *int      `json:"precision,omitempty"`   // for approximateDistinct: HyperLogLog precision, 4..18 (default 14 — ~0.81% standard error). Overrides request-level HLLPrecision.
 	Compression *float64  `json:"compression,omitempty"` // for approximatePercentile: t-digest compression (default 100). Overrides request-level TDigestCompression. Must be positive finite.
+	// Direction optionally orders the groupBy result rows by THIS metric's
+	// value (Palantir aggregation "按聚合值排序", syntax ref L463 / L623).
+	// "ASC" / "DESC" (case-insensitive); "" means no ordering by this metric.
+	// When several metrics carry a direction the first one wins. Ignored when
+	// there is no groupBy (a single result row has nothing to order).
+	Direction string `json:"direction,omitempty"`
 }
 
 // GroupBySpec defines how to group results.
@@ -215,6 +221,9 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 	if err := validateApproxConfig(req); err != nil {
 		return nil, err
 	}
+	if err := validateMetricDirections(req.Aggregations); err != nil {
+		return nil, err
+	}
 
 	// US-382: pre-filter excludedItems BEFORE any metric or facet runs. We
 	// count the actual intersection (caller-requested PKs that resolve in
@@ -258,6 +267,10 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 	if len(req.Having) > 0 {
 		resp.Data = ApplyHaving(resp.Data, req.Having)
 	}
+
+	// Palantir "按聚合值排序": when a metric carries a direction, order the
+	// groupBy result rows by that metric's value (after any Having filter).
+	resp.Data = applyMetricOrdering(resp.Data, req.Aggregations)
 
 	scannedRows := countScannedRows(idx, baseQuery)
 	if exceedsApproximateScanThreshold(scannedRows, req.ApproximateScanThreshold) {

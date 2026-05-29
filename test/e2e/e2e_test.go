@@ -1293,6 +1293,53 @@ func TestE2E_Aggregate_GroupBy(t *testing.T) {
 	}
 }
 
+// TestBDD_Aggregate_MetricDirection_OrdersBuckets is the HTTP contract for the
+// Palantir "按聚合值排序" aggregation feature: a metric carrying a "direction"
+// orders the groupBy result buckets by that metric's value.
+//
+//	Given employees grouped by department with per-dept age sums
+//	  (marketing=32, engineering=55, sales=63)
+//	When the client aggregates sum(age) by department with direction "ASC"
+//	Then the returned buckets are ordered marketing → engineering → sales,
+//	  i.e. ascending by the metric — not the engine's default facet order.
+func TestBDD_Aggregate_MetricDirection_OrdersBuckets(t *testing.T) {
+	env := setupTestServer(t)
+	ontRid, _ := seedOntology(t, env)
+	indexEmployees(t, env)
+
+	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/objects/Employee/aggregate", map[string]interface{}{
+		"aggregation": []map[string]interface{}{
+			{"type": "sum", "field": "age", "name": "totalAge", "direction": "ASC"},
+		},
+		"groupBy": []map[string]interface{}{
+			{"type": "exact", "field": "department"},
+		},
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var body map[string]interface{}
+	decodeJSON(t, resp, &body)
+	data := body["data"].([]interface{})
+	if len(data) != 3 {
+		t.Fatalf("expected 3 dept buckets, got %d", len(data))
+	}
+
+	got := make([]float64, len(data))
+	for i, row := range data {
+		metrics := row.(map[string]interface{})["metrics"].([]interface{})
+		got[i] = findE2EMetric(t, metrics, "totalAge").(float64)
+	}
+	want := []float64{32, 55, 63} // marketing, engineering, sales — ascending
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ASC bucket order by totalAge = %v, want %v", got, want)
+		}
+	}
+}
+
 // seedEventOntology creates an ontology + "Event" ObjectType whose startDate
 // property is a numeric (epoch-seconds) field, then ensures its Bleve index.
 // Returns the ontology RID. Used by the duration-bucketing BDD scenarios.
