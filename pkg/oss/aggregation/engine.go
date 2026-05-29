@@ -136,7 +136,7 @@ type GroupBySpec struct {
 	MaxGroups     *int           `json:"maxGroupCount,omitempty"`
 	Width         *float64       `json:"fixedWidth,omitempty"` // for fixedWidth
 	Ranges        []Range        `json:"ranges,omitempty"`     // for range/ranges
-	Duration      string         `json:"duration,omitempty"`   // ISO 8601: P1D, P1W, P1M, P1Y
+	Duration      string         `json:"duration,omitempty"`   // ISO 8601: P1D, P1W, P1M, P3M, P1Y, PT1H
 	DurationValue *DurationValue `json:"value,omitempty"`      // for duration: {unit: "DAYS", value: 30}
 	Precision     *int           `json:"precision,omitempty"`  // for geohash: character precision 1..12 (default 6 ≈ ±0.61km)
 }
@@ -1164,7 +1164,11 @@ func (e *Engine) groupByRanges(idx bleve.Index, baseQuery query.Query, gb GroupB
 }
 
 // parseDuration converts a simple ISO 8601 duration string to a time.Duration.
-// Supports P1D, P1W, P1M, P1Y (approximate).
+// Supports the period shortcuts Foundry's OntologyAggregation groupBy accepts:
+// P1D, P1W, P1M, P3M (quarter), P1Y and the time-component PT1H (hour).
+// Months/quarters/years are fixed approximations (30 / 90 / 365 days) matching
+// the DurationValue {Unit,Value} form; true calendar alignment is a SHOULD-layer
+// follow-up tracked in the PRD.
 func parseDuration(iso string) (time.Duration, error) {
 	switch iso {
 	case "P1D":
@@ -1173,10 +1177,14 @@ func parseDuration(iso string) (time.Duration, error) {
 		return 7 * 24 * time.Hour, nil
 	case "P1M":
 		return 30 * 24 * time.Hour, nil
+	case "P3M":
+		return 90 * 24 * time.Hour, nil
 	case "P1Y":
 		return 365 * 24 * time.Hour, nil
+	case "PT1H":
+		return time.Hour, nil
 	default:
-		return 0, fmt.Errorf("unsupported duration: %q (supported: P1D, P1W, P1M, P1Y)", iso)
+		return 0, fmt.Errorf("unsupported duration: %q (supported: P1D, P1W, P1M, P3M, P1Y, PT1H)", iso)
 	}
 }
 
@@ -1215,7 +1223,7 @@ func (e *Engine) groupByDuration(idx bleve.Index, baseQuery query.Query, gb Grou
 		}
 		durSec = secs
 	case gb.Duration != "":
-		// ISO 8601 format: P1D, P1W, P1M, P1Y
+		// ISO 8601 format: P1D, P1W, P1M, P3M, P1Y, PT1H
 		dur, err := parseDuration(gb.Duration)
 		if err != nil {
 			return nil, fmt.Errorf("parse duration: %w", err)

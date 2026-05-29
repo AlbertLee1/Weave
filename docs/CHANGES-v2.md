@@ -79,6 +79,13 @@ Last updated: round 158 (after PR #57 merge).
   `fusionStrategy: min | rrf` (RRF k = 60) for rank fusion.
 * `composite_cursor.go` makes 3-type Northwind HasOwner interface paging
   stable; `us463_interface_cursor_stability_test.go` locks the wire shape.
+* Aggregation `groupBy` duration now accepts the `P3M` (byQuarter) and `PT1H`
+  (byHours) ISO 8601 shortcuts in addition to `P1D`/`P1W`/`P1M`/`P1Y`,
+  matching the Foundry OntologyAggregation grammar (`.byQuarter()` /
+  `.byHours()`); previously callers had to fall back to the verbose
+  `DurationValue {unit, value}` form. See `parseDuration` +
+  `duration_iso8601_test.go` and the HTTP-level
+  `TestBDD_Aggregate_GroupByDuration_Quarter` / `_Hour`.
 
 ### Actions
 
