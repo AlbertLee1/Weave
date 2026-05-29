@@ -1,7 +1,6 @@
 package featureflags
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -199,7 +198,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req updateFlagRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
 			"reason": err.Error(),
 		}))

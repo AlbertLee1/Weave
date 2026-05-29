@@ -34,6 +34,8 @@ type mockOmsRepo struct {
 	objectVersionCounts  map[string]int64
 	// US-105: action log lookup for revert tests.
 	actionLogByID map[int64]*oms.ActionLog
+	// Round-33 side-effect DLQ rows captured by InsertSideEffectDLQRow.
+	dlqRows []*oms.SideEffectDLQRow
 }
 
 func (m *mockOmsRepo) CreateOntology(_ context.Context, _ *oms.Ontology) error { return nil }
@@ -137,6 +139,9 @@ func (m *mockOmsRepo) UpdateSharedProperty(_ context.Context, _ *oms.SharedPrope
 	return nil
 }
 func (m *mockOmsRepo) DeleteSharedProperty(_ context.Context, _ string) error { return nil }
+func (m *mockOmsRepo) CountPropertiesUsingSharedProperty(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
 
 // TypeGroup stubs
 func (m *mockOmsRepo) CreateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }
@@ -152,6 +157,9 @@ func (m *mockOmsRepo) AssignTypeGroup(_ context.Context, _, _ string) error     
 func (m *mockOmsRepo) RemoveTypeGroup(_ context.Context, _, _ string) error      { return nil }
 func (m *mockOmsRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]oms.TypeGroup, error) {
 	return nil, nil
+}
+func (m *mockOmsRepo) CountObjectTypesInTypeGroup(_ context.Context, _ string) (int, error) {
+	return 0, nil
 }
 
 // ValueType stubs
@@ -208,6 +216,13 @@ func (m *mockOmsRepo) InsertActionLog(_ context.Context, log *oms.ActionLog) err
 	// from the same pointer they handed to this stub.
 	log.ID = int64(len(m.insertedLogs)) + 1
 	m.insertedLogs = append(m.insertedLogs, log)
+	// Mirror into actionLogByID so UpdateActionLog* lookups land on the
+	// same pointer the test holds — needed for the round-32 side-effect
+	// status persistence path which Update-after-Inserts.
+	if m.actionLogByID == nil {
+		m.actionLogByID = map[int64]*oms.ActionLog{}
+	}
+	m.actionLogByID[log.ID] = log
 	return nil
 }
 func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]oms.ActionLog, error) {
@@ -230,6 +245,42 @@ func (m *mockOmsRepo) UpdateActionLogStatus(_ context.Context, id int64, status 
 		}
 	}
 	return oms.ErrNotFound
+}
+func (m *mockOmsRepo) UpdateActionLogSideEffectStatus(_ context.Context, id int64, status json.RawMessage) error {
+	if m.actionLogByID != nil {
+		if al, ok := m.actionLogByID[id]; ok {
+			al.SideEffectStatus = status
+			return nil
+		}
+	}
+	return oms.ErrNotFound
+}
+
+// Side-effect DLQ stubs (PRD-V2 Gap-A4 round 33). The mock records
+// inserted DLQ rows in dlqRows so the round-33 executor BDD can assert
+// the wiring fires for failed outcomes.
+func (m *mockOmsRepo) InsertSideEffectDLQRow(_ context.Context, row *oms.SideEffectDLQRow) error {
+	m.dlqRows = append(m.dlqRows, row)
+	return nil
+}
+func (m *mockOmsRepo) ListSideEffectDLQByActionLog(_ context.Context, actionLogID int64) ([]oms.SideEffectDLQRow, error) {
+	out := []oms.SideEffectDLQRow{}
+	for _, r := range m.dlqRows {
+		if r != nil && r.ActionLogID == actionLogID {
+			out = append(out, *r)
+		}
+	}
+	return out, nil
+}
+func (m *mockOmsRepo) ListPendingSideEffectDLQRows(_ context.Context, _ int) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) MarkSideEffectDLQAbandoned(_ context.Context, _ int64) error { return nil }
+func (m *mockOmsRepo) GetSideEffectDLQRow(_ context.Context, _ int64) (*oms.SideEffectDLQRow, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *mockOmsRepo) UpdateSideEffectDLQAfterReplay(_ context.Context, _ int64, _ json.RawMessage, _ bool) error {
+	return nil
 }
 
 // ObjectHistory stubs (Tier 2.3)

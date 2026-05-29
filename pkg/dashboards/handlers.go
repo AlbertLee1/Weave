@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,6 +47,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/v2/dashboards/{id}", h.Get)
 	r.Put("/api/v2/dashboards/{id}", h.Update)
 	r.Delete("/api/v2/dashboards/{id}", h.Delete)
+	r.Post("/api/v2/dashboards/{id}/duplicate", h.Duplicate)
 }
 
 func (h *Handler) requireAuth(w http.ResponseWriter, r *http.Request) *auth.User {
@@ -92,7 +94,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -191,7 +193,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 	var req updateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -260,6 +262,93 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// Duplicate POST /api/v2/dashboards/{id}/duplicate. Clones the
+// source dashboard under the caller. The Get-or-public visibility
+// rule applies to the SOURCE read (so a private dashboard owned by
+// someone else returns 404), but the new row is always owned by
+// the caller with IsPublic reset to false — Foundry treats clones
+// as starting points the user iterates on privately before re-sharing.
+//
+// Name suffix: "<source-name> (copy)" on the first clone. If that
+// collides (the user already has one), auto-suffix climbs to
+// "(copy 2)" / "(copy 3)" / ... until uniqueness is found so retries
+// don't surface 409 to the user. The walk is capped at
+// maxDuplicateSuffix to defend against pathological inputs (every
+// possible (copy N) somehow already taken).
+func (h *Handler) Duplicate(w http.ResponseWriter, r *http.Request) {
+	user := h.requireAuth(w, r)
+	if user == nil || !h.requireStore(w) {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	src, err := h.store.Get(r.Context(), id, user.ID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("DashboardNotFound", map[string]string{"id": id}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("DashboardDuplicateFailed", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	now := time.Now().UTC()
+	// Try the base "(copy)" first; on conflict walk "(copy 2)",
+	// "(copy 3)", ... up to maxDuplicateSuffix. Round 65: each
+	// candidate's source-name prefix is truncated so the final
+	// name fits dashboards_name_format (length 1..MaxNameLength=128).
+	// Without this, a near-128-char source plus the suffix would
+	// trip the PG CHECK constraint with 23514 check_violation —
+	// MemoryStore-backed tests would never see it.
+	for n := 1; n <= maxDuplicateSuffix; n++ {
+		suffix := " (copy)"
+		if n > 1 {
+			suffix = " (copy " + strconv.Itoa(n) + ")"
+		}
+		prefix := src.Name
+		if maxPrefix := MaxNameLength - len(suffix); len(prefix) > maxPrefix {
+			prefix = prefix[:maxPrefix]
+		}
+		candidate := prefix + suffix
+		row := &Dashboard{
+			ID:         newDashboardID(),
+			Name:       candidate,
+			CreatedBy:  user.ID,
+			IsPublic:   false, // privacy resets on clone
+			Definition: append(json.RawMessage(nil), src.Definition...),
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+		err := h.store.Create(r.Context(), row)
+		if err == nil {
+			stored, getErr := h.store.Get(r.Context(), row.ID, user.ID)
+			if getErr != nil {
+				stored = row
+			}
+			httputil.WriteJSON(w, http.StatusCreated, stored)
+			return
+		}
+		if !errors.Is(err, ErrNameConflict) {
+			apierror.WriteJSON(w, apierror.NewInternal("DashboardDuplicateFailed", map[string]string{
+				"reason": err.Error(),
+			}))
+			return
+		}
+		// Else: try next suffix.
+	}
+	apierror.WriteJSON(w, apierror.NewConflict("DashboardNameConflict", map[string]string{
+		"reason": "exhausted (copy N) suffix attempts",
+		"name":   src.Name + " (copy)",
+	}))
+}
+
+// maxDuplicateSuffix caps the auto-suffix walk on Duplicate. 1000
+// is well past any plausible legitimate ceiling (a user with 999
+// copies of the same dashboard has bigger problems) and bounds
+// worst-case CPU on a single request.
+const maxDuplicateSuffix = 1000
 
 // newDashboardID returns a uuid-shaped identifier for a new row.
 // Mirrors savedsearches.newSavedSearchID — same byte-level RFC4122

@@ -30,18 +30,33 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from ._async_http import AsyncTransport
 from ._http import HTTPResponse, build_query_string, quote_path
 from ._retry import RetryPolicy
-from .exceptions import WeaveAuthError, WeaveError, WeaveNotFoundError
+from .exceptions import (
+    WeaveAuthError,
+    WeaveError,
+    WeaveNotFoundError,
+    WeaveValidationError,
+    WeaveVersionedLookupError,
+)
 from .subscriptions import Subscription, WebSocketTransport
 from .types import (
+    ActionCheckBatchResponse,
+    ActionCheckResponse,
     ActionType,
     ApplyActionResponse,
     BatchApplyActionResponse,
     InterfaceType,
+    LinkType,
+    ObjectCheckBatchResponse,
+    ObjectCheckResponse,
     LoginResponse,
+    MeOntologiesEntry,
     ObjectPage,
     ObjectType,
     Ontology,
+    OntologyMe,
     QueryType,
+    SharedPropertyType,
+    TypeGroup,
     ValueType,
     WireObject,
 )
@@ -97,6 +112,14 @@ class WeaveAsyncClient:
         self.actions = AsyncActionsAPI(self)
         self.objectsets = AsyncObjectSetsAPI(self)
         self.functions = AsyncFunctionsAPI(self)
+        self.transactions = AsyncTransactionsAPI(self)
+        self.reactions = AsyncReactionsAPI(self)
+        self.notifications = AsyncNotificationsAPI(self)
+        self.dashboards = AsyncDashboardsAPI(self)
+        self.permissionrequests = AsyncPermissionRequestsAPI(self)
+        self.permissions = AsyncPermissionsAPI(self)
+        self.queries = AsyncQueriesAPI(self)
+        self.sessions = AsyncSessionsAPI(self)
 
     @property
     def token(self) -> str:
@@ -164,6 +187,51 @@ class WeaveAsyncClient:
         await self._request("POST", "/api/auth/logout", json_body=body, anonymous=True)
         self.access_token = None
 
+    async def build_info(self) -> "BuildInfo":
+        """Async mirror of Client.build_info — round 124."""
+        from .types import BuildInfo
+        body = await self._request("GET", "/api/v2/build-info", anonymous=True)
+        if hasattr(BuildInfo, "model_validate"):
+            return BuildInfo.model_validate(body or {})
+        return BuildInfo(**(body or {}))
+
+    async def build_info_dependencies(self) -> "List[Dependency]":
+        """Async mirror of Client.build_info_dependencies — round 126."""
+        from .types import Dependency
+        body = await self._request(
+            "GET", "/api/v2/build-info/dependencies", anonymous=True)
+        items = (body or {}).get("dependencies", []) if isinstance(body, dict) else []
+        if hasattr(Dependency, "model_validate"):
+            return [Dependency.model_validate(d) for d in items]
+        return [Dependency(**d) for d in items]
+
+    async def build_info_features(self) -> "List[Feature]":
+        """Async mirror of Client.build_info_features — round 128."""
+        from .types import Feature
+        body = await self._request(
+            "GET", "/api/v2/build-info/features", anonymous=True)
+        items = (body or {}).get("features", []) if isinstance(body, dict) else []
+        if hasattr(Feature, "model_validate"):
+            return [Feature.model_validate(f) for f in items]
+        return [Feature(**f) for f in items]
+
+    async def server_info(self) -> "ServerInfo":
+        """Async mirror of Client.server_info — round 130."""
+        from .types import ServerInfo
+        body = await self._request("GET", "/api/v2/server-info", anonymous=True)
+        if hasattr(ServerInfo, "model_validate"):
+            return ServerInfo.model_validate(body or {})
+        return ServerInfo(**(body or {}))
+
+    async def server_info_connections(self) -> "ConnectionStats":
+        """Async mirror of Client.server_info_connections — round 132."""
+        from .types import ConnectionStats
+        body = await self._request(
+            "GET", "/api/v2/server-info/connections", anonymous=True)
+        if hasattr(ConnectionStats, "model_validate"):
+            return ConnectionStats.model_validate(body or {})
+        return ConnectionStats(**(body or {}))
+
 
 def _handle(resp: HTTPResponse) -> Any:
     """Translate an HTTPResponse into either a Python value or a typed exception.
@@ -199,6 +267,15 @@ def _handle(resp: HTTPResponse) -> Any:
         raise WeaveAuthError(**kwargs)
     if resp.status_code == 404:
         raise WeaveNotFoundError(**kwargs)
+    # Round 118: parity with sync Client._handle.
+    if (resp.status_code == 501 and
+            kwargs["error_name"] == "VersionedLookupNotSupported"):
+        raise WeaveVersionedLookupError(**kwargs)
+    # Round 136: parity with sync Client._handle for the round-135
+    # admin criteria validator.
+    if (resp.status_code == 400 and
+            kwargs["error_name"] == "InvalidParameter:submissionCriteria"):
+        raise WeaveValidationError(**kwargs)
     raise WeaveError(**kwargs)
 
 
@@ -299,6 +376,66 @@ class AsyncOntologiesAPI:
         )
         return (body or {}).get("data", [])
 
+    async def get_link_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        body = await self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/linkTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
+    async def get_interface_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        body = await self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/interfaceTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
+    async def get_value_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        body = await self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/valueTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
+    async def get_shared_property_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        body = await self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/sharedPropertyTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
+    async def get_type_groups_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        body = await self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/typeGroups/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
+    async def get_query_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        body = await self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/queryTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
     async def get_action_type_full_metadata(
         self, ontology: str, action_type: str
     ) -> Dict[str, Any]:
@@ -359,6 +496,46 @@ class AsyncOntologiesAPI:
             f"/api/v2/ontologies/{quote_path(ontology)}/queryTypes/{quote_path(query_type)}",
         )
         return _validate(QueryType, body)
+
+    # ---- round 122 async mirrors --------------------------------------
+
+    async def get_link_type(self, ontology: str, link_type: str) -> LinkType:
+        body = await self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/linkTypes/{quote_path(link_type)}",
+        )
+        return _validate(LinkType, body)
+
+    async def get_shared_property_type(
+        self, ontology: str, shared_property_type: str
+    ) -> SharedPropertyType:
+        body = await self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/sharedPropertyTypes/"
+            f"{quote_path(shared_property_type)}",
+        )
+        return _validate(SharedPropertyType, body)
+
+    async def get_type_group(self, ontology: str, type_group: str) -> TypeGroup:
+        body = await self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/typeGroups/{quote_path(type_group)}",
+        )
+        return _validate(TypeGroup, body)
+
+    async def get_me(self, ontology: str) -> OntologyMe:
+        """Async mirror of OntologiesAPI.get_me — round-96."""
+        body = await self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/me",
+        )
+        return _validate(OntologyMe, body or {})
+
+    async def list_me(self) -> List[MeOntologiesEntry]:
+        """Async mirror of OntologiesAPI.list_me — round-100."""
+        body = await self._client._request("GET", "/api/v2/me/ontologies") or {}
+        items = body.get("ontologies", []) if isinstance(body, dict) else []
+        return [_validate(MeOntologiesEntry, item) for item in items]
 
 
 class AsyncObjectsAPI:
@@ -498,6 +675,29 @@ class AsyncObjectsAPI:
         body = await self._client._request("GET", path)
         return body or {}
 
+    async def check_batch(
+        self,
+        ontology: str,
+        object_types: list,
+    ) -> ObjectCheckBatchResponse:
+        """Async mirror of ObjectsAPI.check_batch — round 108."""
+        body = {
+            "ontologyApiName": ontology,
+            "objectTypeApiNames": object_types,
+        }
+        resp = await self._client._request(
+            "POST", "/api/v2/me/checks/objectTypes", json_body=body)
+        return _validate(ObjectCheckBatchResponse, resp or {})
+
+    async def check(self, ontology: str, object_type: str) -> ObjectCheckResponse:
+        """Async mirror of ObjectsAPI.check — round 106."""
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/objectTypes/{quote_path(object_type)}/check"
+        )
+        resp = await self._client._request("GET", path)
+        return _validate(ObjectCheckResponse, resp or {})
+
     def subscribe(
         self,
         ontology: str,
@@ -608,6 +808,29 @@ class AsyncActionsAPI:
         )
         resp = await self._client._request("POST", path, json_body=body)
         return resp or {}
+
+    async def check_batch(
+        self,
+        ontology: str,
+        action_types: List[str],
+    ) -> ActionCheckBatchResponse:
+        """Async mirror of ActionsAPI.check_batch — round 110."""
+        body = {
+            "ontologyApiName": ontology,
+            "actionTypeApiNames": action_types,
+        }
+        resp = await self._client._request(
+            "POST", "/api/v2/me/checks/actionTypes", json_body=body)
+        return _validate(ActionCheckBatchResponse, resp or {})
+
+    async def check(self, ontology: str, action_type: str) -> ActionCheckResponse:
+        """Async mirror of ActionsAPI.check — round 104."""
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/actions/{quote_path(action_type)}/check"
+        )
+        resp = await self._client._request("GET", path)
+        return _validate(ActionCheckResponse, resp or {})
 
 
 class AsyncObjectSetsAPI:
@@ -805,6 +1028,380 @@ async def _consume_ndjson_async(
         yield obj
 
 
+class AsyncTransactionsAPI:
+    """Async mirror of TransactionsAPI (round 61, PRD-V2 Transaction
+    preview). Wraps the three OntologyTransaction preview endpoints
+    (POST .../edits, GET .../{id}, DELETE .../{id}) and attaches the
+    mandatory ?preview=true flag automatically so async callers don't
+    have to remember it. Returns the same dataclasses as the sync
+    sibling so application code can swap clients without touching
+    response handling.
+    """
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def append_edits(
+        self,
+        ontology: str,
+        transaction_id: str,
+        edits: List[Dict[str, Any]],
+    ) -> "TransactionAppendResponse":
+        from .transactions import TransactionAppendResponse
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/transactions/{quote_path(transaction_id)}/edits?preview=true"
+        )
+        resp = await self._client._request("POST", path, json_body={"edits": edits})
+        return TransactionAppendResponse(
+            transaction_id=str(resp.get("transactionId") or transaction_id),
+            appended_edits=int(resp.get("appendedEdits") or 0),
+            total_edits=int(resp.get("totalEdits") or 0),
+        )
+
+    async def get(self, ontology: str, transaction_id: str) -> "Transaction":
+        from .transactions import Transaction
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/transactions/{quote_path(transaction_id)}?preview=true"
+        )
+        resp = await self._client._request("GET", path)
+        edits = resp.get("edits") or []
+        return Transaction(
+            transaction_id=str(resp.get("transactionId") or transaction_id),
+            total_edits=int(resp.get("totalEdits") or 0),
+            edits=list(edits),
+        )
+
+    async def abort(self, ontology: str, transaction_id: str) -> None:
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/transactions/{quote_path(transaction_id)}?preview=true"
+        )
+        await self._client._request("DELETE", path)
+        return None
+
+
+class AsyncReactionsAPI:
+    """Async mirror of ReactionsAPI (round 74). Wraps the four
+    /api/v2/reactions endpoints (Aggregate / Create / Delete /
+    AggregateBatch from round 67). Returns the same Reaction /
+    ReactionSummary / EmojiCount dataclasses as the sync sibling so
+    application code can swap clients without touching response
+    handling.
+    """
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def aggregate(self, target_rid: str) -> "ReactionSummary":
+        from .reactions import _parse_summary  # noqa: WPS433  lazy to avoid cycle
+        path = "/api/v2/reactions" + build_query_string({"targetRid": target_rid})
+        resp = await self._client._request("GET", path)
+        return _parse_summary(resp or {})
+
+    async def create(self, target_rid: str, emoji: str) -> "Reaction":
+        from .reactions import _parse_reaction
+        resp = await self._client._request(
+            "POST", "/api/v2/reactions",
+            json_body={"targetRid": target_rid, "emoji": emoji},
+        )
+        return _parse_reaction(resp or {})
+
+    async def delete(self, target_rid: str, emoji: str) -> None:
+        path = "/api/v2/reactions" + build_query_string({
+            "targetRid": target_rid,
+            "emoji": emoji,
+        })
+        await self._client._request("DELETE", path)
+        return None
+
+    async def aggregate_batch(self, target_rids: List[str]) -> List["ReactionSummary"]:
+        if not target_rids:
+            return []
+        from .reactions import _parse_summary
+        resp = await self._client._request(
+            "POST", "/api/v2/reactions/batch",
+            json_body={"targetRids": list(target_rids)},
+        )
+        raw = (resp or {}).get("summaries") or []
+        return [_parse_summary(s) for s in raw]
+
+
+class AsyncNotificationsAPI:
+    """Async mirror of NotificationsAPI (round 74). Wraps the four
+    /api/v2/notifications endpoints (List + round-66 unread-count
+    badge + MarkAllRead + MarkRead). Reuses Notification dataclass
+    from the sync module via lazy import.
+    """
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def list(
+        self,
+        unread_only: bool = False,
+        types: Optional[List[str]] = None,
+    ) -> List["Notification"]:
+        from .notifications import _parse_notification, _url_quote_value
+        params: dict = {}
+        if unread_only:
+            params["unread"] = "true"
+        path = "/api/v2/notifications" + build_query_string(params)
+        if types:
+            extras = "&".join("type=" + _url_quote_value(t) for t in types)
+            path = path + ("&" if "?" in path else "?") + extras
+        resp = await self._client._request("GET", path)
+        data = (resp or {}).get("data") or []
+        return [_parse_notification(n) for n in data]
+
+    async def unread_count(self) -> int:
+        resp = await self._client._request("GET", "/api/v2/notifications/unread-count")
+        try:
+            return int((resp or {}).get("count") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    async def mark_read(self, notification_id: str) -> None:
+        path = "/api/v2/notifications/" + quote_path(notification_id) + "/read"
+        await self._client._request("POST", path)
+        return None
+
+    async def mark_all_read(self, types: Optional[List[str]] = None) -> int:
+        from .notifications import _url_quote_value
+        path = "/api/v2/notifications/read-all"
+        if types:
+            extras = "&".join("type=" + _url_quote_value(t) for t in types)
+            path = path + "?" + extras
+        resp = await self._client._request("POST", path)
+        try:
+            return int((resp or {}).get("updated") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+
+class AsyncDashboardsAPI:
+    """Async mirror of DashboardsAPI (round 78). Wraps the six
+    dashboards endpoints (CRUD + round-62 Duplicate). Reuses
+    Dashboard dataclass from the sync module via lazy import.
+    Same PARTIAL UPDATE SEMANTIC: fields set to None preserve
+    the existing server value rather than clearing it.
+    """
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def list(self) -> List["Dashboard"]:
+        from .dashboards import _parse_dashboard
+        resp = await self._client._request("GET", "/api/v2/dashboards")
+        rows = (resp or {}).get("dashboards") or []
+        return [_parse_dashboard(d) for d in rows]
+
+    async def create(
+        self,
+        name: str,
+        definition: Optional[Dict[str, Any]] = None,
+        is_public: bool = False,
+    ) -> "Dashboard":
+        from .dashboards import _parse_dashboard
+        body: Dict[str, Any] = {"name": name}
+        if definition is not None:
+            body["definition"] = definition
+        if is_public:
+            body["isPublic"] = True
+        resp = await self._client._request("POST", "/api/v2/dashboards", json_body=body)
+        return _parse_dashboard(resp or {})
+
+    async def get(self, dashboard_id: str) -> "Dashboard":
+        from .dashboards import _parse_dashboard
+        path = "/api/v2/dashboards/" + quote_path(dashboard_id)
+        resp = await self._client._request("GET", path)
+        return _parse_dashboard(resp or {})
+
+    async def update(
+        self,
+        dashboard_id: str,
+        name: Optional[str] = None,
+        definition: Optional[Dict[str, Any]] = None,
+        is_public: Optional[bool] = None,
+    ) -> "Dashboard":
+        from .dashboards import _parse_dashboard
+        body: Dict[str, Any] = {}
+        if name is not None:
+            body["name"] = name
+        if definition is not None:
+            body["definition"] = definition
+        if is_public is not None:
+            body["isPublic"] = is_public
+        path = "/api/v2/dashboards/" + quote_path(dashboard_id)
+        resp = await self._client._request("PUT", path, json_body=body)
+        return _parse_dashboard(resp or {})
+
+    async def delete(self, dashboard_id: str) -> None:
+        path = "/api/v2/dashboards/" + quote_path(dashboard_id)
+        await self._client._request("DELETE", path)
+        return None
+
+    async def duplicate(self, dashboard_id: str) -> "Dashboard":
+        from .dashboards import _parse_dashboard
+        path = "/api/v2/dashboards/" + quote_path(dashboard_id) + "/duplicate"
+        resp = await self._client._request("POST", path)
+        return _parse_dashboard(resp or {})
+
+
+class AsyncPermissionRequestsAPI:
+    """Async mirror of PermissionRequestsAPI (round 82). Wraps the
+    six permission-requests endpoints (5 from VTX-339 + round-63
+    Cancel). Reuses PermissionRequest + PermissionRequestList
+    dataclasses from the sync module via lazy import.
+
+    Same approve/reject _decide helper that omits body when note is
+    empty — server's readOptionalJSON accepts that path.
+    """
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def create(self, target_rid: str, reason: str = "") -> "PermissionRequest":
+        from .permissionrequests import _parse_request
+        body = {"targetRid": target_rid, "reason": reason}
+        resp = await self._client._request("POST", "/api/v2/permission-requests", json_body=body)
+        return _parse_request(resp or {})
+
+    async def list(
+        self,
+        status: Optional[str] = None,
+        requested_by: Optional[str] = None,
+        target_rid: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> "PermissionRequestList":
+        from .permissionrequests import PermissionRequestList, _parse_request
+        params: dict = {}
+        if status is not None:
+            params["status"] = status
+        if requested_by is not None:
+            params["requestedBy"] = requested_by
+        if target_rid is not None:
+            params["targetRid"] = target_rid
+        if limit is not None:
+            params["limit"] = str(limit)
+        if offset is not None:
+            params["offset"] = str(offset)
+        path = "/api/v2/permission-requests" + build_query_string(params)
+        resp = await self._client._request("GET", path)
+        envelope = resp or {}
+        rows = envelope.get("requests") or []
+        return PermissionRequestList(
+            requests=[_parse_request(r) for r in rows],
+            total=int(envelope.get("total") or 0),
+            limit=int(envelope.get("limit") or 0),
+            offset=int(envelope.get("offset") or 0),
+        )
+
+    async def get(self, request_id: str) -> "PermissionRequest":
+        from .permissionrequests import _parse_request
+        path = "/api/v2/permission-requests/" + quote_path(request_id)
+        resp = await self._client._request("GET", path)
+        return _parse_request(resp or {})
+
+    async def approve(self, request_id: str, note: str = "") -> "PermissionRequest":
+        return await self._decide(request_id, "approve", note)
+
+    async def reject(self, request_id: str, note: str = "") -> "PermissionRequest":
+        return await self._decide(request_id, "reject", note)
+
+    async def cancel(self, request_id: str) -> None:
+        path = "/api/v2/permission-requests/" + quote_path(request_id)
+        await self._client._request("DELETE", path)
+        return None
+
+    async def _decide(self, request_id: str, verb: str, note: str) -> "PermissionRequest":
+        from .permissionrequests import _parse_request
+        path = "/api/v2/permission-requests/" + quote_path(request_id) + "/" + verb
+        body = {"note": note} if note else None
+        resp = await self._client._request("POST", path, json_body=body)
+        return _parse_request(resp or {})
+
+
+class AsyncQueriesAPI:
+    """Async mirror of QueriesAPI (round 114 + round 116). Wraps
+    round-113 single + round-115 bulk query check."""
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def check(self, ontology: str, query_type: str) -> "QueryCheckResponse":
+        from .types import QueryCheckResponse
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/queryTypes/{quote_path(query_type)}/check"
+        )
+        resp = await self._client._request("GET", path)
+        return _validate(QueryCheckResponse, resp or {})
+
+    async def check_batch(
+        self,
+        ontology: str,
+        query_types: List[str],
+    ) -> "QueryCheckBatchResponse":
+        from .types import QueryCheckBatchResponse
+        body = {
+            "ontologyApiName": ontology,
+            "queryTypeApiNames": query_types,
+        }
+        resp = await self._client._request(
+            "POST", "/api/v2/me/checks/queryTypes", json_body=body)
+        return _validate(QueryCheckBatchResponse, resp or {})
+
+
+class AsyncSessionsAPI:
+    """Async mirror of SessionsAPI (round 102). Wraps the
+    US-254 list + delete + round-101 revoke-others surface."""
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def list(self) -> "List[Session]":
+        from .types import Session
+        body = await self._client._request("GET", "/api/auth/sessions") or {}
+        items = body.get("sessions", []) if isinstance(body, dict) else []
+        return [_validate(Session, item) for item in items]
+
+    async def revoke(self, session_id: str) -> None:
+        await self._client._request(
+            "DELETE", f"/api/auth/sessions/{quote_path(session_id)}")
+        return None
+
+    async def revoke_others(self) -> "RevokeOthersResponse":
+        from .types import RevokeOthersResponse
+        resp = await self._client._request(
+            "POST", "/api/auth/sessions/revoke-others")
+        return _validate(RevokeOthersResponse, resp or {})
+
+
+class AsyncPermissionsAPI:
+    """Async mirror of PermissionsAPI (round 98). Wraps the
+    round-97 POST /api/v2/me/permissions/check probe so the async
+    client has full parity with the sync surface."""
+
+    def __init__(self, client: "WeaveAsyncClient") -> None:
+        self._client = client
+
+    async def check(
+        self,
+        permissions: List[str],
+        ontology: Optional[str] = None,
+    ) -> "PermissionsCheckResponse":
+        from .types import PermissionsCheckResponse
+        body: Dict[str, Any] = {"permissions": permissions}
+        if ontology is not None:
+            body["ontology"] = ontology
+        resp = await self._client._request(
+            "POST", "/api/v2/me/permissions/check", json_body=body)
+        return _validate(PermissionsCheckResponse, resp or {})
+
+
 __all__ = [
     "WeaveAsyncClient",
     "AsyncOntologiesAPI",
@@ -812,4 +1409,12 @@ __all__ = [
     "AsyncActionsAPI",
     "AsyncObjectSetsAPI",
     "AsyncFunctionsAPI",
+    "AsyncTransactionsAPI",
+    "AsyncReactionsAPI",
+    "AsyncNotificationsAPI",
+    "AsyncDashboardsAPI",
+    "AsyncPermissionRequestsAPI",
+    "AsyncPermissionsAPI",
+    "AsyncQueriesAPI",
+    "AsyncSessionsAPI",
 ]

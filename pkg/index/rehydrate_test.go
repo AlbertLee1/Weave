@@ -145,6 +145,9 @@ func (s *stubRehydrateRepo) UpdateSharedProperty(context.Context, *oms.SharedPro
 	return nil
 }
 func (s *stubRehydrateRepo) DeleteSharedProperty(context.Context, string) error { return nil }
+func (s *stubRehydrateRepo) CountPropertiesUsingSharedProperty(context.Context, string) (int, error) {
+	return 0, nil
+}
 func (s *stubRehydrateRepo) CreateTypeGroup(context.Context, *oms.TypeGroup) error {
 	return nil
 }
@@ -162,6 +165,9 @@ func (s *stubRehydrateRepo) AssignTypeGroup(context.Context, string, string) err
 func (s *stubRehydrateRepo) RemoveTypeGroup(context.Context, string, string) error { return nil }
 func (s *stubRehydrateRepo) ListTypeGroupsForObjectType(context.Context, string) ([]oms.TypeGroup, error) {
 	return nil, nil
+}
+func (s *stubRehydrateRepo) CountObjectTypesInTypeGroup(context.Context, string) (int, error) {
+	return 0, nil
 }
 func (s *stubRehydrateRepo) CreateValueType(context.Context, *oms.ValueType) error {
 	return nil
@@ -235,6 +241,25 @@ func (s *stubRehydrateRepo) ListActionLogs(context.Context, string, int, int) ([
 }
 func (s *stubRehydrateRepo) CountActionLogs(context.Context, string) (int, error)       { return 0, nil }
 func (s *stubRehydrateRepo) UpdateActionLogStatus(context.Context, int64, string) error { return nil }
+func (s *stubRehydrateRepo) UpdateActionLogSideEffectStatus(context.Context, int64, json.RawMessage) error {
+	return nil
+}
+func (s *stubRehydrateRepo) InsertSideEffectDLQRow(context.Context, *oms.SideEffectDLQRow) error {
+	return nil
+}
+func (s *stubRehydrateRepo) ListSideEffectDLQByActionLog(context.Context, int64) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) ListPendingSideEffectDLQRows(context.Context, int) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (s *stubRehydrateRepo) MarkSideEffectDLQAbandoned(context.Context, int64) error { return nil }
+func (s *stubRehydrateRepo) GetSideEffectDLQRow(context.Context, int64) (*oms.SideEffectDLQRow, error) {
+	return nil, oms.ErrNotFound
+}
+func (s *stubRehydrateRepo) UpdateSideEffectDLQAfterReplay(context.Context, int64, json.RawMessage, bool) error {
+	return nil
+}
 func (s *stubRehydrateRepo) SearchOntologyResources(context.Context, string, string) ([]oms.SearchResult, error) {
 	return nil, nil
 }
@@ -347,6 +372,9 @@ func (s *stubRehydrateRepo) ListNotifications(context.Context, string, bool) ([]
 	return nil, nil
 }
 func (s *stubRehydrateRepo) MarkNotificationRead(context.Context, string) error { return nil }
+func (s *stubRehydrateRepo) CountNotifications(context.Context, string, bool) (int, error) {
+	return 0, nil
+}
 
 // --- Tests ---
 

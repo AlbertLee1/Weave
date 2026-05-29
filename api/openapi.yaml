@@ -102,6 +102,28 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    VersionedLookupNotSupported:
+      description: |
+        Round 117/119 — the path parameter parsed as a RID with a
+        round-91 @vN version suffix; the system recognises the
+        version semantics but snapshot lookups are not yet
+        implemented (Gap-T4 step-2). errorName is
+        VersionedLookupNotSupported; parameters echo the parsed
+        version + original input so the SPA/SDK can surface
+        "version N pinned, snapshots pending" instead of treating
+        the RID as malformed.
+
+        Applies uniformly across the metadata-Get surface (round
+        119 extended the guard to GetObjectType, GetActionType,
+        GetLinkType, GetInterfaceType, GetValueType, GetQueryType,
+        GetSharedPropertyType, GetTypeGroup). The Python SDK
+        round-118 WeaveVersionedLookupError exception class
+        catches this response specifically — round 120 contract
+        test asserts cross-handler uniformity.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
   parameters:
     OntologyApiName:
       in: path
@@ -487,6 +509,50 @@ components:
           type: string
         editOnly:
           type: boolean
+    TypeGroup:
+      type: object
+      description: |
+        A user-defined grouping of ObjectTypes (e.g. "People",
+        "Finance"). Used by SDKs and the SPA to drive
+        category-aware navigation in ontology explorers. The
+        wire shape matches the in-process pkg/oms.TypeGroup
+        struct used by the OMS repo.
+      required: [rid, apiName, displayName]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        color:
+          type: string
+    SharedProperty:
+      type: object
+      description: |
+        A reusable property definition that can be attached to multiple
+        ObjectTypes (and surfaced inside interface fullMetadata). The
+        wire shape matches the in-process pkg/oms.SharedProperty struct
+        used by the OMS repo.
+      required: [rid, apiName, baseType]
+      properties:
+        rid:
+          type: string
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        baseType:
+          type: string
+        typeConfig:
+          type: object
+          additionalProperties: true
+        isArray:
+          type: boolean
     LinkType:
       type: object
       required: [rid, apiName, displayName, objectTypeApiName, linkedObjectTypeApiName, cardinality, required]
@@ -576,6 +642,15 @@ components:
           items:
             type: object
             additionalProperties: true
+        submissionCriteria:
+          description: "Round 135: submission criteria evaluated by EvaluateCriteria at apply time. Structure is validated at save time (400 InvalidParameter on unknown type / unknown operator / malformed group)."
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: array
+              items:
+                type: object
+                additionalProperties: true
         implementsMethodRid:
           description: "US-214: RID of an InterfaceMethod this ActionType implements."
           type: string
@@ -2281,13 +2356,27 @@ components:
           type: object
           additionalProperties:
             $ref: "#/components/schemas/AggregationResponse"
+    CountObjectsRequest:
+      type: object
+      description: |
+        Optional request body for POST .../objects/{objectType}/count.
+        When omitted (or sent as `{}`), the count returns every
+        object of the given type via the indexMgr.DocCount fast path.
+        When `where` is supplied, the same where-clause → Bleve query
+        pipeline used by SearchObjects is run with Size=0 and the
+        Bleve total is returned — also AND-combined with the caller's
+        row-level security policy so a filtered count cannot
+        over-report rows the caller is not authorised to see.
+      properties:
+        where:
+          $ref: "#/components/schemas/WhereClause"
     CountObjectsResponse:
       type: object
       required: [count]
       properties:
         count:
           type: integer
-          description: The number of objects of the given type.
+          description: The number of objects matching the (optional) filter.
     AggregationResponse:
       type: object
       properties:
@@ -2498,6 +2587,59 @@ components:
       description: Validation result returned for VALIDATE_ONLY mode.
       required: [result]
       properties:
+        result:
+          type: string
+          enum: [VALID, INVALID]
+    ValidateActionResponse:
+      type: object
+      description: |
+        Foundry OSv2 response envelope for the dedicated
+        POST /api/v2/ontologies/{ontologyApiName}/actions/{action}/validate
+        endpoint. The wire shape is a validation report — submissionCriteria
+        and parameters are ALWAYS non-null arrays/objects so SDKs can iterate
+        without nil-guarding even on a VALID response.
+      required: [result, submissionCriteria, parameters]
+      properties:
+        result:
+          type: string
+          enum: [VALID, INVALID]
+        submissionCriteria:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubmissionCriterionResult"
+        parameters:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ParameterValidationResult"
+    SubmissionCriterionResult:
+      type: object
+      required: [result]
+      properties:
+        result:
+          type: string
+          enum: [VALID, INVALID]
+        configuredFailureMessage:
+          type: string
+    ParameterValidationResult:
+      type: object
+      required: [result, required, evaluatedConstraints]
+      properties:
+        result:
+          type: string
+          enum: [VALID, INVALID]
+        required:
+          type: boolean
+        evaluatedConstraints:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvaluatedConstraint"
+    EvaluatedConstraint:
+      type: object
+      required: [type, result]
+      properties:
+        type:
+          type: string
+          description: Constraint kind (e.g. "required", "range", "oneOf").
         result:
           type: string
           enum: [VALID, INVALID]
@@ -3240,6 +3382,89 @@ components:
         dropped:
           type: boolean
           description: True when the entry was removed from the DLQ stream.
+    AdminSideEffectDLQEntry:
+      type: object
+      description: |
+        PRD-V2 Gap-A4 round-33 entry — one failed-after-retries
+        side-effect dispatch parked in `action_log_side_effect_dlq` for
+        operator review/replay.
+      required: [id, actionLogId, effectIndex, effectType, outcome, createdAt, replayStatus, replayCount]
+      properties:
+        id:
+          type: integer
+          format: int64
+        actionLogId:
+          type: integer
+          format: int64
+        effectIndex:
+          type: integer
+        effectType:
+          type: string
+          description: "Side-effect type, e.g. `webhook` or `log`."
+        effectConfig:
+          description: "Snapshot of the original SideEffect.Config blob so a future replay can dispatch without re-reading the ActionType."
+        outcome:
+          description: "Full SideEffectOutcome JSON ({type, status, attempts, error, durationMs})."
+        createdAt:
+          type: string
+          format: date-time
+        replayStatus:
+          type: string
+          enum: [pending, replayed, abandoned]
+        replayedAt:
+          type: string
+          format: date-time
+        replayCount:
+          type: integer
+    AdminSideEffectDLQListResponse:
+      type: object
+      description: PRD-V2 Gap-A4 round-34 wire shape for `GET /api/admin/side-effect-dlq`.
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminSideEffectDLQEntry"
+    AdminSideEffectDLQAbandonResponse:
+      type: object
+      description: PRD-V2 Gap-A4 round-34 wire shape for `POST /api/admin/side-effect-dlq/{id}/abandon`.
+      required: [id, abandoned, status]
+      properties:
+        id:
+          type: integer
+          format: int64
+        abandoned:
+          type: boolean
+        status:
+          type: string
+          enum: [abandoned]
+    AdminSideEffectDLQReplayResponse:
+      type: object
+      description: |
+        PRD-V2 Gap-A4 round-35 wire shape for `POST
+        /api/admin/side-effect-dlq/{id}/replay`. HTTP 200 indicates the
+        replay MACHINERY ran (load + dispatch + persist); the
+        webhook's actual success/failure lives inside `outcome.status`
+        — operators reading "replayed: false" with `outcome.status:
+        "failed"` know the dispatcher tried but the target is still
+        broken.
+      required: [id, replayed, status, replayCount, outcome]
+      properties:
+        id:
+          type: integer
+          format: int64
+        replayed:
+          type: boolean
+          description: True when outcome.status='success' (terminal flip).
+        status:
+          type: string
+          enum: [pending, replayed]
+          description: Row's replay_status AFTER the replay attempt.
+        replayCount:
+          type: integer
+          description: Total number of manual replay attempts so far.
+        outcome:
+          description: Full SideEffectOutcome ({type, status, attempts, error, durationMs}) from this attempt.
     AdminAuthKeysRotateResponse:
       type: object
       description: US-490 wire shape for `POST /api/admin/auth/keys/rotate`.
@@ -4267,6 +4492,407 @@ paths:
       responses:
         "204":
           description: Logout completed.
+  /api/auth/sessions:
+    get:
+      operationId: listMySessions
+      summary: List the caller's active sessions (US-254)
+      description: |
+        Returns every session belonging to the authenticated caller,
+        sorted by last_seen descending so the SPA can render "this
+        device" first. The `current` flag marks the session whose JWT
+        the request was authenticated with (empty for API-key /
+        OAuth callers since there's no session anchor).
+      tags: [Auth]
+      responses:
+        "200":
+          description: Caller's session list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, created_at, last_seen]
+                      properties:
+                        id:
+                          type: string
+                        ip:
+                          type: string
+                        user_agent:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                        last_seen:
+                          type: string
+                          format: date-time
+                        current:
+                          type: boolean
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/auth/sessions/{sessionID}:
+    delete:
+      operationId: revokeMySession
+      summary: Revoke one of the caller's sessions (US-254)
+      description: |
+        Revokes a single session the caller owns. Best-effort
+        revokes the bound refresh token too when present. Returns
+        204 on success.
+      tags: [Auth]
+      parameters:
+        - in: path
+          name: sessionID
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Session revoked.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/auth/sessions/revoke-others:
+    post:
+      operationId: revokeMyOtherSessions
+      summary: Bulk-revoke all caller sessions except current (round 101)
+      description: |
+        "Log out other devices" — revokes every session belonging
+        to the caller EXCEPT the one they're currently authenticated
+        on (per the SessionIDAttributeKey on User.Attributes).
+        Best-effort per row: a single failing Delete is logged via
+        the audit channel and skipped so the rest of the cleanup
+        proceeds. Foundry-parity sibling of the List + Delete pair.
+
+        When the caller has no session anchor (typical for API-key
+        / OAuth auth), the handler revokes ALL of the caller's
+        sessions and the response's currentSessionId is empty.
+      tags: [Auth]
+      responses:
+        "200":
+          description: Bulk revocation result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked, currentSessionId]
+                properties:
+                  revoked:
+                    type: integer
+                    description: |
+                      Count of sessions destroyed by this call. Zero
+                      means the caller had no other sessions to revoke.
+                  currentSessionId:
+                    type: string
+                    description: |
+                      The session anchor preserved by this call.
+                      Empty when the caller had no session anchor
+                      (in which case all sessions were revoked).
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/server-info/connections:
+    get:
+      operationId: getServerInfoConnections
+      summary: PG pool + NATS connection state (round 131)
+      description: |
+        Returns the server's live connection-pool snapshot — PG
+        acquired/idle/total/max conns, NATS connection status +
+        in/out message counters. On-call answers "is the DB pool
+        healthy? is NATS still connected?" without a Prometheus
+        scrape.
+
+        Sibling of /api/v2/server-info (round 129); same public
+        unauthenticated convention. Per-service nullability lets a
+        partial boot (PG up, NATS down) surface accurately:
+        degraded boot emits {"postgres": null, "nats": null} so
+        the SPA renders "service not configured" instead of
+        crashing on missing fields.
+
+        Provider invoked at request time so successive calls show
+        the latest counter values.
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: Connection state snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [postgres, nats]
+                properties:
+                  postgres:
+                    nullable: true
+                    type: object
+                    required: [acquiredConns, idleConns, totalConns,
+                               maxConns, newConnsCount,
+                               maxLifetimeDestroyCount, maxIdleDestroyCount]
+                    properties:
+                      acquiredConns:
+                        type: integer
+                      idleConns:
+                        type: integer
+                      totalConns:
+                        type: integer
+                      maxConns:
+                        type: integer
+                      newConnsCount:
+                        type: integer
+                        format: int64
+                      maxLifetimeDestroyCount:
+                        type: integer
+                        format: int64
+                      maxIdleDestroyCount:
+                        type: integer
+                        format: int64
+                  nats:
+                    nullable: true
+                    type: object
+                    required: [status, inMsgs, outMsgs, reconnects]
+                    properties:
+                      status:
+                        type: string
+                        description: |
+                          One of CONNECTED / RECONNECTING /
+                          CLOSED / etc. (nats.Status.String()).
+                      serverUrl:
+                        type: string
+                      inMsgs:
+                        type: integer
+                        format: int64
+                      outMsgs:
+                        type: integer
+                        format: int64
+                      reconnects:
+                        type: integer
+                        format: int64
+  /api/v2/server-info:
+    get:
+      operationId: getServerInfo
+      summary: Runtime statistics (round 129)
+      description: |
+        Returns the running server's live runtime stats — uptime,
+        goroutine count, heap allocation, total OS memory, GC
+        cycles. Sibling of /api/v2/build-info (round 123): where
+        build-info exposes compile-time identity (immutable), this
+        endpoint exposes LIVE state (mutates per call). On-call
+        pairs the two for full debug context: "we're running
+        commit abc123 with 1.2GB heap and 384 goroutines".
+
+        Public unauthenticated — same Foundry-parity convention as
+        the build-info family.
+
+        startedAt is the timestamp of the most recent
+        NewFullRouter invocation (effectively process boot).
+        uptimeSeconds is integer for diff-friendliness.
+
+        Note: runtime.ReadMemStats stops-the-world briefly. Use
+        the Prometheus /metrics scrape for high-frequency polling;
+        this endpoint is for ad-hoc on-call use.
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: Runtime statistics snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [startedAt, uptimeSeconds, goroutineCount,
+                           memoryAllocBytes, memorySysBytes, gcCycles]
+                properties:
+                  startedAt:
+                    type: string
+                    format: date-time
+                  uptimeSeconds:
+                    type: integer
+                    format: int64
+                  goroutineCount:
+                    type: integer
+                  memoryAllocBytes:
+                    type: integer
+                    format: int64
+                  memorySysBytes:
+                    type: integer
+                    format: int64
+                  gcCycles:
+                    type: integer
+  /api/v2/build-info/features:
+    get:
+      operationId: getBuildInfoFeatures
+      summary: Server capability discovery (round 127)
+      description: |
+        Returns the running server's feature manifest — which
+        optional capabilities are wired and which are disabled,
+        with a Reason field explaining why disabled ones aren't
+        active. The SPA reads this at page-load to decide which
+        routes / affordances to render, instead of poking each
+        endpoint for a 404.
+
+        Sibling of /api/v2/build-info (round 123) and
+        /api/v2/build-info/dependencies (round 125); same public
+        unauthenticated convention. Capability flags are not
+        secrets and the SPA needs them before any auth handshake
+        completes.
+
+        Stable-sorted by name. enabled=true entries omit `reason`
+        via json:omitempty. The cmd/server/features_detect.go
+        wiring builds the list at boot from ServerDeps state, so
+        a degraded boot (no PG) surfaces disabled features with
+        actionable reasons like "SessionStore not configured (no
+        PG)".
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: Feature manifest snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [features]
+                properties:
+                  features:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, enabled]
+                      properties:
+                        name:
+                          type: string
+                          description: |
+                            Stable feature identifier (e.g.
+                            "rid-versioning", "sessions", "mcp").
+                        enabled:
+                          type: boolean
+                          description: |
+                            Whether the feature is wired and
+                            available on this server.
+                        description:
+                          type: string
+                          description: |
+                            Human-readable description for the SPA
+                            settings page.
+                        reason:
+                          type: string
+                          description: |
+                            Why enabled=false. Omitted entirely
+                            when enabled=true.
+  /api/v2/build-info/dependencies:
+    get:
+      operationId: getBuildInfoDependencies
+      summary: Server dependency inventory (round 125)
+      description: |
+        Returns the server's third-party Go module dependencies as
+        embedded in the binary by the Go toolchain
+        (runtime/debug.ReadBuildInfo). On-call answers "which
+        version of pgx do we have running?" without rebuilding or
+        grepping go.sum.
+
+        Sibling of /api/v2/build-info (round 123); same public
+        unauthenticated convention. Module names + versions are not
+        secrets and the on-call shouldn't need a token to triage.
+
+        Per-entry shape mirrors runtime/debug.Module but flattens
+        Replace into a sibling field: `version` always carries the
+        EFFECTIVE version (post-replace) so wire consumers don't
+        walk a recursive linked list; `replace` is populated only
+        when a go.mod replace directive applies. Sorted by `path`
+        for stable diff between two snapshots.
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: Dependency inventory snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [dependencies]
+                properties:
+                  dependencies:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, version]
+                      properties:
+                        path:
+                          type: string
+                          description: Module import path (e.g. github.com/go-chi/chi/v5).
+                        version:
+                          type: string
+                          description: |
+                            Effective version (post-replace if a
+                            replace directive applies, upstream
+                            otherwise).
+                        sum:
+                          type: string
+                          description: |
+                            H1 module checksum from go.sum. Empty
+                            for modules without a go.sum entry.
+                        replace:
+                          type: string
+                          description: |
+                            Path of the replacement module when a
+                            go.mod replace directive applies. Empty
+                            otherwise.
+  /api/v2/build-info:
+    get:
+      operationId: getBuildInfo
+      summary: Server build metadata (round 123)
+      description: |
+        Returns the running server's build metadata — version, git
+        commit, Go runtime version, and build timestamp. Useful for
+        the on-call to answer "which commit is this?" without
+        grepping logs or rebuilding the binary.
+
+        Intentionally unauthenticated — build metadata leaks no
+        secrets, and on-call frequently needs the answer without an
+        access token. Foundry's equivalent endpoint follows the
+        same convention.
+
+        version / commit / buildTime are populated at compile time
+        via ``-ldflags="-X github.com/liyang/weave/pkg/buildinfo.X=Y"``;
+        defaults are "unknown" for local dev. goVersion is captured
+        live via runtime.Version() so a swap of the Go toolchain
+        surfaces immediately without rebuild.
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: Build metadata snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, commit, goVersion, buildTime]
+                properties:
+                  version:
+                    type: string
+                    description: |
+                      Build version string (semver or "unknown" for
+                      local dev). ldflags overridable.
+                  commit:
+                    type: string
+                    description: |
+                      Short git commit hash or "unknown". ldflags
+                      overridable.
+                  goVersion:
+                    type: string
+                    description: |
+                      Go runtime version (runtime.Version()),
+                      captured live at request time.
+                  buildTime:
+                    type: string
+                    description: |
+                      Build timestamp (RFC3339) or "unknown".
+                      ldflags overridable.
   /api/v2/me:
     get:
       operationId: getMe
@@ -4282,6 +4908,542 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/me/ontologies:
+    get:
+      operationId: listMyOntologies
+      summary: Caller-scoped ontology inventory (round 99)
+      description: |
+        Returns the subset of system ontologies where the caller
+        holds a scoped per-ontology role. The SPA's ontology-picker
+        uses this to render "your ontologies" without fetching every
+        ontology and filtering against the OntologyRoles map client-
+        side. Foundry-parity sibling of the role-based gating exposed
+        via /api/v2/me and round-95's /api/v2/ontologies/{ontology}/me.
+
+        Filtering rule: an ontology appears iff the caller's
+        OntologyRoles entry for its RID is non-empty. Users with only
+        global roles (no scoped grants) get an empty array — they're
+        expected to use the regular /api/v2/ontologies listing in
+        that case. Stale OntologyRoles entries pointing at unknown
+        RIDs are silently skipped (same convention as the round 79-89
+        getByRidBatch surfaces).
+      tags: [Auth]
+      responses:
+        "200":
+          description: Caller-scoped ontology list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologies]
+                properties:
+                  ontologies:
+                    type: array
+                    items:
+                      type: object
+                      required: [rid, apiName, displayName, role]
+                      properties:
+                        rid:
+                          type: string
+                        apiName:
+                          type: string
+                        displayName:
+                          type: string
+                        role:
+                          type: string
+                          description: |
+                            The caller's scoped role on this ontology
+                            (always populated — entries are filtered
+                            to ontologies where role is non-empty).
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/me/checks/queryTypes:
+    post:
+      operationId: checkQueryTypesBatch
+      summary: Bulk query applicability probe (round 115)
+      description: |
+        Third axis of the bulk probe trio (after r107 OT and r109
+        actions). Resolves canExecute for N query types on ONE
+        ontology in a single round-trip. Together with the OT +
+        action bulk probes, a freshly-loaded SPA page resolves its
+        full per-resource gating matrix in THREE POSTs instead of
+        K+M+P parallel GETs.
+
+        Same patterns as r107/r109: per-entry found:bool
+        discriminator distinguishes "removed from config" from
+        "exists but no perm"; found=false entries always have
+        canExecute=false regardless of caller perms; results
+        preserves input order.
+
+        canExecute checks PermQueryTypeRead — Weave query types
+        are read-only computed views so the read permission gates
+        execution.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ontologyApiName, queryTypeApiNames]
+              properties:
+                ontologyApiName:
+                  type: string
+                queryTypeApiNames:
+                  type: array
+                  items:
+                    type: string
+                  description: |
+                    Non-empty list of query-type API names. An
+                    empty array returns 400 — likely a client
+                    coding error.
+      responses:
+        "200":
+          description: Bulk query applicability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyApiName, results]
+                properties:
+                  ontologyApiName:
+                    type: string
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [queryTypeApiName, found, canExecute]
+                      properties:
+                        queryTypeApiName:
+                          type: string
+                        found:
+                          type: boolean
+                        queryTypeRid:
+                          type: string
+                          description: Empty when found is false.
+                        canExecute:
+                          type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/me/checks/actionTypes:
+    post:
+      operationId: checkActionTypesBatch
+      summary: Bulk action applicability probe (round 109)
+      description: |
+        Sibling of /api/v2/me/checks/objectTypes (round 107).
+        Resolves canApply for N action types on ONE ontology in a
+        single round-trip. Together with the OT bulk probe, a
+        freshly-loaded SPA page resolves both its read/write OT
+        matrix AND its applicable-actions list in TWO POSTs
+        instead of K+M parallel GETs against the per-resource
+        round-103/105 single endpoints.
+
+        Each result carries `found:bool` so the SPA can distinguish
+        "action removed from config" (deleted/renamed) from "exists
+        but no permission" — same discriminator pattern as round 107.
+        found=false entries always have canApply=false regardless of
+        caller perms so the SPA never accidentally shows an Apply
+        button for a missing action.
+
+        results preserves the input order: row N of the response
+        corresponds to row N of the request without a name→row map.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ontologyApiName, actionTypeApiNames]
+              properties:
+                ontologyApiName:
+                  type: string
+                actionTypeApiNames:
+                  type: array
+                  items:
+                    type: string
+                  description: |
+                    Non-empty list of action-type API names. An
+                    empty array returns 400 — likely a client
+                    coding error.
+      responses:
+        "200":
+          description: Bulk action applicability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyApiName, results]
+                properties:
+                  ontologyApiName:
+                    type: string
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [actionTypeApiName, found, canApply]
+                      properties:
+                        actionTypeApiName:
+                          type: string
+                        found:
+                          type: boolean
+                        actionTypeRid:
+                          type: string
+                          description: Empty when found is false.
+                        canApply:
+                          type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/me/checks/objectTypes:
+    post:
+      operationId: checkObjectTypesBatch
+      summary: Bulk object-type applicability probe (round 107)
+      description: |
+        Resolves read/write permissions for N object types on ONE
+        ontology in a single round-trip. The common SPA page-load
+        pattern is "this page renders rows for K object types; tell
+        me the read/write matrix for all K at once", which would
+        otherwise require K parallel GETs against
+        /api/v2/ontologies/{ont}/objectTypes/{ot}/check (round 105).
+
+        Each result carries `found:bool` so the SPA can distinguish
+        "object type doesn't exist" (deleted/renamed in config) from
+        "exists but no permission" — the round-105 single endpoint
+        expressed this with HTTP 404, but a batch endpoint can't
+        404 per-entry, so the discriminator moves into the payload.
+
+        results preserves the input order: row N of the response
+        corresponds to row N of the request without a name→row map.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ontologyApiName, objectTypeApiNames]
+              properties:
+                ontologyApiName:
+                  type: string
+                objectTypeApiNames:
+                  type: array
+                  items:
+                    type: string
+                  description: |
+                    Non-empty list of object-type API names. An empty
+                    array returns 400 — likely a client coding error.
+      responses:
+        "200":
+          description: Bulk applicability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyApiName, results]
+                properties:
+                  ontologyApiName:
+                    type: string
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [objectTypeApiName, found, canRead, canWrite]
+                      properties:
+                        objectTypeApiName:
+                          type: string
+                        found:
+                          type: boolean
+                        objectTypeRid:
+                          type: string
+                          description: Empty when found is false.
+                        canRead:
+                          type: boolean
+                        canWrite:
+                          type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/me/permissions/check:
+    post:
+      operationId: checkMyPermissions
+      summary: Foundry-parity fine-grained permission probe (round 97)
+      description: |
+        Given a list of permission names, returns which the caller
+        holds (granted) and which they lack (denied). Optionally
+        scoped to one ontology so per-ontology roles count without
+        leaking other-ontology grants. The SPA uses this for
+        batch-gating dynamic UI ("for each row in this table, can
+        the user run THIS action?") without N round-trips to
+        /api/v2/me + client-side filtering.
+
+        granted ∪ denied always partitions the input permission set
+        exactly: no overlap, no missing entries, no duplicates.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [permissions]
+              properties:
+                permissions:
+                  type: array
+                  items:
+                    type: string
+                  description: |
+                    Non-empty list of permission names to check.
+                    An empty array returns 400 InvalidRequestBody —
+                    likely a client coding error.
+                ontology:
+                  type: string
+                  description: |
+                    When set, narrows the caller's effective role set
+                    to (global roles ∪ this ontology's scoped role).
+                    Mirrors round-95 OntologyMeHandler scoping.
+      responses:
+        "200":
+          description: Granted/denied partition of the input permission set.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [granted, denied]
+                properties:
+                  granted:
+                    type: array
+                    items:
+                      type: string
+                  denied:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/queryTypes/{queryTypeApiName}/check:
+    get:
+      operationId: checkQueryType
+      summary: Foundry-parity query applicability probe (round 113)
+      description: |
+        Returns whether the caller can execute the named query type
+        on the named ontology. Third axis of the per-resource check
+        family (after round-103 actions and round-105 object-types).
+        SPA uses this to gate per-query "Run Query" affordances.
+
+        canExecute checks PermQueryTypeRead — Weave query types are
+        read-only computed views so the read permission gates
+        execution. The wire field stays `canExecute` matching
+        Foundry's external naming; same convention as round-103's
+        canApply↔action.execute mapping.
+
+        Always returns 200 with the boolean when (ontology,
+        queryType) pair exists — probe is informational, never 403.
+        404 OntologyNotFound when ontology missing, 404
+        QueryTypeNotFound when query missing — the distinction lets
+        the SPA respond differently to missing-config vs
+        missing-permission.
+      tags: [Auth]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: queryTypeApiName
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Query applicability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyApiName, queryTypeApiName, queryTypeRid, canExecute]
+                properties:
+                  ontologyApiName:
+                    type: string
+                  queryTypeApiName:
+                    type: string
+                  queryTypeRid:
+                    type: string
+                  canExecute:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/check:
+    get:
+      operationId: checkObjectType
+      summary: Foundry-parity object-type applicability probe (round 105)
+      description: |
+        Returns whether the caller can read/write objects of the
+        named type on the named ontology. The SPA uses this to gate
+        per-object-type UI affordances (read = show-the-row, write =
+        show-the-pencil) in a single GET instead of N permission-name
+        lookups against POST /me/permissions/check.
+
+        Sibling of /api/v2/ontologies/{ont}/actions/{action}/check
+        (round 103). Distinct because object UI splits on the two-axis
+        read/write matrix where action UI is single-axis (apply).
+
+        Always returns 200 with two booleans when the (ontology,
+        objectType) pair exists — the probe is informational so
+        false NEVER becomes 403. 404 OntologyNotFound when ontology
+        missing, 404 ObjectTypeNotFound when type missing — the
+        distinction matters because "no permission" and "doesn't
+        exist" need different SPA responses.
+      tags: [Auth]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: objectTypeApiName
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Object-type applicability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyApiName, objectTypeApiName, objectTypeRid, canRead, canWrite]
+                properties:
+                  ontologyApiName:
+                    type: string
+                  objectTypeApiName:
+                    type: string
+                  objectTypeRid:
+                    type: string
+                  canRead:
+                    type: boolean
+                  canWrite:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/actions/{actionApiName}/check:
+    get:
+      operationId: checkAction
+      summary: Foundry-parity action applicability probe (round 103)
+      description: |
+        Returns whether the caller can apply the named action on the
+        named ontology. The SPA uses this to disable per-row "Apply
+        Action" buttons without round-tripping a real apply call.
+
+        Distinct from POST /api/v2/me/permissions/check:
+          1. Validates that the action exists (404 ActionTypeNotFound
+             when missing) — a raw permission probe always returns
+             granted/denied regardless of whether the action is real.
+          2. Single GET — fits row-render code where POST+body is
+             awkward.
+
+        canApply reflects the caller's effective role set on this
+        ontology (global ∪ scoped role). False does NOT imply 403;
+        the response is informational and always returns 200 with
+        a boolean so the SPA can use it for UI gating.
+      tags: [Auth]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: actionApiName
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Action applicability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyApiName, actionApiName, actionRid, canApply]
+                properties:
+                  ontologyApiName:
+                    type: string
+                  actionApiName:
+                    type: string
+                  actionRid:
+                    type: string
+                  canApply:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/me:
+    get:
+      operationId: getOntologyMe
+      summary: Return the caller's scope on one specific ontology (round 95)
+      description: |
+        Returns the caller's resolved per-ontology role and effective
+        permission set for ONE specific ontology — narrower than
+        /api/v2/me, which exposes the full per-ontology role map. The
+        SPA uses this shape to gate UI affordances on a page that has
+        already scoped itself to an ontology ("can I see the Create
+        button on THIS ontology?") without parsing the global
+        OntologyRoles map client-side. Foundry-parity sibling.
+      tags: [Auth]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: Caller's scope on this ontology.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ontologyRid, ontologyApiName, role, permissions, markings]
+                properties:
+                  ontologyRid:
+                    type: string
+                    description: RID of the ontology.
+                  ontologyApiName:
+                    type: string
+                    description: API name of the ontology (echoed).
+                  role:
+                    type: string
+                    description: |
+                      Scoped per-ontology role for this caller. Empty
+                      string when the caller has no per-ontology grant
+                      (they still get permissions from their global
+                      roles).
+                  permissions:
+                    type: array
+                    items:
+                      type: string
+                    description: |
+                      Effective permission set for this caller on this
+                      ontology — union of global roles + the one
+                      scoped role for this ontology. Always an array,
+                      never null.
+                  markings:
+                    type: array
+                    items:
+                      type: string
+                    description: |
+                      Caller's marking set (same source as /api/v2/me).
+                      Always an array, never null.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies:
     get:
       operationId: listOntologies
@@ -4372,6 +5534,15 @@ paths:
     get:
       operationId: getObjectType
       summary: Get a single object type
+      description: |
+        The path parameter accepts either an API name (e.g. "Customer")
+        or a RID (e.g. "ri.ontology.main.object-type.{uuid}"). When the
+        input parses as a RID with a round-91 @vN version suffix, the
+        handler returns 501 VersionedLookupNotSupported — the system
+        recognises the version semantics but the snapshot system is
+        not yet built (Gap-T4 step-2 pilot, round 117). Un-versioned
+        RIDs and plain API names continue to resolve the latest
+        version as before.
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -4387,6 +5558,8 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}:
     put:
       operationId: updateObjectType
@@ -4725,6 +5898,220 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/typeGroups:
+    get:
+      operationId: listObjectTypeTypeGroups
+      summary: List the TypeGroups an ObjectType belongs to (Foundry OSv2)
+      description: |
+        Reverse-lookup keyed by ObjectType API name — given an
+        ObjectType, return every TypeGroup it is assigned to. SDKs
+        and the SPA ObjectType detail card use the result to render
+        category chips without round-tripping /fullMetadata. The
+        envelope is {"data":[...]} and NEVER null; an ObjectType with
+        zero assignments returns {"data":[]} so SDK iterators don't
+        NPE. Unknown ObjectType API name surfaces as 404
+        ObjectTypeNotFound, mirroring GetObjectType's error contract.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectTypeApiName"
+      responses:
+        "200":
+          description: TypeGroup list envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TypeGroup"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/typeGroups:
+    get:
+      operationId: listTypeGroups
+      summary: List type groups (Foundry OSv2)
+      description: |
+        Foundry 1:1 — returns every TypeGroup registered in the
+        ontology. TypeGroups organise ObjectTypes into categories
+        (e.g. "People", "Finance") and SDKs/UIs use the list to drive
+        category-aware navigation. The envelope is {"data": [...]} and
+        is NEVER null; an ontology with zero TypeGroups returns
+        {"data": []} so SDK iterators don't NPE. Prior to this
+        endpoint TypeGroups were only visible by parsing the bulky
+        /fullMetadata response.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: TypeGroup list envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TypeGroup"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/typeGroups/{typeGroup}:
+    get:
+      operationId: getTypeGroupByApiName
+      summary: Get a single TypeGroup by API name (Foundry OSv2)
+      description: |
+        Foundry-1:1 sibling of listTypeGroups — keyed by API name
+        (not RID). The current implementation scans the
+        ontology-scoped list and filters; sets are small in practice
+        and SDK caches absorb repeat calls.
+
+        Round 119: when the path parameter parses as a RID with
+        a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: typeGroup
+          required: true
+          description: TypeGroup API name (not the RID).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: TypeGroup wire object.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TypeGroup"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
+  /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes:
+    get:
+      operationId: listSharedPropertyTypes
+      summary: List shared property types (Foundry OSv2)
+      description: |
+        Foundry 1:1 — returns every SharedProperty registered in the
+        ontology. The envelope is {"data": [...]} and is NEVER null;
+        an ontology with zero shared properties returns {"data": []}
+        so SDK iterators don't NPE. Prior to this endpoint, SDKs
+        could discover SharedProperties only by parsing the bulky
+        /fullMetadata response — this restores access at the
+        canonical Foundry path.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      responses:
+        "200":
+          description: SharedProperty list envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SharedProperty"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/{sharedPropertyType}:
+    get:
+      operationId: getSharedPropertyTypeByApiName
+      summary: Get a single SharedProperty by API name (Foundry OSv2)
+      description: |
+        Foundry-1:1 sibling of listSharedPropertyTypes — keyed by
+        API name (not RID). The current implementation scans the
+        ontology-scoped list and filters; ontology-scoped sets are
+        small in practice and SDK caches absorb repeat calls.
+
+        Round 119: when the path parameter parses as a RID with
+        a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: sharedPropertyType
+          required: true
+          description: SharedProperty API name (not the RID).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SharedProperty wire object.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedProperty"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
+  /api/v2/ontologies/{ontologyApiName}/linkTypes/{linkType}:
+    get:
+      operationId: getLinkTypeByApiName
+      summary: Get a LinkType by API name (Foundry OSv2)
+      description: |
+        Foundry 1:1 alignment — mirrors GET /objectTypes/{objectTypeApiName}.
+        SDKs hit this endpoint after a search response surfaces a
+        linkType api name they need to render. Without it, callers
+        fall back to ListLinkTypes + client-side filter on every
+        call. {linkType} is the API name (bare slug); RID-keyed
+        mutations remain on /linkTypes/byRid/{linkTypeRid}.
+
+        Round 119: when the path parameter parses as a RID with
+        a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: linkType
+          required: true
+          description: LinkType API name (not the RID).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: LinkType wire object.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/links/{linkTypeRid}/properties:
     get:
       operationId: listLinkProperties
@@ -4980,6 +6367,32 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/incomingLinkTypes:
+    get:
+      operationId: listIncomingLinkTypes
+      summary: List incoming link types for an object type (round 77)
+      description: |
+        Returns every LinkType whose TargetObjectType matches the
+        resolved ObjectType — the links pointing INTO this type.
+        Mirror of the outgoingLinkTypes surface; closes the
+        symmetry gap so the ObjectType detail page can render
+        "incoming links" without scanning every ObjectType in the
+        ontology and calling outgoingLinkTypes N times.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectTypeApiName"
+      responses:
+        "200":
+          description: Incoming link type list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/resolved:
     get:
       operationId: getObjectTypeResolved
@@ -5223,10 +6636,275 @@ paths:
                 $ref: "#/components/schemas/ActionTypeListResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/linkTypes/getByRidBatch:
+    post:
+      operationId: getLinkTypesByRidBatch
+      summary: Batch lookup link types by RIDs (round 79)
+      description: |
+        Symmetry with the objectTypes/actionTypes getByRidBatch surfaces.
+        SDK callers rendering many link metadatas (Foundry ObjectList
+        link columns, scenario diff badges) previously needed N
+        round-trips to GET /linkTypes/{rid}; one batch call collapses
+        them. Missing RIDs are silently skipped — the response carries
+        only resolvable rows, matching the existing batch convention so
+        partial-render logic stays portable across object/action/link
+        batch surfaces.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of LinkType RIDs to look up.
+      responses:
+        "200":
+          description: Batch link type list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTypeListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/interfaceTypes/getByRidBatch:
+    post:
+      operationId: getInterfaceTypesByRidBatch
+      summary: Batch lookup interface types by RIDs (round 81)
+      description: |
+        Completes the batch-get-by-RID symmetry across all four
+        OMS metadata kinds (objectTypes + actionTypes + linkTypes
+        round-79 + this). SDK callers rendering many interface
+        metadatas previously needed N round-trips. Missing RIDs
+        are silently skipped — matches the established convention
+        so partial-render logic stays portable across all four
+        batch surfaces.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of InterfaceType RIDs to look up.
+      responses:
+        "200":
+          description: Batch interface type list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Interface"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/valueTypes/getByRidBatch:
+    post:
+      operationId: getValueTypesByRidBatch
+      summary: Batch lookup value types by RIDs (round 83)
+      description: |
+        Closes the batch-get-by-RID symmetry across all five
+        OMS metadata kinds (objectTypes + actionTypes + linkTypes
+        round-79 + interfaceTypes round-81 + this). Property-editor
+        dropdowns and unit-suggestion panels rendering many
+        value-type metadatas no longer need N round-trips to
+        label N RIDs. Missing RIDs are silently skipped — matches
+        the established convention so partial-render logic stays
+        portable across all five batch surfaces.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of ValueType RIDs to look up.
+      responses:
+        "200":
+          description: Batch value type list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ValueType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/getByRidBatch:
+    post:
+      operationId: getSharedPropertyTypesByRidBatch
+      summary: Batch lookup shared property types by RIDs (round 85)
+      description: |
+        Extends the batch-get-by-RID convention beyond the five core
+        metadata kinds (objectTypes + actionTypes + linkTypes round-79
+        + interfaceTypes round-81 + valueTypes round-83) to
+        SharedPropertyTypes — the reusable property definitions
+        consumed by Interfaces and as an include-pool for ObjectType
+        properties. Property editors and interface designers rendering
+        many shared-property metadatas no longer need N round-trips.
+        Missing RIDs are silently skipped — matches the established
+        convention so partial-render logic stays portable across all
+        batch surfaces.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of SharedProperty RIDs to look up.
+      responses:
+        "200":
+          description: Batch shared property type list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SharedProperty"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/typeGroups/getByRidBatch:
+    post:
+      operationId: getTypeGroupsByRidBatch
+      summary: Batch lookup type groups by RIDs (round 87)
+      description: |
+        Extends the batch-get-by-RID convention to TypeGroups, the
+        navigation-pane categorisation primitive. SPA Browser sidebar
+        and Explorer faceting controls render N type-groups at a
+        time; without a batch surface a 50-group list needed 50
+        round-trips to label them. Missing RIDs are silently skipped —
+        matches the established convention shared with the six other
+        batch surfaces (objectTypes + actionTypes + linkTypes round-79
+        + interfaceTypes round-81 + valueTypes round-83 +
+        sharedPropertyTypes round-85).
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of TypeGroup RIDs to look up.
+      responses:
+        "200":
+          description: Batch type group list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TypeGroup"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/queryTypes/getByRidBatch:
+    post:
+      operationId: getQueryTypesByRidBatch
+      summary: Batch lookup query types by RIDs (round 89)
+      description: |
+        Closes the 8-of-8 batch-get-by-RID symmetry across the OMS
+        metadata surface (objectTypes + actionTypes + linkTypes
+        round-79 + interfaceTypes round-81 + valueTypes round-83 +
+        sharedPropertyTypes round-85 + typeGroups round-87 + this).
+        QueryTypes — the predefined filter+aggregation combos stored
+        as metadata — round out the set; a saved-query palette
+        rendering N saved queries no longer needs N round-trips.
+        Missing RIDs are silently skipped — same convention as the
+        seven other batch surfaces.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rids]
+              properties:
+                rids:
+                  type: array
+                  items:
+                    type: string
+                  description: List of QueryType RIDs to look up.
+      responses:
+        "200":
+          description: Batch query type list (missing RIDs are silently skipped).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/QueryType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}:
     get:
       operationId: getActionType
       summary: Get a single action type
+      description: |
+        Accepts either an apiName or a full RID. Round 119: when the
+        input parses as a RID with a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -5242,6 +6920,8 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}/fullMetadata:
     get:
       operationId: getActionTypeFullMetadata
@@ -5311,10 +6991,55 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceRid}/objectTypes:
+    get:
+      operationId: listInterfaceObjectTypes
+      summary: List ObjectTypes implementing an Interface (round 75)
+      description: |
+        Forward direction of the ObjectType↔Interface m:n relationship.
+        Returns every ObjectType in the ontology whose attachment row
+        references this Interface. The reverse direction (which
+        Interfaces does ObjectType X implement) was already exposed at
+        /objectTypes/byRid/{otRid}/interfaces; round 75 closes the
+        symmetry gap so the Interface admin UI can render its
+        implementor list without scanning every ObjectType and
+        calling the reverse direction N times.
+
+        Filter-not-key semantics: an unknown interfaceRid returns 200
+        + {data: []} rather than 404 — matches the SPA list-panel
+        convention of rendering cleanly against brand-new entities.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: interfaceRid
+          required: true
+          description: Interface RID whose implementing ObjectTypes to list.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of ObjectTypes implementing the Interface.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ObjectType"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}:
     get:
       operationId: getInterfaceType
       summary: Get a single interface type
+      description: |
+        Accepts either an apiName or a full RID. Round 119: when the
+        input parses as a RID with a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -5330,6 +7055,8 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes:
     get:
       operationId: listInterfaceOutgoingLinkTypes
@@ -6033,6 +7760,10 @@ paths:
     get:
       operationId: getValueType
       summary: Get a single value type
+      description: |
+        Accepts either an apiName or a full RID. Round 119: when the
+        input parses as a RID with a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -6048,6 +7779,8 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/queryTypes:
     get:
       operationId: listQueryTypes
@@ -6068,6 +7801,10 @@ paths:
     get:
       operationId: getQueryType
       summary: Get a QueryType by apiName or RID
+      description: |
+        Round 119: when the path parameter parses as a RID with
+        a @vN version suffix, returns 501
+        VersionedLookupNotSupported (Gap-T4 step-2).
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
@@ -6087,6 +7824,8 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "501":
+          $ref: "#/components/responses/VersionedLookupNotSupported"
   /api/v2/ontologies/{ontologyApiName}/functions:
     post:
       operationId: createFunction
@@ -7886,6 +9625,33 @@ paths:
                       $ref: "#/components/schemas/Notification"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v2/notifications/unread-count:
+    get:
+      operationId: getNotificationsUnreadCount
+      summary: Lightweight unread-count badge for the navbar
+      description: |
+        Round 66 (PRD-V2 上层体验). Returns the authenticated user's
+        unread-notification count without loading any rows. The Foundry
+        navbar polls this every few seconds; backing it via a dedicated
+        COUNT(*) over the existing idx_notifications_user_unread partial
+        index keeps the request O(returned-count) regardless of table
+        size. The response carries `count` only — there is intentionally
+        no `data` array so the badge poll stays bandwidth-cheap.
+      tags: [Notifications]
+      responses:
+        "200":
+          description: The unread count.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count]
+                properties:
+                  count:
+                    type: integer
+                    minimum: 0
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v2/notifications/read-all:
     post:
       operationId: markAllNotificationsRead
@@ -8273,11 +10039,24 @@ paths:
   /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/count:
     post:
       operationId: countObjects
-      summary: Count the number of objects of a given type
+      summary: Count the number of objects of a given type (optionally filtered)
+      description: |
+        Foundry OSv2 1:1 alignment: the request body is OPTIONAL but,
+        when supplied with a `where` clause, the response counts ONLY
+        matching objects (and respects any row-level security policy
+        the caller is subject to). An empty body or {} keeps the
+        backward-compatible fast indexMgr.DocCount path so callers
+        that never sent a body see no behaviour change.
       tags: [Objects]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
         - $ref: "#/components/parameters/ObjectType"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CountObjectsRequest"
       responses:
         "200":
           description: Object count.
@@ -8285,6 +10064,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CountObjectsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":
@@ -8979,6 +10760,51 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/AsyncApplyActionResponse"
                   - $ref: "#/components/schemas/PendingApprovalResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/actions/{action}/validate:
+    post:
+      operationId: validateAction
+      summary: Validate an action without executing it (Foundry OSv2)
+      description: |
+        Dedicated validation surface SDKs hit on every form-field change.
+        The wire envelope is a validation REPORT — the response is always
+        HTTP 200 when the path is well-formed, even when result=INVALID.
+        Unknown action types surface as INVALID with a submissionCriterion
+        message rather than a 404, so a stale actionType slug renders as a
+        regular form validation error instead of an HTTP exception that
+        breaks the form. A missing {action} path segment IS rejected with
+        400 MissingActionType because that is a malformed URL, not a
+        validation outcome. Validate MUST NOT publish to NATS or fire
+        side effects.
+      tags: [Actions]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: action
+          required: true
+          description: Action API name.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyActionRequest"
+      responses:
+        "200":
+          description: |
+            Validation report. result is VALID or INVALID. parameters is
+            keyed by parameter id; each entry carries result, required,
+            and evaluatedConstraints. submissionCriteria is non-empty on
+            INVALID with at least one entry carrying configuredFailureMessage.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidateActionResponse"
         "400":
           $ref: "#/components/responses/BadRequestError"
         "401":
@@ -10842,6 +12668,84 @@ paths:
           $ref: "#/components/responses/BadRequestError"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+  /api/v2/ontologies/{ontologyApiName}/transactions/{transactionId}:
+    get:
+      operationId: getOntologyTransaction
+      summary: Read the current edit buffer for an OntologyTransaction (experimental)
+      description: |
+        **Experimental** — this endpoint requires `?preview=true` and is
+        subject to change. Returns the full append-ordered list of edits
+        buffered on `{transactionId}`. Unknown transaction IDs return
+        `{totalEdits: 0, edits: []}` rather than 404, matching the POST
+        endpoint's "auto-created on first use" semantic.
+      tags: [OntologyTransaction]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: transactionId
+          required: true
+          schema:
+            type: string
+          description: Opaque client-supplied identifier for the open transaction.
+        - in: query
+          name: preview
+          required: true
+          schema:
+            type: string
+            enum: ["true"]
+          description: Must be `true`; the endpoint is experimental and gated.
+      responses:
+        "200":
+          description: Current edit buffer for the transaction.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [transactionId, totalEdits, edits]
+                properties:
+                  transactionId:
+                    type: string
+                  totalEdits:
+                    type: integer
+                  edits:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TransactionEdit"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+    delete:
+      operationId: abortOntologyTransaction
+      summary: Discard an OntologyTransaction edit buffer (experimental)
+      description: |
+        **Experimental** — this endpoint requires `?preview=true` and is
+        subject to change. Removes any buffered edits for
+        `{transactionId}`. Idempotent: deleting an unknown transaction
+        returns 204 so retries are safe.
+      tags: [OntologyTransaction]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - in: path
+          name: transactionId
+          required: true
+          schema:
+            type: string
+          description: Opaque client-supplied identifier for the open transaction.
+        - in: query
+          name: preview
+          required: true
+          schema:
+            type: string
+            enum: ["true"]
+          description: Must be `true`; the endpoint is experimental and gated.
+      responses:
+        "204":
+          description: Transaction discarded (or did not exist).
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
   /api/v2/sqlQueries/execute:
     post:
       operationId: executeSqlQuery
@@ -11675,6 +13579,49 @@ paths:
           $ref: "#/components/responses/NotFoundError"
         "500":
           $ref: "#/components/responses/InternalError"
+    get:
+      operationId: listVertexShareLinksForGraph
+      summary: List share links for a Vertex graph (round 69)
+      description: |
+        Returns every share-link minted on the graph (including revoked
+        ones — the owner needs to see them to explain 410 Gone errors
+        on revoked URLs). Same canManageShareLinks ACL as createShare
+        Link so management mirrors mutation.
+
+        Security: the full token is NEVER returned in this list. Each
+        row carries `tokenSuffix` (last 8 chars) for identification
+        only — full tokens are one-time disclosures at create time.
+        Returning full tokens here would let anyone with graph-manage
+        access enumerate every live share URL.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: rid
+          required: true
+          description: Vertex graph RID.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Share link list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [shareLinks]
+                properties:
+                  shareLinks:
+                    type: array
+                    items:
+                      type: object
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/vertex/v1/share-links/{token}:
     delete:
       operationId: revokeVertexShareLink
@@ -11871,6 +13818,41 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "404":
           $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      operationId: listVertexScenarioRuns
+      summary: List runs for a Vertex scenario
+      description: |
+        Round 68. Returns every run belonging to the given scenarioRid
+        sorted newest-first (StartedAt DESC) — matches the Foundry
+        "Recent runs" panel ordering. Response is wrapped in `{runs:
+        [...]}` so future pagination fields (nextPageToken, totalCount)
+        can be added without breaking the wire contract. An unknown
+        scenarioRid returns 200 + empty list rather than 404 because
+        scenarioRid is a filter here, not a lookup key — the SPA's
+        "Recent runs" panel renders cleanly against brand-new scenarios.
+      tags: [Vertex]
+      parameters:
+        - in: path
+          name: scenarioRid
+          required: true
+          description: Vertex scenario RID whose runs to list.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Run list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runs]
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      type: object
         "500":
           $ref: "#/components/responses/InternalError"
   /api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}:
@@ -12669,6 +14651,130 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
         "403":
           $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/side-effect-dlq:
+    get:
+      operationId: adminSideEffectDLQList
+      summary: List pending failed-after-retries side-effect dispatches (Gap-A4 round 34)
+      description: |
+        Lists pending entries in the `action_log_side_effect_dlq`
+        table — one row per side-effect dispatch whose retry budget
+        (set in round 30) was exhausted. The admin UI consumes this
+        to render an operator-actionable inbox. Gated behind
+        `user.manage`. 503 when the OMS repository isn't wired.
+      tags: [Admin]
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+          description: Maximum number of entries to return.
+      responses:
+        "200":
+          description: Pending DLQ entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSideEffectDLQListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/side-effect-dlq/{id}/abandon:
+    post:
+      operationId: adminSideEffectDLQAbandon
+      summary: Flip a side-effect DLQ row to `abandoned` (Gap-A4 round 34)
+      description: |
+        Marks a pending side-effect DLQ row as `abandoned` — the
+        operator's "reviewed and will not replay" signal. Idempotent
+        on rows already in `abandoned`. Returns 409 Conflict when the
+        row is in `replayed` status (can't mask a successful dispatch).
+        Gated behind `user.manage`.
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: BIGSERIAL primary key of the DLQ row.
+      responses:
+        "200":
+          description: Row flipped to abandoned (or already there).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSideEffectDLQAbandonResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/side-effect-dlq/{id}/replay:
+    post:
+      operationId: adminSideEffectDLQReplay
+      summary: Re-dispatch a failed side-effect from the DLQ (Gap-A4 round 35)
+      description: |
+        Loads the snapshotted `effect_config` plus the linked
+        `action_logs` row, reconstructs an `ActionResult`, and fires
+        the webhook through the round-30 retry loop. Persists the
+        per-attempt outcome to the DLQ row (bumps `replay_count`,
+        stamps `replayed_at`). On success flips `replay_status` to
+        `replayed` (terminal); on failure stays `pending` so the
+        operator can try again later.
+
+        HTTP 200 means the replay MACHINERY ran. The webhook's actual
+        success/failure is encoded inside `outcome.status` — a 200
+        response with `replayed: false` + `outcome.status: "failed"`
+        means "we dispatched but the target is still broken".
+
+        Returns 409 when the row is not in `pending` status (already
+        replayed or abandoned). Returns 404 when either the DLQ row
+        or its linked `action_log` row is missing. Gated behind
+        `user.manage`.
+      tags: [Admin]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: BIGSERIAL primary key of the DLQ row.
+      responses:
+        "200":
+          description: Replay machinery ran (webhook may still have failed — see outcome.status).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSideEffectDLQReplayResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/admin/funnel/dlq/{id}/replay:

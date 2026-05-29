@@ -39,10 +39,30 @@ type Definition struct {
 	Reference string `json:"reference,omitempty"` // for "reference" — stored objectSet ID
 
 	// For "nearestNeighbors"
-	PropertyIdentifier  *PropertyIdentifier `json:"propertyIdentifier,omitempty"`
-	NumNeighbors        *int                `json:"numNeighbors,omitempty"`
-	SimilarityThreshold *float64            `json:"similarityThreshold,omitempty"`
-	Query               *NNQuery            `json:"query,omitempty"`
+	PropertyIdentifier *PropertyIdentifier `json:"propertyIdentifier,omitempty"`
+	// PropertyIdentifiers (Gap-Q4) enumerates multiple vector columns
+	// to run KNN against in parallel. The executor dispatches one
+	// store call per column and fuses the per-column matches by
+	// keeping the minimum distance per primary key, so a PK that is
+	// "close" on any single column floats to the top. Mutually
+	// exclusive with PropertyIdentifier (singular) — Validate rejects
+	// setting both. A list with a single entry is allowed and behaves
+	// identically to the singular form.
+	PropertyIdentifiers []PropertyIdentifier `json:"propertyIdentifiers,omitempty"`
+	// FusionStrategy (Gap-Q4 follow-up, round 50) selects how
+	// multi-column NN matches are combined. Allowed values:
+	//   - ""    — defaults to "min" (backwards-compat with round 49)
+	//   - "min" — keep minimum distance per primary key, sort ascending
+	//   - "rrf" — Reciprocal Rank Fusion (Cormack et al., k=60):
+	//             score(pk) = sum_c 1 / (60 + rank_c(pk))
+	//             ranks start at 1, absent PKs contribute 0,
+	//             sort by score descending.
+	// Ignored on single-column queries (no fusion needed). Unknown
+	// values are rejected at Validate().
+	FusionStrategy      string   `json:"fusionStrategy,omitempty"`
+	NumNeighbors        *int     `json:"numNeighbors,omitempty"`
+	SimilarityThreshold *float64 `json:"similarityThreshold,omitempty"`
+	Query               *NNQuery `json:"query,omitempty"`
 
 	// For "withProperties"
 	Properties []string `json:"properties,omitempty"`
@@ -186,8 +206,19 @@ func (d *Definition) Validate() error {
 		if d.ObjectSet == nil {
 			return fmt.Errorf("nearestNeighbors requires objectSet")
 		}
-		if d.PropertyIdentifier == nil {
-			return fmt.Errorf("nearestNeighbors requires propertyIdentifier")
+		hasSingular := d.PropertyIdentifier != nil
+		hasPlural := len(d.PropertyIdentifiers) > 0
+		if hasSingular && hasPlural {
+			return fmt.Errorf("nearestNeighbors: propertyIdentifier and propertyIdentifiers are mutually exclusive")
+		}
+		if !hasSingular && !hasPlural {
+			return fmt.Errorf("nearestNeighbors requires propertyIdentifier or propertyIdentifiers")
+		}
+		switch d.FusionStrategy {
+		case "", "min", "rrf":
+			// accepted
+		default:
+			return fmt.Errorf("nearestNeighbors: unknown fusionStrategy %q (allowed: \"\" / \"min\" / \"rrf\")", d.FusionStrategy)
 		}
 	case "withProperties":
 		if d.ObjectSet == nil {

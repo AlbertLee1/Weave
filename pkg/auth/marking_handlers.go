@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/audit"
+	"github.com/liyang/weave/pkg/httputil"
 )
 
 // MarkingGrantAdminRepository extends the request-hot-path MarkingRepository
@@ -259,7 +260,7 @@ func (h *MarkingHandler) grantMarkingFor(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	var req MarkingRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidMarkingRequest", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -309,13 +310,32 @@ func (h *MarkingHandler) grantMarkingFor(w http.ResponseWriter, r *http.Request,
 			DiffJSON:     diff,
 		})
 	}
-	names, _ := h.repo.GetUserMarkings(r.Context(), userID)
-	if names == nil {
-		names = []string{}
-	}
-	out := MarkingGrantsResponse{Grants: make([]MarkingGrantResponse, 0, len(names))}
-	for _, n := range names {
-		out.Grants = append(out.Grants, MarkingGrantResponse{UserID: userID, MarkingName: n})
+	// Mirror the GET /api/admin/users/{userId}/markings handler: when the
+	// admin grant-listing repo is wired, return the full grant rows so the
+	// freshly minted grant surfaces with its grantedAt / grantedBy /
+	// expiresAt envelope. The bare-name fallback below is preserved only
+	// for degraded-mode deployments where the admin interface isn't wired
+	// — without it the test harness without an admin repo would 500.
+	var out MarkingGrantsResponse
+	if h.admin != nil {
+		grants, lerr := h.admin.ListGrantsByUser(r.Context(), userID)
+		if lerr != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("MarkingGrantListFailed", map[string]string{"reason": lerr.Error()}))
+			return
+		}
+		out.Grants = make([]MarkingGrantResponse, 0, len(grants))
+		for _, g := range grants {
+			out.Grants = append(out.Grants, toMarkingGrantResponse(g))
+		}
+	} else {
+		names, _ := h.repo.GetUserMarkings(r.Context(), userID)
+		if names == nil {
+			names = []string{}
+		}
+		out.Grants = make([]MarkingGrantResponse, 0, len(names))
+		for _, n := range names {
+			out.Grants = append(out.Grants, MarkingGrantResponse{UserID: userID, MarkingName: n})
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

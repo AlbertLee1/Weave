@@ -69,6 +69,13 @@ type Repository interface {
 	ListSharedProperties(ctx context.Context, ontologyRID string) ([]SharedProperty, error)
 	UpdateSharedProperty(ctx context.Context, sp *SharedProperty) error
 	DeleteSharedProperty(ctx context.Context, rid string) error
+	// CountPropertiesUsingSharedProperty returns the number of Property
+	// rows whose SharedPropertyRID equals spRID. Round 54 added it so
+	// the DeleteSharedProperty admin handler can refuse to drop a
+	// SharedProperty that downstream ObjectTypes still reference
+	// (Foundry-style 409 SharedPropertyInUse instead of leaving
+	// orphaned RID strings on consumer Properties).
+	CountPropertiesUsingSharedProperty(ctx context.Context, spRID string) (int, error)
 
 	// TypeGroup
 	CreateTypeGroup(ctx context.Context, tg *TypeGroup) error
@@ -79,6 +86,12 @@ type Repository interface {
 	AssignTypeGroup(ctx context.Context, objectTypeRID, typeGroupRID string) error
 	RemoveTypeGroup(ctx context.Context, objectTypeRID, typeGroupRID string) error
 	ListTypeGroupsForObjectType(ctx context.Context, objectTypeRID string) ([]TypeGroup, error)
+	// CountObjectTypesInTypeGroup returns the number of object_type_groups
+	// assignment rows pointing at tgRID. Round 58 added it so
+	// DeleteTypeGroup can refuse 409 TypeGroupInUse when ObjectTypes are
+	// still assigned (mirror of round-54 SharedProperty guard — same
+	// dangling-reference failure mode, same Foundry parity contract).
+	CountObjectTypesInTypeGroup(ctx context.Context, tgRID string) (int, error)
 
 	// ValueType
 	CreateValueType(ctx context.Context, vt *ValueType) error
@@ -133,6 +146,59 @@ type Repository interface {
 	ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error)
 	CountActionLogs(ctx context.Context, actionTypeRID string) (int, error)
 	UpdateActionLogStatus(ctx context.Context, id int64, status string) error
+	// UpdateActionLogSideEffectStatus persists the per-effect dispatch
+	// outcomes (PRD-V2 Gap-A4) for the given action_logs row. status is a
+	// JSON array of {type, status, attempts, error, durationMs} objects.
+	// nil/empty payload is allowed and stores SQL NULL — callers can use
+	// this to clear the column or skip the update entirely.
+	UpdateActionLogSideEffectStatus(ctx context.Context, id int64, status json.RawMessage) error
+
+	// InsertSideEffectDLQRow appends one entry to the side-effect dead
+	// letter queue (PRD-V2 Gap-A4 round 33). Called by the executor
+	// after a SideEffectOutcome surfaces Status=failed (round-30 retry
+	// loop exhausted). The (action_log_id, effect_index) pair is
+	// uniquely-keyed so a second commit of the same row (extremely
+	// unlikely; would indicate a duplicate executor run) is rejected
+	// with ErrDuplicate rather than silently double-queued.
+	InsertSideEffectDLQRow(ctx context.Context, row *SideEffectDLQRow) error
+
+	// ListSideEffectDLQByActionLog returns the DLQ rows associated with
+	// the given action_log id, ordered by effect_index ascending. Empty
+	// slice when the action had no failed side effects. Used by the
+	// admin / debug surface to render "what failed for this action".
+	ListSideEffectDLQByActionLog(ctx context.Context, actionLogID int64) ([]SideEffectDLQRow, error)
+
+	// ListPendingSideEffectDLQRows returns up to `limit` rows whose
+	// replay_status = 'pending', ordered by created_at DESC then id
+	// DESC (newest first). Used by the admin DLQ listing surface
+	// (Gap-A4 round 34). Empty slice when no pending rows exist.
+	ListPendingSideEffectDLQRows(ctx context.Context, limit int) ([]SideEffectDLQRow, error)
+
+	// MarkSideEffectDLQAbandoned flips a DLQ row's replay_status from
+	// 'pending' to 'abandoned' — the operator's "I've reviewed this
+	// and don't want to replay" signal. Idempotent on rows already in
+	// 'abandoned' status (no-op return nil). Returns ErrNotFound when
+	// the id doesn't exist. Returns an error when the row is in
+	// 'replayed' status (can't abandon a row that already replayed
+	// successfully — that would mask the successful dispatch).
+	MarkSideEffectDLQAbandoned(ctx context.Context, id int64) error
+
+	// GetSideEffectDLQRow returns a single DLQ row by id, including
+	// the snapshotted effect_config and the last-known outcome so the
+	// admin replay path can re-dispatch without re-reading the
+	// ActionType. Returns ErrNotFound when the id doesn't exist.
+	GetSideEffectDLQRow(ctx context.Context, id int64) (*SideEffectDLQRow, error)
+
+	// UpdateSideEffectDLQAfterReplay records the result of a manual
+	// replay attempt. Always bumps replay_count, sets replayed_at to
+	// now, and writes the new outcome JSON. When success=true, also
+	// flips replay_status to 'replayed' (the terminal state); on
+	// failure replay_status stays at the caller's discretion — the
+	// admin handler keeps it 'pending' so the operator can try again.
+	// Returns ErrNotFound when the id doesn't exist. Returns
+	// ErrInvalidState when the row is already in 'replayed' or
+	// 'abandoned' status (replay is only valid from 'pending').
+	UpdateSideEffectDLQAfterReplay(ctx context.Context, id int64, outcome json.RawMessage, success bool) error
 
 	// ObjectHistory (Tier 2.3)
 	InsertObjectHistory(ctx context.Context, h *ObjectHistory) error
@@ -179,6 +245,13 @@ type Repository interface {
 	CreateNotification(ctx context.Context, n *Notification) error
 	ListNotifications(ctx context.Context, userID string, unreadOnly bool) ([]Notification, error)
 	MarkNotificationRead(ctx context.Context, id string) error
+	// CountNotifications returns the number of rows belonging to
+	// userID matching the unreadOnly filter. Round 66 added it to
+	// back the GET /api/v2/notifications/unread-count badge endpoint
+	// — the Foundry navbar polls this every few seconds and the SPA
+	// previously had to load + JSON-decode the entire unread list
+	// just to render an integer.
+	CountNotifications(ctx context.Context, userID string, unreadOnly bool) (int, error)
 
 	// OntologyProposal (US-117)
 	CreateProposal(ctx context.Context, p *OntologyProposal) error

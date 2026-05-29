@@ -41,7 +41,8 @@ func (r *PGRepository) ListActionLogsByOntology(
 
 	sql := fmt.Sprintf(`SELECT al.id, al.action_type_rid, al.user_id, al.parameters, al.edits,
 		COALESCE(al.prev_edits, 'null'::jsonb),
-		al.status, COALESCE(al.error_message, ''), al.created_at
+		al.status, COALESCE(al.error_message, ''), al.created_at,
+		COALESCE(al.side_effect_status, 'null'::jsonb)
 		FROM action_logs al
 		JOIN action_types at ON at.rid = al.action_type_rid
 		WHERE %s
@@ -59,8 +60,12 @@ func (r *PGRepository) ListActionLogsByOntology(
 	for rows.Next() {
 		var al ActionLog
 		if err := rows.Scan(&al.ID, &al.ActionTypeRID, &al.UserID, &al.Parameters,
-			&al.Edits, &al.PrevEdits, &al.Status, &al.ErrorMessage, &al.CreatedAt); err != nil {
+			&al.Edits, &al.PrevEdits, &al.Status, &al.ErrorMessage, &al.CreatedAt,
+			&al.SideEffectStatus); err != nil {
 			return nil, err
+		}
+		if string(al.SideEffectStatus) == "null" {
+			al.SideEffectStatus = nil
 		}
 		out = append(out, al)
 	}
@@ -80,17 +85,22 @@ func (r *PGRepository) GetActionLogByOntology(
 	err := r.pool.QueryRow(ctx,
 		`SELECT al.id, al.action_type_rid, al.user_id, al.parameters, al.edits,
 		 COALESCE(al.prev_edits, 'null'::jsonb),
-		 al.status, COALESCE(al.error_message, ''), al.created_at
+		 al.status, COALESCE(al.error_message, ''), al.created_at,
+		 COALESCE(al.side_effect_status, 'null'::jsonb)
 		 FROM action_logs al
 		 JOIN action_types at ON at.rid = al.action_type_rid
 		 WHERE al.id = $1 AND at.ontology_rid = $2`, id, ontologyRID).
 		Scan(&al.ID, &al.ActionTypeRID, &al.UserID, &al.Parameters, &al.Edits,
-			&al.PrevEdits, &al.Status, &al.ErrorMessage, &al.CreatedAt)
+			&al.PrevEdits, &al.Status, &al.ErrorMessage, &al.CreatedAt,
+			&al.SideEffectStatus)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	if string(al.SideEffectStatus) == "null" {
+		al.SideEffectStatus = nil
 	}
 	return al, nil
 }

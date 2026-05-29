@@ -1,13 +1,13 @@
 package oss
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/timeseries"
 )
@@ -147,7 +147,7 @@ func (h *Handler) resolveTimeSeriesKey(w http.ResponseWriter, r *http.Request) (
 			}))
 			return timeseries.SeriesKey{}, false
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("GetObjectFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectFailed", map[string]string{
 			"reason": err.Error(),
 		}))
 		return timeseries.SeriesKey{}, false
@@ -194,7 +194,7 @@ func (h *Handler) AppendTimeSeriesPoint(w http.ResponseWriter, r *http.Request) 
 		Time  string      `json:"time"`
 		Value interface{} `json:"value"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := httputil.ReadJSON(r, &body); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeSeriesPointInvalidBody", map[string]string{
 			"reason": err.Error(),
 		}))

@@ -1,13 +1,13 @@
 package oss
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
+	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/timeseries"
 )
@@ -47,7 +47,7 @@ func (h *Handler) TransformTimeSeries(w http.ResponseWriter, r *http.Request) {
 		Points     []timeseries.Point        `json:"points,omitempty"`
 		Transforms []timeseries.TransformSpec `json:"transforms"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := httputil.ReadJSON(r, &body); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeSeriesTransformInvalidBody", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -91,7 +91,7 @@ func (h *Handler) TransformTimeSeries(w http.ResponseWriter, r *http.Request) {
 				}))
 				return
 			}
-			apierror.WriteJSON(w, apierror.NewInvalidParameter("GetObjectFailed", map[string]string{
+			apierror.WriteJSON(w, apierror.NewInternal("GetObjectFailed", map[string]string{
 				"reason": err.Error(),
 			}))
 			return

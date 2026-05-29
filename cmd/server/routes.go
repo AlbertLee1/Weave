@@ -23,6 +23,7 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	// + outgoing links merged (child overrides on api_name match).
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/resolved", omsHandler.GetObjectTypeResolved)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/outgoingLinkTypes", omsHandler.ListOutgoingLinkTypes)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/incomingLinkTypes", omsHandler.ListIncomingLinkTypes)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/editsHistory", omsHandler.PostObjectTypeEditsHistoryV2)
 	// Property admin CRUD (US-147)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/properties", omsHandler.ListPropertiesForObjectTypeAdmin)
@@ -34,6 +35,33 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/linkTypes", omsHandler.CreateLinkType)
 	r.Put("/api/v2/ontologies/{ontologyApiName}/linkTypes/byRid/{linkTypeRid}", omsHandler.UpdateLinkType)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/linkTypes/byRid/{linkTypeRid}", omsHandler.DeleteLinkType)
+	// Foundry-1:1 read by API name (mirrors GET /objectTypes/{objectTypeApiName}).
+	// SDKs hit this after a search response surfaces a linkType slug they
+	// need to render — without it, callers fall back to ListLinkTypes +
+	// client-side filter on every call. MUST be declared AFTER the
+	// /linkTypes/byRid/{linkTypeRid} routes above so chi's path matcher
+	// gives the more-specific byRid prefix priority and `byRid` is never
+	// captured as a literal {linkType} slug.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/linkTypes/{linkType}", omsHandler.GetLinkTypeByAPIName)
+	// SharedPropertyType V2 read surface (Foundry-1:1). The repo has full
+	// SharedProperty CRUD already; until now the V2 API only exposed
+	// them via /fullMetadata. SDKs that wanted a single shared property
+	// type had to parse the bulky bundle. Two endpoints, parallel to
+	// the linkTypes pattern above.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes", omsHandler.ListSharedPropertyTypesV2)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/{sharedPropertyType}", omsHandler.GetSharedPropertyTypeByAPIName)
+	// TypeGroup V2 read surface (Foundry-1:1). Same shape as
+	// sharedPropertyTypes above — repo CRUD has been wired for many
+	// rounds, but until now the only path to a TypeGroup was through
+	// /fullMetadata. This restores the canonical Foundry endpoints.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/typeGroups", omsHandler.ListTypeGroupsV2)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/typeGroups/{typeGroup}", omsHandler.GetTypeGroupByAPIName)
+	// Reverse-lookup: which TypeGroups does this ObjectType belong
+	// to? V2/api-name sibling of the legacy admin RID-keyed
+	// /api/admin/objectTypes/{objectTypeRid}/groups path. SDKs +
+	// the SPA ObjectType detail card use it to render category
+	// chips without parsing /fullMetadata.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/typeGroups", omsHandler.ListTypeGroupsForObjectTypeV2)
 	// LinkProperty admin CRUD (US-210): schema lives per LinkType; edge values
 	// ride on link_edges.edge_properties JSONB and are written via the edges
 	// PUT endpoint below.
@@ -51,6 +79,12 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Put("/api/v2/ontologies/{ontologyApiName}/actionTypes/byRid/{actionTypeRid}", omsHandler.UpdateActionType)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/actionTypes/byRid/{actionTypeRid}", omsHandler.DeleteActionType)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/actionTypes/getByRidBatch", omsHandler.GetActionTypesByRidBatchV2)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/linkTypes/getByRidBatch", omsHandler.GetLinkTypesByRidBatchV2)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/getByRidBatch", omsHandler.GetInterfaceTypesByRidBatchV2)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/valueTypes/getByRidBatch", omsHandler.GetValueTypesByRidBatchV2)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/sharedPropertyTypes/getByRidBatch", omsHandler.GetSharedPropertyTypesByRidBatchV2)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/typeGroups/getByRidBatch", omsHandler.GetTypeGroupsByRidBatchV2)
+	r.Post("/api/v2/ontologies/{ontologyApiName}/queryTypes/getByRidBatch", omsHandler.GetQueryTypesByRidBatchV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}", omsHandler.GetActionType)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypes/{actionTypeRid}/fullMetadata", omsHandler.GetActionTypeFullMetadataV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/actionTypesFullMetadata", omsHandler.ListActionTypesFullMetadataV2)
@@ -74,6 +108,7 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/interfaces", omsHandler.AttachInterfaceHandler)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/objectTypes/byRid/{objectTypeRid}/interfaces/{interfaceRid}", omsHandler.DetachInterface)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes", omsHandler.ListInterfaceTypesV2)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaces/{interfaceRid}/objectTypes", omsHandler.ListInterfaceObjectTypesV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes/{interfaceLinkType}", omsHandler.GetInterfaceOutgoingLinkTypeV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}/outgoingLinkTypes", omsHandler.ListInterfaceOutgoingLinkTypesV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/interfaceTypes/{interfaceType}", omsHandler.GetInterfaceTypeV2)
@@ -209,8 +244,9 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Post("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/resume", omsHandler.ResumeAutomationRule)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/automationRules/{ruleId}/executions", omsHandler.ListExecutions)
 
-	// Notifications (US-130, US-343)
+	// Notifications (US-130, US-343, round 66 unread-count)
 	r.Get("/api/v2/notifications", omsHandler.ListNotifications)
+	r.Get("/api/v2/notifications/unread-count", omsHandler.GetNotificationsUnreadCount)
 	r.Post("/api/v2/notifications/read-all", omsHandler.MarkAllNotificationsRead)
 	r.Post("/api/v2/notifications/{notificationId}/read", omsHandler.MarkNotificationRead)
 

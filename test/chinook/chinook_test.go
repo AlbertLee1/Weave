@@ -512,6 +512,9 @@ func (r *inMemoryOmsRepo) UpdateSharedProperty(_ context.Context, _ *oms.SharedP
 	return nil
 }
 func (r *inMemoryOmsRepo) DeleteSharedProperty(_ context.Context, _ string) error { return nil }
+func (r *inMemoryOmsRepo) CountPropertiesUsingSharedProperty(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
 
 // TypeGroup stubs
 func (r *inMemoryOmsRepo) CreateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }
@@ -527,6 +530,9 @@ func (r *inMemoryOmsRepo) AssignTypeGroup(_ context.Context, _, _ string) error 
 func (r *inMemoryOmsRepo) RemoveTypeGroup(_ context.Context, _, _ string) error      { return nil }
 func (r *inMemoryOmsRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]oms.TypeGroup, error) {
 	return nil, nil
+}
+func (r *inMemoryOmsRepo) CountObjectTypesInTypeGroup(_ context.Context, _ string) (int, error) {
+	return 0, nil
 }
 
 // ValueType stubs
@@ -585,6 +591,25 @@ func (r *inMemoryOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) 
 }
 func (r *inMemoryOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error)    { return 0, nil }
 func (r *inMemoryOmsRepo) UpdateActionLogStatus(_ context.Context, _ int64, _ string) error { return nil }
+func (r *inMemoryOmsRepo) UpdateActionLogSideEffectStatus(_ context.Context, _ int64, _ json.RawMessage) error {
+	return nil
+}
+func (r *inMemoryOmsRepo) InsertSideEffectDLQRow(_ context.Context, _ *oms.SideEffectDLQRow) error {
+	return nil
+}
+func (r *inMemoryOmsRepo) ListSideEffectDLQByActionLog(_ context.Context, _ int64) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (r *inMemoryOmsRepo) ListPendingSideEffectDLQRows(_ context.Context, _ int) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (r *inMemoryOmsRepo) MarkSideEffectDLQAbandoned(_ context.Context, _ int64) error { return nil }
+func (r *inMemoryOmsRepo) GetSideEffectDLQRow(_ context.Context, _ int64) (*oms.SideEffectDLQRow, error) {
+	return nil, oms.ErrNotFound
+}
+func (r *inMemoryOmsRepo) UpdateSideEffectDLQAfterReplay(_ context.Context, _ int64, _ json.RawMessage, _ bool) error {
+	return nil
+}
 
 // Search stubs
 func (r *inMemoryOmsRepo) SearchOntologyResources(_ context.Context, _, _ string) ([]oms.SearchResult, error) {

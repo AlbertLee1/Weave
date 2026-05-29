@@ -54,6 +54,20 @@ func (h *SessionHandler) RegisterRoutes(mux interface {
 }) {
 	mux.Method(http.MethodGet, "/api/auth/sessions", http.HandlerFunc(h.List))
 	mux.Method(http.MethodDelete, "/api/auth/sessions/{sessionID}", http.HandlerFunc(h.Delete))
+	mux.Method(http.MethodPost, "/api/auth/sessions/revoke-others", http.HandlerFunc(h.RevokeOthers))
+}
+
+// RevokeOthersResponse is the JSON body for POST /api/auth/sessions/revoke-others.
+type RevokeOthersResponse struct {
+	// Revoked is the count of sessions destroyed by this call. Zero
+	// means the caller had no other sessions (the current one is
+	// always preserved). Foundry-parity naming.
+	Revoked int `json:"revoked"`
+	// CurrentSessionID is the session ID the caller is currently
+	// bound to. Empty for API-key / OAuth callers — when empty, the
+	// handler revokes ALL of the caller's sessions because there's
+	// no anchor to preserve.
+	CurrentSessionID string `json:"currentSessionId"`
 }
 
 // SessionView is the wire representation of a session row. Deliberately
@@ -147,6 +161,56 @@ func (h *SessionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r.Context(), caller.ID, row.ID, "session_revoked", r)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// RevokeOthers destroys every session the caller owns EXCEPT the one
+// they're currently authenticated on. Useful for "log out other
+// devices" security flows; Foundry-parity sibling of List + Delete.
+//
+// 401 when no User in context. 200 with {revoked, currentSessionId}
+// on success. Each revoked session also revokes its refresh token
+// (when present) and emits a session_revoked audit event. Best-effort
+// per-session: a single failing Delete is logged and skipped so the
+// rest of the caller's sessions still get cleaned up.
+//
+// When the caller has no SessionIDAttributeKey on User.Attributes
+// (typical for API-key / OAuth auth), there's no current-session
+// anchor to preserve and the handler revokes ALL of the caller's
+// sessions. The response's CurrentSessionID is empty in that case.
+func (h *SessionHandler) RevokeOthers(w http.ResponseWriter, r *http.Request) {
+	caller := UserFromContext(r.Context())
+	if caller == nil {
+		apierror.WriteJSON(w, apierror.NewUnauthorized("Unauthorized", map[string]string{"reason": "authentication required"}))
+		return
+	}
+	currentID := callerSessionID(caller)
+	rows, err := h.deps.Sessions.ListByUser(r.Context(), caller.ID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("SessionListFailed", map[string]string{"reason": err.Error()}))
+		return
+	}
+	revoked := 0
+	for _, row := range rows {
+		if currentID != "" && row.ID == currentID {
+			continue
+		}
+		if err := h.deps.Sessions.Delete(r.Context(), row.ID, caller.ID); err != nil {
+			// Best-effort: per-row failure logged via the audit
+			// channel as "session_revoke_failed" but we keep going so
+			// a stale row doesn't block the rest of the cleanup.
+			h.audit(r.Context(), caller.ID, row.ID, "session_revoke_failed", r)
+			continue
+		}
+		if h.deps.RefreshService != nil && row.RefreshTokenID != "" {
+			_ = h.deps.RefreshService.store.Revoke(r.Context(), row.RefreshTokenID, "session_revoked")
+		}
+		h.audit(r.Context(), caller.ID, row.ID, "session_revoked", r)
+		revoked++
+	}
+	writeJSON(w, http.StatusOK, RevokeOthersResponse{
+		Revoked:          revoked,
+		CurrentSessionID: currentID,
+	})
 }
 
 func (h *SessionHandler) audit(ctx context.Context, actorID, sessionID, action string, r *http.Request) {

@@ -253,6 +253,9 @@ func (m *mockOmsRepo) UpdateSharedProperty(_ context.Context, _ *oms.SharedPrope
 	return nil
 }
 func (m *mockOmsRepo) DeleteSharedProperty(_ context.Context, _ string) error { return nil }
+func (m *mockOmsRepo) CountPropertiesUsingSharedProperty(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
 
 // TypeGroup stubs
 func (m *mockOmsRepo) CreateTypeGroup(_ context.Context, _ *oms.TypeGroup) error { return nil }
@@ -268,6 +271,9 @@ func (m *mockOmsRepo) AssignTypeGroup(_ context.Context, _, _ string) error     
 func (m *mockOmsRepo) RemoveTypeGroup(_ context.Context, _, _ string) error      { return nil }
 func (m *mockOmsRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]oms.TypeGroup, error) {
 	return nil, nil
+}
+func (m *mockOmsRepo) CountObjectTypesInTypeGroup(_ context.Context, _ string) (int, error) {
+	return 0, nil
 }
 
 // ValueType stubs
@@ -337,6 +343,25 @@ func (m *mockOmsRepo) ListActionLogs(_ context.Context, _ string, _, _ int) ([]o
 }
 func (m *mockOmsRepo) CountActionLogs(_ context.Context, _ string) (int, error)    { return 0, nil }
 func (m *mockOmsRepo) UpdateActionLogStatus(_ context.Context, _ int64, _ string) error { return nil }
+func (m *mockOmsRepo) UpdateActionLogSideEffectStatus(_ context.Context, _ int64, _ json.RawMessage) error {
+	return nil
+}
+func (m *mockOmsRepo) InsertSideEffectDLQRow(_ context.Context, _ *oms.SideEffectDLQRow) error {
+	return nil
+}
+func (m *mockOmsRepo) ListSideEffectDLQByActionLog(_ context.Context, _ int64) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) ListPendingSideEffectDLQRows(_ context.Context, _ int) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (m *mockOmsRepo) MarkSideEffectDLQAbandoned(_ context.Context, _ int64) error { return nil }
+func (m *mockOmsRepo) GetSideEffectDLQRow(_ context.Context, _ int64) (*oms.SideEffectDLQRow, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *mockOmsRepo) UpdateSideEffectDLQAfterReplay(_ context.Context, _ int64, _ json.RawMessage, _ bool) error {
+	return nil
+}
 
 // ObjectHistory stubs (Tier 2.3)
 func (m *mockOmsRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {

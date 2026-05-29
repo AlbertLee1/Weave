@@ -2,6 +2,7 @@ package scenarioruns
 
 import (
 	"context"
+	"sort"
 	"sync"
 )
 
@@ -62,6 +63,26 @@ func (m *MemoryRepo) ListResumable(_ context.Context) ([]Run, error) {
 			out = append(out, cloneRun(r))
 		}
 	}
+	return out, nil
+}
+
+// ListRunsForScenario implements Repo. Round 68. Returns every run
+// matching scenarioRID sorted by StartedAt DESC (newest first).
+// The PG implementation will use the scenario_runs_scenario_idx
+// index from migration 000109; here we filter the in-memory map
+// and sort the result so the wire ordering is deterministic.
+func (m *MemoryRepo) ListRunsForScenario(_ context.Context, scenarioRID string) ([]Run, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []Run{}
+	for _, r := range m.runs {
+		if r.ScenarioRID == scenarioRID {
+			out = append(out, cloneRun(r))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].StartedAt.After(out[j].StartedAt)
+	})
 	return out, nil
 }
 

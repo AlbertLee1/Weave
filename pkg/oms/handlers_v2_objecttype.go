@@ -56,9 +56,9 @@ func (h *OMSHandler) GetObjectTypeFullMetadataV2(w http.ResponseWriter, r *http.
 // Batch lookup of ObjectTypes by their RIDs.
 func (h *OMSHandler) GetObjectTypesByRidBatchV2(w http.ResponseWriter, r *http.Request) {
 	var req getByRidBatchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
-			"reason": "Failed to parse request body",
+			"reason": err.Error(),
 		}))
 		return
 	}

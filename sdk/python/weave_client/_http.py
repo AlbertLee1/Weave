@@ -25,14 +25,30 @@ except Exception:  # pragma: no cover
 
 
 class HTTPResponse:
-    """Subset of an httpx Response sufficient for the SDK's needs."""
+    """Subset of an httpx Response sufficient for the SDK's needs.
 
-    __slots__ = ("status_code", "text", "headers")
+    For the common JSON / text response path, callers read ``text``
+    and call ``json()``. For binary downloads (round-45 attachment
+    content), callers read ``body_bytes`` directly; ``text`` is set
+    to ``""`` to avoid an unsafe utf-8 decode of arbitrary blob data.
+    """
 
-    def __init__(self, status_code: int, text: str, headers: Optional[Dict[str, str]] = None):
+    __slots__ = ("status_code", "text", "headers", "body_bytes")
+
+    def __init__(
+        self,
+        status_code: int,
+        text: str,
+        headers: Optional[Dict[str, str]] = None,
+        *,
+        body_bytes: Optional[bytes] = None,
+    ):
         self.status_code = status_code
         self.text = text
         self.headers = headers or {}
+        # body_bytes is populated when the caller set accept_binary=True
+        # on the request — used for attachment content downloads.
+        self.body_bytes: Optional[bytes] = body_bytes
 
     def json(self) -> Any:
         return json.loads(self.text) if self.text else None
@@ -60,18 +76,43 @@ class Transport:
         *,
         headers: Optional[Dict[str, str]] = None,
         json_body: Any = None,
+        raw_body: Optional[bytes] = None,
+        accept_binary: bool = False,
     ) -> HTTPResponse:
+        """Send one HTTP request, with retry-policy support.
+
+        Body modes (mutually exclusive):
+          - ``json_body``: marshals to JSON and sets
+            ``Content-Type: application/json``.
+          - ``raw_body``: sends the bytes verbatim. The caller is
+            responsible for setting a Content-Type header in
+            ``headers`` (e.g. ``application/octet-stream`` for
+            attachment uploads).
+
+        Response mode:
+          - default: decode body as UTF-8 into ``HTTPResponse.text``.
+          - ``accept_binary=True``: skip the decode and populate
+            ``HTTPResponse.body_bytes`` instead (round-45 attachment
+            content downloads). The text field is left as ``""``.
+        """
+        if json_body is not None and raw_body is not None:
+            raise ValueError("request: cannot supply both json_body and raw_body")
         method_upper = method.upper()
         headers = dict(headers or {})
         body_bytes: Optional[bytes] = None
         if json_body is not None:
             body_bytes = json.dumps(json_body).encode("utf-8")
             headers.setdefault("Content-Type", "application/json")
-        headers.setdefault("Accept", "application/json")
+        elif raw_body is not None:
+            body_bytes = raw_body
+            # Caller MUST set Content-Type explicitly via headers when
+            # using raw_body; we don't default to a guess.
+        if not accept_binary:
+            headers.setdefault("Accept", "application/json")
 
         policy = self.retry
         if policy is None or not policy.is_retriable_method(method_upper):
-            return self._send_once(method_upper, url, headers, body_bytes)
+            return self._send_once(method_upper, url, headers, body_bytes, accept_binary=accept_binary)
 
         last_err: Optional[BaseException] = None
         last_resp: Optional[HTTPResponse] = None
@@ -79,7 +120,7 @@ class Transport:
         sleep_fn = policy.sleep or time.sleep
         for attempt in range(attempts):
             try:
-                resp = self._send_once(method_upper, url, headers, body_bytes)
+                resp = self._send_once(method_upper, url, headers, body_bytes, accept_binary=accept_binary)
             except (
                 urllib.error.URLError,
                 ConnectionError,
@@ -114,11 +155,15 @@ class Transport:
         url: str,
         headers: Dict[str, str],
         body_bytes: Optional[bytes],
+        *,
+        accept_binary: bool = False,
     ) -> HTTPResponse:
         if self._httpx_client is not None:  # pragma: no cover - httpx path
             resp = self._httpx_client.request(
                 method, url, headers=headers, content=body_bytes
             )
+            if accept_binary:
+                return HTTPResponse(resp.status_code, "", dict(resp.headers), body_bytes=resp.content)
             return HTTPResponse(resp.status_code, resp.text, dict(resp.headers))
 
         req = urllib.request.Request(url=url, data=body_bytes, method=method)
@@ -126,10 +171,17 @@ class Transport:
             req.add_header(k, v)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
-                body = r.read().decode("utf-8")
-                return HTTPResponse(r.status, body, dict(r.getheaders()))
+                raw = r.read()
+                if accept_binary:
+                    return HTTPResponse(r.status, "", dict(r.getheaders()), body_bytes=raw)
+                return HTTPResponse(r.status, raw.decode("utf-8"), dict(r.getheaders()))
         except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8") if e.fp is not None else ""
+            raw = e.read() if e.fp is not None else b""
+            # On non-2xx, callers expect an error envelope decoded as
+            # text/JSON even when accept_binary was set — so we still
+            # decode the body for error reporting. The accept_binary
+            # path only matters on the 2xx route.
+            body = raw.decode("utf-8", errors="replace")
             return HTTPResponse(e.code, body, dict(e.headers or {}))
 
     def stream_lines(

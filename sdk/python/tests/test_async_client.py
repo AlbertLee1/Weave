@@ -341,5 +341,146 @@ class AsyncFunctionsExecuteStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(collected, [])
 
 
+class AsyncOntologiesBatchByRidRound86Tests(unittest.IsolatedAsyncioTestCase):
+    """Round 86 — async mirrors of the sync batch-by-RID helpers
+    (round 84 added link/interface/value; round 85 backend added
+    sharedPropertyTypes; this round mirrors all four on
+    WeaveAsyncClient.ontologies). Per the round-82 mirror
+    discipline: every sync wrapper begets an async wrapper sharing
+    the same URL, body shape, and return type.
+    """
+
+    async def test_get_link_types_by_rid_batch(self):
+        resp = json.dumps({"data": [
+            {"rid": "lt-1", "apiName": "owns", "cardinality": "ONE_TO_MANY"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/linkTypes/getByRidBatch": (200, resp)}
+        with _StubServer(routes) as srv:
+            async with WeaveAsyncClient(srv.url, access_token="t") as c:
+                result = await c.ontologies.get_link_types_by_rid_batch(
+                    "nw", ["lt-1", "ghost"])
+                sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"rids": ["lt-1", "ghost"]})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["apiName"], "owns")
+
+    async def test_get_interface_types_by_rid_batch(self):
+        resp = json.dumps({"data": [
+            {"rid": "if-1", "apiName": "HasOwner"},
+            {"rid": "if-2", "apiName": "Searchable"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/interfaceTypes/getByRidBatch":
+                  (200, resp)}
+        with _StubServer(routes) as srv:
+            async with WeaveAsyncClient(srv.url, access_token="t") as c:
+                result = await c.ontologies.get_interface_types_by_rid_batch(
+                    "nw", ["if-1", "if-2"])
+                sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"rids": ["if-1", "if-2"]})
+        self.assertEqual(len(result), 2)
+
+    async def test_get_value_types_by_rid_batch(self):
+        resp = json.dumps({"data": [
+            {"rid": "vt-1", "apiName": "Currency", "baseType": "DOUBLE"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/valueTypes/getByRidBatch":
+                  (200, resp)}
+        with _StubServer(routes) as srv:
+            async with WeaveAsyncClient(srv.url, access_token="t") as c:
+                result = await c.ontologies.get_value_types_by_rid_batch(
+                    "nw", ["vt-1", "ghost"])
+                sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"rids": ["vt-1", "ghost"]})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["baseType"], "DOUBLE")
+
+    async def test_get_shared_property_types_by_rid_batch(self):
+        # Mirror of round-85 backend (also gains a sync helper this round).
+        resp = json.dumps({"data": [
+            {"rid": "sp-1", "apiName": "email", "baseType": "string"},
+            {"rid": "sp-2", "apiName": "phone", "baseType": "string"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/sharedPropertyTypes/getByRidBatch":
+                  (200, resp)}
+        with _StubServer(routes) as srv:
+            async with WeaveAsyncClient(srv.url, access_token="t") as c:
+                result = await c.ontologies.get_shared_property_types_by_rid_batch(
+                    "nw", ["sp-1", "sp-2"])
+                sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"rids": ["sp-1", "sp-2"]})
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["apiName"], "email")
+
+    async def test_all_four_helpers_handle_empty_data(self):
+        # The shared 200 + {data:[]} contract — empty input must produce
+        # an empty list, never None or a synthesised placeholder row.
+        kinds = [
+            ("linkTypes", "get_link_types_by_rid_batch"),
+            ("interfaceTypes", "get_interface_types_by_rid_batch"),
+            ("valueTypes", "get_value_types_by_rid_batch"),
+            ("sharedPropertyTypes", "get_shared_property_types_by_rid_batch"),
+        ]
+        for path_seg, method_name in kinds:
+            routes = {f"POST /api/v2/ontologies/nw/{path_seg}/getByRidBatch":
+                      (200, '{"data":[]}')}
+            with _StubServer(routes) as srv:
+                async with WeaveAsyncClient(srv.url, access_token="t") as c:
+                    fn = getattr(c.ontologies, method_name)
+                    result = await fn("nw", [])
+            self.assertEqual(result, [], f"empty contract broken for {method_name}")
+
+    async def test_get_type_groups_by_rid_batch_round88(self):
+        # Round 88 — async mirror of round-87 backend. With this method
+        # the async SDK reaches 7-of-7 batch-helper parity with sync.
+        resp = json.dumps({"data": [
+            {"rid": "tg-1", "apiName": "people", "displayName": "People"},
+            {"rid": "tg-2", "apiName": "places", "displayName": "Places"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/typeGroups/getByRidBatch":
+                  (200, resp)}
+        with _StubServer(routes) as srv:
+            async with WeaveAsyncClient(srv.url, access_token="t") as c:
+                result = await c.ontologies.get_type_groups_by_rid_batch(
+                    "nw", ["tg-1", "tg-2"])
+                sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"rids": ["tg-1", "tg-2"]})
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["apiName"], "people")
+
+    async def test_get_type_groups_by_rid_batch_empty_data_round88(self):
+        routes = {"POST /api/v2/ontologies/nw/typeGroups/getByRidBatch":
+                  (200, '{"data":[]}')}
+        with _StubServer(routes) as srv:
+            async with WeaveAsyncClient(srv.url, access_token="t") as c:
+                result = await c.ontologies.get_type_groups_by_rid_batch("nw", [])
+        self.assertEqual(result, [])
+
+    async def test_get_query_types_by_rid_batch_round90(self):
+        # Round 90 — async mirror of round-89 backend. Closes the
+        # SDK 8-of-8 batch parity with the backend's 8-of-8.
+        resp = json.dumps({"data": [
+            {"rid": "qt-1", "apiName": "topCustomers", "status": "ACTIVE"},
+            {"rid": "qt-2", "apiName": "openOrders", "status": "ACTIVE"},
+        ]})
+        routes = {"POST /api/v2/ontologies/nw/queryTypes/getByRidBatch":
+                  (200, resp)}
+        with _StubServer(routes) as srv:
+            async with WeaveAsyncClient(srv.url, access_token="t") as c:
+                result = await c.ontologies.get_query_types_by_rid_batch(
+                    "nw", ["qt-1", "qt-2"])
+                sent = json.loads(srv.requests[0]["body"])
+        self.assertEqual(sent, {"rids": ["qt-1", "qt-2"]})
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["apiName"], "topCustomers")
+
+    async def test_get_query_types_by_rid_batch_empty_data_round90(self):
+        routes = {"POST /api/v2/ontologies/nw/queryTypes/getByRidBatch":
+                  (200, '{"data":[]}')}
+        with _StubServer(routes) as srv:
+            async with WeaveAsyncClient(srv.url, access_token="t") as c:
+                result = await c.ontologies.get_query_types_by_rid_batch("nw", [])
+        self.assertEqual(result, [])
+
+
 if __name__ == "__main__":
     unittest.main()

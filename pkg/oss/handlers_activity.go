@@ -63,7 +63,7 @@ func (h *Handler) GetObjectActivity(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("ListActivityFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("ListActivityFailed", map[string]string{
 			"reason": err.Error(),
 		}))
 		return

@@ -32,6 +32,25 @@ func (m *mockRepo) ListNotifications(_ context.Context, userID string, unreadOnl
 	return result, nil
 }
 
+func (m *mockRepo) CountNotifications(_ context.Context, userID string, unreadOnly bool) (int, error) {
+	m.countNotificationsCalls++
+	m.countNotificationsLastUnreadOnly = unreadOnly
+	if m.listErr != nil {
+		return 0, m.listErr
+	}
+	count := 0
+	for _, n := range m.notifications {
+		if n.UserID != userID {
+			continue
+		}
+		if unreadOnly && n.Read {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
 func (m *mockRepo) MarkNotificationRead(_ context.Context, id string) error {
 	if m.updateErr != nil {
 		return m.updateErr
@@ -82,3 +101,6 @@ func (n *noopRepo) ListNotifications(_ context.Context, _ string, _ bool) ([]oms
 	return nil, nil
 }
 func (n *noopRepo) MarkNotificationRead(_ context.Context, _ string) error { return nil }
+func (n *noopRepo) CountNotifications(_ context.Context, _ string, _ bool) (int, error) {
+	return 0, nil
+}

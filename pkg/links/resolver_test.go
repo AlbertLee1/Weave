@@ -144,6 +144,9 @@ func (m *mockRepo) ListSharedProperties(context.Context, string) ([]oms.SharedPr
 }
 func (m *mockRepo) UpdateSharedProperty(context.Context, *oms.SharedProperty) error { return nil }
 func (m *mockRepo) DeleteSharedProperty(context.Context, string) error              { return nil }
+func (m *mockRepo) CountPropertiesUsingSharedProperty(context.Context, string) (int, error) {
+	return 0, nil
+}
 
 // TypeGroup stubs
 func (m *mockRepo) CreateTypeGroup(context.Context, *oms.TypeGroup) error           { return nil }
@@ -155,6 +158,9 @@ func (m *mockRepo) AssignTypeGroup(context.Context, string, string) error       
 func (m *mockRepo) RemoveTypeGroup(context.Context, string, string) error           { return nil }
 func (m *mockRepo) ListTypeGroupsForObjectType(context.Context, string) ([]oms.TypeGroup, error) {
 	return nil, nil
+}
+func (m *mockRepo) CountObjectTypesInTypeGroup(context.Context, string) (int, error) {
+	return 0, nil
 }
 
 // ValueType stubs
@@ -205,6 +211,23 @@ func (m *mockRepo) ListActionLogs(context.Context, string, int, int) ([]oms.Acti
 }
 func (m *mockRepo) CountActionLogs(context.Context, string) (int, error)            { return 0, nil }
 func (m *mockRepo) UpdateActionLogStatus(context.Context, int64, string) error      { return nil }
+func (m *mockRepo) UpdateActionLogSideEffectStatus(context.Context, int64, json.RawMessage) error {
+	return nil
+}
+func (m *mockRepo) InsertSideEffectDLQRow(context.Context, *oms.SideEffectDLQRow) error { return nil }
+func (m *mockRepo) ListSideEffectDLQByActionLog(context.Context, int64) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (m *mockRepo) ListPendingSideEffectDLQRows(context.Context, int) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (m *mockRepo) MarkSideEffectDLQAbandoned(context.Context, int64) error { return nil }
+func (m *mockRepo) GetSideEffectDLQRow(context.Context, int64) (*oms.SideEffectDLQRow, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *mockRepo) UpdateSideEffectDLQAfterReplay(context.Context, int64, json.RawMessage, bool) error {
+	return nil
+}
 
 // Search stubs
 func (m *mockRepo) SearchOntologyResources(context.Context, string, string) ([]oms.SearchResult, error) {

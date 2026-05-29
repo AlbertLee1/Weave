@@ -7,9 +7,14 @@ from ._http import quote_path
 from .types import (
     ActionType,
     InterfaceType,
+    LinkType,
+    MeOntologiesEntry,
     ObjectType,
     Ontology,
+    OntologyMe,
     QueryType,
+    SharedPropertyType,
+    TypeGroup,
     ValueType,
 )
 
@@ -164,6 +169,30 @@ class OntologiesAPI:
         )
         return _validate(InterfaceType, body)
 
+    def get_interface_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """POST batch-fetch interface types by their RIDs (round 81)."""
+        body = self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/interfaceTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
+    # ---- link types ---------------------------------------------------------
+
+    def get_link_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """POST batch-fetch link types by their RIDs (round 79)."""
+        body = self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/linkTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
     # ---- value types --------------------------------------------------------
 
     def list_value_types(self, ontology: str) -> List[ValueType]:
@@ -183,6 +212,54 @@ class OntologiesAPI:
         )
         return _validate(ValueType, body)
 
+    def get_value_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """POST batch-fetch value types by their RIDs (round 83)."""
+        body = self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/valueTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
+    # ---- shared property types ----------------------------------------------
+
+    def get_shared_property_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """POST batch-fetch shared property types by their RIDs (round 85)."""
+        body = self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/sharedPropertyTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
+    # ---- type groups --------------------------------------------------------
+
+    def get_type_groups_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """POST batch-fetch type groups by their RIDs (round 87)."""
+        body = self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/typeGroups/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
+    def get_query_types_by_rid_batch(
+        self, ontology: str, rids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """POST batch-fetch query types by their RIDs (round 89, closes 8-of-8)."""
+        body = self._client._request(
+            "POST",
+            f"/api/v2/ontologies/{quote_path(ontology)}/queryTypes/getByRidBatch",
+            json_body={"rids": rids},
+        )
+        return (body or {}).get("data", [])
+
     # ---- query types --------------------------------------------------------
 
     def list_query_types(self, ontology: str) -> List[QueryType]:
@@ -201,3 +278,67 @@ class OntologiesAPI:
             f"/api/v2/ontologies/{quote_path(ontology)}/queryTypes/{quote_path(query_type)}",
         )
         return _validate(QueryType, body)
+
+    # ---- round 122: gap-fill wrappers (link/shared-property/type-group) ---
+    # Closes the round-120 docstring gap — backend r119 covers 8 Get
+    # endpoints with @vN guards but SDK had wrappers for only 5.
+
+    def get_link_type(self, ontology: str, link_type: str) -> LinkType:
+        """Fetch a single link type by API name (round 122)."""
+        body = self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/linkTypes/{quote_path(link_type)}",
+        )
+        return _validate(LinkType, body)
+
+    def get_shared_property_type(
+        self, ontology: str, shared_property_type: str
+    ) -> SharedPropertyType:
+        """Fetch a single shared property type by API name (round 122)."""
+        body = self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/sharedPropertyTypes/"
+            f"{quote_path(shared_property_type)}",
+        )
+        return _validate(SharedPropertyType, body)
+
+    def get_type_group(self, ontology: str, type_group: str) -> TypeGroup:
+        """Fetch a single type group by API name (round 122)."""
+        body = self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/typeGroups/{quote_path(type_group)}",
+        )
+        return _validate(TypeGroup, body)
+
+    # ---- caller-scoped ontology inventory (round 100) -----------------------
+
+    def list_me(self) -> List[MeOntologiesEntry]:
+        """List ontologies where the caller has a scoped per-ontology role.
+
+        Mirrors round-99 backend GET /api/v2/me/ontologies. Returns an
+        empty list when the caller has only global roles or no roles
+        at all — never None, so callers can iterate without nil-checks.
+        Each entry carries rid + api_name + display_name + role (the
+        backend guarantees role is non-empty since entries are
+        filtered to ontologies where role is non-empty).
+        """
+        body = self._client._request("GET", "/api/v2/me/ontologies") or {}
+        items = body.get("ontologies", []) if isinstance(body, dict) else []
+        return [_validate(MeOntologiesEntry, item) for item in items]
+
+    # ---- per-ontology caller-scope (round 96) -------------------------------
+
+    def get_me(self, ontology: str) -> OntologyMe:
+        """Return the caller's resolved role + permissions for ONE ontology.
+
+        Narrower than the global ``/api/v2/me`` — exposes just the role
+        and effective permission set the caller holds on the named
+        ontology (round 95 backend). ``role`` is an empty string when
+        the caller has no scoped role on this ontology (they still
+        get global-role permissions).
+        """
+        body = self._client._request(
+            "GET",
+            f"/api/v2/ontologies/{quote_path(ontology)}/me",
+        )
+        return _validate(OntologyMe, body or {})

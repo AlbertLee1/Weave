@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/auth"
+	"github.com/liyang/weave/pkg/httputil"
 )
 
 // CreateApplicationRequest is the JSON body of POST /api/v2/developer/applications.
@@ -83,7 +84,7 @@ func (h *ApplicationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req CreateApplicationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidApplicationRequest", map[string]string{
 			"reason": err.Error(),
 		}))

@@ -17,25 +17,30 @@ import (
 // --- Mock Repository ---
 
 type mockRepo struct {
-	ontologies    []oms.Ontology
-	objectTypes   []oms.ObjectType
-	linkTypes     []oms.LinkType
-	actionTypes   []oms.ActionType
-	properties    []oms.Property
-	interfaces    []oms.Interface
-	valueTypes    []oms.ValueType
-	queryTypes    []oms.QueryType
-	actionLogs    []oms.ActionLog
+	ontologies       []oms.Ontology
+	objectTypes      []oms.ObjectType
+	linkTypes        []oms.LinkType
+	actionTypes      []oms.ActionType
+	properties       []oms.Property
+	interfaces       []oms.Interface
+	valueTypes       []oms.ValueType
+	queryTypes       []oms.QueryType
+	actionLogs       []oms.ActionLog
 	functions        []oms.Function
 	sharedProperties []oms.SharedProperty
 	typeGroups       []oms.TypeGroup
-	branches        []oms.OntologyBranch
-	branchChanges   []oms.BranchChange
-	proposals       []oms.OntologyProposal
-	proposalReviews []oms.ProposalReview
-	automationRules []oms.AutomationRule
-	executions      []oms.AutomationExecution
-	notifications   []oms.Notification
+	// typeGroupAssignments maps objectTypeRID → []typeGroupRID for the
+	// reverse-lookup path exercised by ListTypeGroupsForObjectType.
+	// nil by default so the no-assignment majority of tests keep their
+	// historical empty-result behavior.
+	typeGroupAssignments map[string][]string
+	branches             []oms.OntologyBranch
+	branchChanges        []oms.BranchChange
+	proposals            []oms.OntologyProposal
+	proposalReviews      []oms.ProposalReview
+	automationRules      []oms.AutomationRule
+	executions           []oms.AutomationExecution
+	notifications        []oms.Notification
 	// datasourceBindings backs CreateDatasourceBinding /
 	// GetDatasourceBinding / ListDatasourceBindings /
 	// UpdateDatasourceBinding / DeleteDatasourceBinding so US-052 tests
@@ -54,6 +59,18 @@ type mockRepo struct {
 	listErr   error
 	updateErr error
 	deleteErr error
+
+	// CountPropertiesUsingSharedProperty call tracking — round 54.
+	countSharedPropertyUsesCalls int
+	countSharedPropertyUsesErr   error
+
+	// CountObjectTypesInTypeGroup call tracking — round 58.
+	countTypeGroupAssignmentsCalls int
+	countTypeGroupAssignmentsErr   error
+
+	// CountNotifications call tracking — round 66.
+	countNotificationsCalls          int
+	countNotificationsLastUnreadOnly bool
 
 	// Version tracking
 	ontologyVersion int
@@ -402,8 +419,25 @@ func (m *mockRepo) DetachInterface(_ context.Context, objectTypeRID, interfaceRI
 	return oms.ErrNotFound
 }
 
-func (m *mockRepo) ListInterfaceObjectTypes(_ context.Context, _ string) ([]oms.ObjectType, error) {
-	return nil, nil
+func (m *mockRepo) ListInterfaceObjectTypes(_ context.Context, interfaceRID string) ([]oms.ObjectType, error) {
+	// Walk interfaceAttachments for matching interfaceRID, then
+	// resolve each ObjectTypeRID against the seeded objectTypes slice
+	// so the wire shape matches the production PG path (full
+	// ObjectType rows, not just RIDs). Round 75: prior stub returned
+	// (nil, nil) for everything which made the new endpoint untestable.
+	matchedRIDs := map[string]bool{}
+	for _, a := range m.interfaceAttachments {
+		if a.InterfaceRID == interfaceRID {
+			matchedRIDs[a.ObjectTypeRID] = true
+		}
+	}
+	var out []oms.ObjectType
+	for _, ot := range m.objectTypes {
+		if matchedRIDs[ot.RID] {
+			out = append(out, ot)
+		}
+	}
+	return out, nil
 }
 
 func (m *mockRepo) ListObjectTypeInterfaces(_ context.Context, objectTypeRID string) ([]oms.ObjectTypeInterface, error) {
@@ -459,6 +493,20 @@ func (m *mockRepo) UpdateSharedProperty(_ context.Context, sp *oms.SharedPropert
 	}
 	return oms.ErrNotFound
 }
+func (m *mockRepo) CountPropertiesUsingSharedProperty(_ context.Context, spRID string) (int, error) {
+	m.countSharedPropertyUsesCalls++
+	if m.countSharedPropertyUsesErr != nil {
+		return 0, m.countSharedPropertyUsesErr
+	}
+	n := 0
+	for _, p := range m.properties {
+		if p.SharedPropertyRID == spRID {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (m *mockRepo) DeleteSharedProperty(_ context.Context, rid string) error {
 	if m.deleteErr != nil {
 		return m.deleteErr
@@ -527,10 +575,65 @@ func (m *mockRepo) DeleteTypeGroup(_ context.Context, rid string) error {
 	}
 	return nil
 }
-func (m *mockRepo) AssignTypeGroup(_ context.Context, _, _ string) error      { return nil }
-func (m *mockRepo) RemoveTypeGroup(_ context.Context, _, _ string) error      { return nil }
-func (m *mockRepo) ListTypeGroupsForObjectType(_ context.Context, _ string) ([]oms.TypeGroup, error) {
-	return nil, nil
+func (m *mockRepo) AssignTypeGroup(_ context.Context, objectTypeRID, typeGroupRID string) error {
+	if m.typeGroupAssignments == nil {
+		m.typeGroupAssignments = map[string][]string{}
+	}
+	for _, existing := range m.typeGroupAssignments[objectTypeRID] {
+		if existing == typeGroupRID {
+			return nil
+		}
+	}
+	m.typeGroupAssignments[objectTypeRID] = append(m.typeGroupAssignments[objectTypeRID], typeGroupRID)
+	return nil
+}
+func (m *mockRepo) RemoveTypeGroup(_ context.Context, objectTypeRID, typeGroupRID string) error {
+	if m.typeGroupAssignments == nil {
+		return nil
+	}
+	cur := m.typeGroupAssignments[objectTypeRID]
+	for i, existing := range cur {
+		if existing == typeGroupRID {
+			m.typeGroupAssignments[objectTypeRID] = append(cur[:i], cur[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+func (m *mockRepo) ListTypeGroupsForObjectType(_ context.Context, objectTypeRID string) ([]oms.TypeGroup, error) {
+	if m.typeGroupAssignments == nil {
+		return nil, nil
+	}
+	assigned := m.typeGroupAssignments[objectTypeRID]
+	if len(assigned) == 0 {
+		return nil, nil
+	}
+	out := make([]oms.TypeGroup, 0, len(assigned))
+	for _, tgRID := range assigned {
+		for i := range m.typeGroups {
+			if m.typeGroups[i].RID == tgRID {
+				out = append(out, m.typeGroups[i])
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (m *mockRepo) CountObjectTypesInTypeGroup(_ context.Context, tgRID string) (int, error) {
+	m.countTypeGroupAssignmentsCalls++
+	if m.countTypeGroupAssignmentsErr != nil {
+		return 0, m.countTypeGroupAssignmentsErr
+	}
+	n := 0
+	for _, assigned := range m.typeGroupAssignments {
+		for _, t := range assigned {
+			if t == tgRID {
+				n++
+			}
+		}
+	}
+	return n, nil
 }
 
 // ValueType methods
@@ -612,7 +715,7 @@ func (m *mockRepo) ListPropertyUsagesByBaseType(_ context.Context, baseType stri
 		out = append(out, oms.PropertyUsage{
 			PropertyRID:       m.properties[i].RID,
 			PropertyAPIName:   m.properties[i].APIName,
-			ObjectTypeRID:    m.properties[i].ObjectTypeRID,
+			ObjectTypeRID:     m.properties[i].ObjectTypeRID,
 			ObjectTypeAPIName: otAPIName,
 		})
 	}
@@ -758,8 +861,27 @@ func (m *mockRepo) ListActionLogs(_ context.Context, _ string, limit, offset int
 	}
 	return m.actionLogs[start:end], nil
 }
-func (m *mockRepo) CountActionLogs(_ context.Context, _ string) (int, error)    { return 0, nil }
+func (m *mockRepo) CountActionLogs(_ context.Context, _ string) (int, error)         { return 0, nil }
 func (m *mockRepo) UpdateActionLogStatus(_ context.Context, _ int64, _ string) error { return nil }
+func (m *mockRepo) UpdateActionLogSideEffectStatus(_ context.Context, _ int64, _ json.RawMessage) error {
+	return nil
+}
+func (m *mockRepo) InsertSideEffectDLQRow(_ context.Context, _ *oms.SideEffectDLQRow) error {
+	return nil
+}
+func (m *mockRepo) ListSideEffectDLQByActionLog(_ context.Context, _ int64) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (m *mockRepo) ListPendingSideEffectDLQRows(_ context.Context, _ int) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (m *mockRepo) MarkSideEffectDLQAbandoned(_ context.Context, _ int64) error { return nil }
+func (m *mockRepo) GetSideEffectDLQRow(_ context.Context, _ int64) (*oms.SideEffectDLQRow, error) {
+	return nil, oms.ErrNotFound
+}
+func (m *mockRepo) UpdateSideEffectDLQAfterReplay(_ context.Context, _ int64, _ json.RawMessage, _ bool) error {
+	return nil
+}
 
 // ObjectHistory stubs (Tier 2.3)
 func (m *mockRepo) InsertObjectHistory(_ context.Context, _ *oms.ObjectHistory) error {

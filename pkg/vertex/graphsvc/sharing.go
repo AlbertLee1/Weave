@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 )
@@ -42,13 +43,21 @@ type ShareLink struct {
 	RevokedAt time.Time
 }
 
-// ShareLinkStore persists ShareLink rows. The handler only needs Create / Get
-// / Revoke — list / list-by-graph belong to a future "manage share links"
-// surface that isn't part of VTX-013.
+// ShareLinkStore persists ShareLink rows. Round 69 added ListByGraph
+// for the manage-share-links UI surface so graph owners can audit and
+// revoke share links they previously minted — previously the only way
+// to discover a link was to save its token at create time.
 type ShareLinkStore interface {
 	Create(ctx context.Context, link *ShareLink) error
 	Get(ctx context.Context, token string) (*ShareLink, error)
 	Revoke(ctx context.Context, token string) error
+	// ListByGraph returns every ShareLink (including revoked) for
+	// graphRID, sorted by CreatedAt DESC so the newest link surfaces
+	// first. Implementations must NOT redact the Token field — the
+	// HTTP handler is the security boundary that masks the token into
+	// a tokenSuffix before serialization, so this layer stays a thin
+	// data accessor.
+	ListByGraph(ctx context.Context, graphRID string) ([]*ShareLink, error)
 }
 
 // MemShareLinkStore is the in-memory ShareLinkStore used by tests and
@@ -80,6 +89,25 @@ func (s *MemShareLinkStore) Get(ctx context.Context, token string) (*ShareLink, 
 	}
 	out := *link
 	return &out, nil
+}
+
+// ListByGraph returns every link belonging to graphRID, sorted by
+// CreatedAt DESC. Round 69 added the method to back the manage-shares
+// list endpoint.
+func (s *MemShareLinkStore) ListByGraph(_ context.Context, graphRID string) ([]*ShareLink, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []*ShareLink{}
+	for _, link := range s.m {
+		if link.GraphRID == graphRID {
+			cp := *link
+			out = append(out, &cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 // Revoke flips the row's Revoked flag. Returns ErrShareLinkNotFound when the
@@ -124,7 +152,7 @@ func newShareToken() (string, error) {
 // keeps its shape.
 //
 // On any decode error the original payload is returned unchanged: the share
-// reader has already been authorised, so leaking the raw bytes is no worse
+// reader has already been authorized, so leaking the raw bytes is no worse
 // than refusing the request, and refusing wholly opaque payloads would be a
 // regression for graphs whose schema we don't yet enforce.
 func maskLayerPropertyValues(payload json.RawMessage) json.RawMessage {

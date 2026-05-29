@@ -38,7 +38,7 @@ type ServiceImpl struct {
 	// policyEngine is the optional query-time row-level policy compiler
 	// (US-046). When attached every Load/Search path AND-combines the
 	// per-user policy query into the Bleve request BEFORE the search runs,
-	// so denied rows never materialise. A nil engine short-circuits to
+	// so denied rows never materialize. A nil engine short-circuits to
 	// bleve.NewMatchAllQuery() so existing callers are unaffected.
 	policyEngine *security.Engine
 
@@ -105,7 +105,7 @@ func (s *ServiceImpl) SetRowPolicyEngine(e *rls.Engine) {
 
 // SetColumnMaskEngine attaches the US-257 column_masks engine. Compiled
 // transforms are applied to every WireObject returned from the service's
-// read paths BEFORE serialisation, so masked property values reach the wire
+// read paths BEFORE serialization, so masked property values reach the wire
 // but never leak to the caller's network. Pass nil to detach.
 func (s *ServiceImpl) SetColumnMaskEngine(e *masking.Engine) {
 	s.columnMaskEngine = e
@@ -515,6 +515,12 @@ func (s *ServiceImpl) GetObject(ctx context.Context, req GetObjectRequest) (*Wir
 
 // ListObjects lists objects of a given type with pagination.
 func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (*ObjectPage, error) {
+	ctx, span := tracing.StartSpan(ctx, "oss.ListObjects",
+		attribute.String("ontology.rid", req.OntologyRID),
+		attribute.String("object_type.api_name", req.ObjectType),
+	)
+	defer span.End()
+
 	ot, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType)
 	if err != nil {
 		return nil, err
@@ -599,6 +605,12 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 
 // SearchObjects searches objects using a where clause with pagination.
 func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsRequest) (*ObjectPage, error) {
+	ctx, span := tracing.StartSpan(ctx, "oss.SearchObjects",
+		attribute.String("ontology.rid", req.OntologyRID),
+		attribute.String("object_type.api_name", req.ObjectType),
+	)
+	defer span.End()
+
 	ot, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType)
 	if err != nil {
 		return nil, err
@@ -689,7 +701,12 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	result, err := s.indexMgr.SearchInContext(searchCtx, scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType), searchReq)
 	if err != nil {
 		if hasRegex && errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("regex search exceeded %s timeout: %w", where.RegexQueryTimeout, err)
+			// Wrap with ErrInvalidWhereClause sentinel — Foundry's
+			// contract treats "your regex was too slow" as a user-input
+			// bound (HTTP 400) rather than a server failure. Round-36
+			// sentinel routing in the handler keeps the 400 envelope.
+			return nil, fmt.Errorf("%w: regex search exceeded %s timeout: %w",
+				where.ErrInvalidWhereClause, where.RegexQueryTimeout, err)
 		}
 		return nil, err
 	}
@@ -699,7 +716,7 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	}
 	page.TotalCount = strconv.Itoa(int(result.Total))
 
-	// US-236: materialise facet buckets. Every requested field is
+	// US-236: materialize facet buckets. Every requested field is
 	// registered — including ones with zero matching terms — so SDK
 	// consumers see a stable key set. Map iteration order over the
 	// underlying `map[string]*search.FacetResult` is nondeterministic;
@@ -768,19 +785,69 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	return page, nil
 }
 
-// CountObjects returns the number of objects of a given type.
+// CountObjects returns the number of objects of a given type, optionally
+// filtered by the supplied Where clause.
+//
+// Two paths:
+//
+//  1. Unfiltered fast path (req.Where == nil): use indexMgr.DocCount —
+//     constant-time index read. Backward-compatible for SDK callers
+//     that send no body.
+//  2. Filtered path (req.Where != nil): run the same where → Bleve
+//     query → mergePolicyQuery pipeline SearchObjects uses, but with
+//     Size=0 so Bleve returns the total match count without paying
+//     to materialize documents. This is the path Foundry's OSv2
+//     count endpoint takes on every request, and it is the only
+//     path that respects the row-level policy filter — never let a
+//     filtered count short-circuit through DocCount, or a user with
+//     a restricting policy will over-count rows they cannot see.
 func (s *ServiceImpl) CountObjects(ctx context.Context, req CountObjectsRequest) (*CountObjectsResponse, error) {
-	if _, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType); err != nil {
+	ctx, span := tracing.StartSpan(ctx, "oss.CountObjects",
+		attribute.String("ontology.rid", req.OntologyRID),
+		attribute.String("object_type.api_name", req.ObjectType),
+		attribute.Bool("filter.where", req.Where != nil),
+	)
+	defer span.End()
+
+	ot, err := s.omsRepo.GetObjectTypeByAPIName(ctx, req.OntologyRID, req.ObjectType)
+	if err != nil {
 		return nil, err
 	}
 
-	count, err := s.indexMgr.DocCount(scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType))
+	if req.Where == nil {
+		count, err := s.indexMgr.DocCount(scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType))
+		if err != nil {
+			// Index not found for this object type — valid type but no data yet.
+			return &CountObjectsResponse{Count: 0}, nil
+		}
+		return &CountObjectsResponse{Count: int(count)}, nil
+	}
+
+	bleveQuery, err := where.ConvertToBleveQueryWithOpts(req.Where, nil)
 	if err != nil {
-		// Index not found for this object type — valid type but no data yet.
+		return nil, err
+	}
+	policyQ, err := s.compilePolicyQuery(ctx, *ot)
+	if err != nil {
+		return nil, err
+	}
+	bleveQuery = mergePolicyQuery(bleveQuery, policyQ)
+
+	idx := s.indexMgr.GetIndex(scopedBleveKey(s.indexMgr, req.OntologyRID, req.ObjectType))
+	if idx == nil {
+		// No index yet — a filtered count over zero rows is zero,
+		// regardless of the predicate.
 		return &CountObjectsResponse{Count: 0}, nil
 	}
 
-	return &CountObjectsResponse{Count: int(count)}, nil
+	searchReq := bleve.NewSearchRequest(bleveQuery)
+	searchReq.Size = 0
+	searchReq.From = 0
+	res, err := idx.SearchInContext(ctx, searchReq)
+	if err != nil {
+		return nil, err
+	}
+	return &CountObjectsResponse{Count: int(res.Total)}, nil
 }
 
 // defaultFacetSize is the per-field bucket ceiling for US-236 faceted
@@ -864,6 +931,15 @@ func parseOrderBy(orderBy string) []string {
 // means the caller's req.ObjectType is the link's declared *target* and the
 // returned objects are instances of the link's declared *source*.
 func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRequest) (*ObjectPage, error) {
+	ctx, span := tracing.StartSpan(ctx, "oss.ListLinkedObjects",
+		attribute.String("ontology.rid", req.OntologyRID),
+		attribute.String("object_type.api_name", req.ObjectType),
+		attribute.String("object.primary_key", req.PrimaryKey),
+		attribute.String("link_type.api_name", req.LinkType),
+		attribute.String("link.direction", req.Direction),
+	)
+	defer span.End()
+
 	dir, err := links.ParseDirection(req.Direction)
 	if err != nil {
 		return nil, err
@@ -1042,6 +1118,16 @@ func (s *ServiceImpl) ListLinkedObjects(ctx context.Context, req LinkedObjectsRe
 // It verifies the target PK is actually linked via the specified link type before
 // returning it, returning ErrNotFound if the target is not linked.
 func (s *ServiceImpl) GetLinkedObject(ctx context.Context, req GetLinkedObjectRequest) (*WireObject, error) {
+	ctx, span := tracing.StartSpan(ctx, "oss.GetLinkedObject",
+		attribute.String("ontology.rid", req.OntologyRID),
+		attribute.String("object_type.api_name", req.ObjectType),
+		attribute.String("object.primary_key", req.PrimaryKey),
+		attribute.String("link_type.api_name", req.LinkType),
+		attribute.String("linked_object.primary_key", req.LinkedObjectPrimaryKey),
+		attribute.String("link.direction", req.Direction),
+	)
+	defer span.End()
+
 	dir, err := links.ParseDirection(req.Direction)
 	if err != nil {
 		return nil, err

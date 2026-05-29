@@ -26,7 +26,7 @@ func newInheritanceRouter(handler *oms.OMSHandler) *chi.Mux {
 
 func TestCreateObjectType_WithExtendsRID_Success(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	parent := oms.ObjectType{
 		RID: "ri.ontology.main.object-type.person", OntologyRID: ontRID,
 		APIName: "person", DisplayName: "Person",
@@ -61,7 +61,7 @@ func TestCreateObjectType_WithExtendsRID_Success(t *testing.T) {
 
 func TestCreateObjectType_WithUnknownExtendsRID_Returns400(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newInheritanceRouter(oms.NewOMSHandler(repo))
 
 	body := `{"apiName":"x","displayName":"X","primaryKey":"id","extendsRid":"ri.ot.does-not-exist","status":"ACTIVE","visibility":"NORMAL"}`
@@ -81,7 +81,7 @@ func TestCreateObjectType_WithUnknownExtendsRID_Returns400(t *testing.T) {
 
 func TestCreateObjectType_WithCrossOntologyExtendsRID_Returns400(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	// Add a second ontology + parent within IT.
 	const otherOnt = "ri.ontology.main.ontology.2"
 	repo.ontologies = append(repo.ontologies, oms.Ontology{RID: otherOnt, APIName: "other", DisplayName: "Other"})
@@ -106,7 +106,7 @@ func TestCreateObjectType_WithCrossOntologyExtendsRID_Returns400(t *testing.T) {
 
 func TestUpdateObjectType_SetExtendsRID_AddsParent(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	parent := oms.ObjectType{
 		RID: "ri.ot.parent", OntologyRID: ontRID,
 		APIName: "person", DisplayName: "Person",
@@ -139,7 +139,7 @@ func TestUpdateObjectType_SetExtendsRID_AddsParent(t *testing.T) {
 func TestUpdateObjectType_ClearExtendsRID(t *testing.T) {
 	// US-212: tri-state pointer — empty string clears the parent link.
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.objectTypes = []oms.ObjectType{
 		{RID: "ri.ot.parent", OntologyRID: ontRID, APIName: "p", DisplayName: "P",
 			PrimaryKey: "id", PrimaryKeys: []string{"id"}, Status: "ACTIVE", Visibility: "NORMAL"},
@@ -166,7 +166,7 @@ func TestUpdateObjectType_ClearExtendsRID(t *testing.T) {
 func TestUpdateObjectType_CycleRejected(t *testing.T) {
 	// A→B exists. Set B.ExtendsRID = A → cycle. Must be rejected.
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.objectTypes = []oms.ObjectType{
 		{RID: "ri.ot.a", OntologyRID: ontRID, APIName: "a", DisplayName: "A",
 			PrimaryKey: "id", PrimaryKeys: []string{"id"}, Status: "ACTIVE", Visibility: "NORMAL",
@@ -193,7 +193,7 @@ func TestUpdateObjectType_CycleRejected(t *testing.T) {
 
 func TestGetObjectTypeResolved_MergesParentPropertiesAndLinks(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.objectTypes = []oms.ObjectType{
 		{RID: "ri.ot.parent", OntologyRID: ontRID, APIName: "person", DisplayName: "Person",
 			PrimaryKey: "id", PrimaryKeys: []string{"id"}, Status: "ACTIVE", Visibility: "NORMAL"},
@@ -250,7 +250,7 @@ func TestGetObjectTypeResolved_MergesParentPropertiesAndLinks(t *testing.T) {
 
 func TestGetObjectTypeResolved_ChildOverridesParentProperty(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.objectTypes = []oms.ObjectType{
 		{RID: "ri.ot.parent", OntologyRID: ontRID, APIName: "person", DisplayName: "Person",
 			PrimaryKey: "id", PrimaryKeys: []string{"id"}, Status: "ACTIVE", Visibility: "NORMAL"},
@@ -288,7 +288,7 @@ func TestGetObjectTypeResolved_ChildOverridesParentProperty(t *testing.T) {
 
 func TestGetObjectTypeResolved_NoParentReturnsOwnPropertiesOnly(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	repo.objectTypes = []oms.ObjectType{
 		{RID: "ri.ot.solo", OntologyRID: ontRID, APIName: "solo", DisplayName: "Solo",
 			PrimaryKey: "id", PrimaryKeys: []string{"id"}, Status: "ACTIVE", Visibility: "NORMAL"},

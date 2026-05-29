@@ -21,6 +21,7 @@ type runStarter interface {
 
 type runReader interface {
 	getRun(ctx context.Context, runRID string) (Run, error)
+	listRunsForScenario(ctx context.Context, scenarioRID string) ([]Run, error)
 }
 
 // serviceRunReader adapts Service.repo access. Service does not expose
@@ -30,6 +31,10 @@ type serviceRunReader struct{ repo Repo }
 
 func (s serviceRunReader) getRun(ctx context.Context, rid string) (Run, error) {
 	return s.repo.GetRun(ctx, rid)
+}
+
+func (s serviceRunReader) listRunsForScenario(ctx context.Context, scenarioRID string) ([]Run, error) {
+	return s.repo.ListRunsForScenario(ctx, scenarioRID)
 }
 
 // Handler serves the VTX-057 scenario-run endpoints:
@@ -56,6 +61,7 @@ func NewHandler(svc *Service) *Handler {
 // RegisterRoutes mounts the run lifecycle endpoints on r.
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/vertex/v1/scenarios/{scenarioRid}/runs", h.startRun)
+	r.Get("/api/vertex/v1/scenarios/{scenarioRid}/runs", h.listRuns)
 	r.Post("/api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}/cancel", h.cancelRun)
 	r.Get("/api/vertex/v1/scenarios/{scenarioRid}/runs/{runRid}", h.getRun)
 }
@@ -113,6 +119,32 @@ func writeStartError(w http.ResponseWriter, scenarioRID string, err error) {
 	// "scenario not found" without us depending on the scenarios package.
 	apierror.WriteJSON(w, apierror.NewNotFound("ScenarioNotFound",
 		map[string]string{"scenarioRid": scenarioRID, "error": err.Error()}))
+}
+
+// listRuns GET /api/vertex/v1/scenarios/{scenarioRid}/runs. Round 68.
+// Returns every run belonging to scenarioRid sorted newest-first
+// (StartedAt DESC) wrapped in an envelope so future pagination
+// fields (nextPageToken, totalCount) can be added without
+// breaking the wire contract. An unknown scenarioRid returns an
+// empty list rather than 404 — scenario_rid is a filter here,
+// not a key — so the SPA's "Recent runs" panel renders cleanly
+// against a brand-new scenario.
+type listRunsResponse struct {
+	Runs []Run `json:"runs"`
+}
+
+func (h *Handler) listRuns(w http.ResponseWriter, r *http.Request) {
+	scenarioRID := chi.URLParam(r, "scenarioRid")
+	runs, err := h.reader.listRunsForScenario(r.Context(), scenarioRID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListScenarioRunsFailed",
+			map[string]string{"scenarioRid": scenarioRID, "error": err.Error()}))
+		return
+	}
+	if runs == nil {
+		runs = []Run{}
+	}
+	httputil.WriteJSON(w, http.StatusOK, listRunsResponse{Runs: runs})
 }
 
 func writeCancelError(w http.ResponseWriter, runRID string, err error) {

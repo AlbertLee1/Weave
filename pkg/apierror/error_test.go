@@ -217,3 +217,85 @@ func TestWriteError_ContentType(t *testing.T) {
 		t.Errorf("expected Content-Type application/json, got %s", ct)
 	}
 }
+
+// TestNewNotImplemented locks the round-117 (Gap-T4 step-2) 501 helper —
+// VersionedLookupNotSupported is the canonical use site. Status must be 501
+// and ErrorCode must be UNIMPLEMENTED so callers can branch on it rather than
+// guessing from the prose.
+func TestNewNotImplemented(t *testing.T) {
+	err := NewNotImplemented("VersionedLookupNotSupported", map[string]string{
+		"rid": "ri.ontology.main.ontology.northwind@v3",
+	})
+
+	if err.ErrorCode != "UNIMPLEMENTED" {
+		t.Errorf("expected errorCode UNIMPLEMENTED, got %s", err.ErrorCode)
+	}
+	if err.ErrorName != "VersionedLookupNotSupported" {
+		t.Errorf("expected errorName VersionedLookupNotSupported, got %s", err.ErrorName)
+	}
+	if err.StatusCode != http.StatusNotImplemented {
+		t.Errorf("expected status 501, got %d", err.StatusCode)
+	}
+	if !uuidRegex.MatchString(err.ErrorInstanceID) {
+		t.Errorf("expected valid UUID for errorInstanceId, got %s", err.ErrorInstanceID)
+	}
+	if err.Parameters["rid"] != "ri.ontology.main.ontology.northwind@v3" {
+		t.Errorf("expected parameter rid pass-through, got %s", err.Parameters["rid"])
+	}
+}
+
+// TestNewGone locks the 410 helper — VTX-013 share-link revoke is the
+// canonical use site. The mapping reuses NOT_FOUND code but with 410 status
+// so the caller can distinguish "never existed" (404) from "was revoked"
+// (410) without parsing the prose.
+func TestNewGone(t *testing.T) {
+	err := NewGone("ShareLinkRevoked", map[string]string{
+		"shareLinkRid": "ri.vertex.main.share-link.abc123",
+	})
+
+	if err.ErrorCode != "NOT_FOUND" {
+		t.Errorf("expected errorCode NOT_FOUND, got %s", err.ErrorCode)
+	}
+	if err.ErrorName != "ShareLinkRevoked" {
+		t.Errorf("expected errorName ShareLinkRevoked, got %s", err.ErrorName)
+	}
+	if err.StatusCode != http.StatusGone {
+		t.Errorf("expected status 410, got %d", err.StatusCode)
+	}
+	if err.Parameters["shareLinkRid"] != "ri.vertex.main.share-link.abc123" {
+		t.Errorf("expected parameter shareLinkRid pass-through, got %s", err.Parameters["shareLinkRid"])
+	}
+}
+
+// TestNewAutomationRuleCycle locks the 422 helper used by the automation
+// rule graph compiler when it detects a cycle. The dedicated ErrorCode
+// WEAVE_AUTOMATION_RULE_CYCLE lets UI surface the broken edge clearly
+// instead of swallowing it as a generic InvalidArgument.
+func TestNewAutomationRuleCycle(t *testing.T) {
+	err := NewAutomationRuleCycle("AutomationRuleCycleDetected", map[string]string{
+		"ruleId":    "rule-foo",
+		"cycleEdge": "rule-foo -> rule-bar -> rule-foo",
+	})
+
+	if err.ErrorCode != "WEAVE_AUTOMATION_RULE_CYCLE" {
+		t.Errorf("expected errorCode WEAVE_AUTOMATION_RULE_CYCLE, got %s", err.ErrorCode)
+	}
+	if err.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("expected status 422, got %d", err.StatusCode)
+	}
+	if err.Parameters["ruleId"] != "rule-foo" {
+		t.Errorf("expected parameter ruleId=rule-foo, got %s", err.Parameters["ruleId"])
+	}
+
+	// Also verify wire shape round-trips through WriteJSON so the
+	// errorInstanceId / parameters survive the JSON encoder.
+	w := httptest.NewRecorder()
+	WriteJSON(w, err)
+	var decoded map[string]interface{}
+	if jerr := json.Unmarshal(w.Body.Bytes(), &decoded); jerr != nil {
+		t.Fatalf("decode response body: %v", jerr)
+	}
+	if decoded["errorCode"] != "WEAVE_AUTOMATION_RULE_CYCLE" {
+		t.Errorf("wire errorCode mismatch: %v", decoded["errorCode"])
+	}
+}

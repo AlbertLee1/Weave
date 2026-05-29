@@ -6,14 +6,31 @@ Weave lets you define rich data models (ontologies) — object types, properties
 
 ## Features
 
+### Core (v1 baseline)
+
 - **Ontology Metadata Service (OMS)** — define and manage ontologies, object types, properties, link types, action types, and interfaces
-- **Object Set Service (OSS)** — retrieve, search, filter, and paginate objects with composable ObjectSet queries (union, intersect, subtract, searchAround)
-- **Full-Text Search** — per-object-type Bleve indexes with automatic indexing
-- **Aggregation Engine** — groupBy queries with metrics (sum, count, min, max, avg, cardinality, etc.)
-- **Link Resolution** — traverse relationships between objects via foreign key configuration
-- **Action Execution** — define parameterized actions with validation rules, execute to generate edits, publish via NATS JetStream
-- **Event Streaming** — NATS JetStream consumer applies edits to search indexes in real-time
-- **Web UI** — React dashboard for exploring schemas, browsing objects, running aggregations, and managing ontology definitions
+- **Object Set Service (OSS)** — retrieve, search, filter, and paginate objects with composable ObjectSet queries (union, intersect, subtract, searchAround, asType, asBaseObjectTypes, interfaceBase, nearestNeighbors, withProperties, interfaceLinkSearchAround — 15 variants in all)
+- **Full-Text Search** — per-object-type Bleve indexes with automatic indexing, TypeClass-driven analyzer (`not_analyzed` / `keyword` / `english`)
+- **Aggregation Engine** — groupBy queries with full metric family (count / sum / avg / min / max / standardDeviation / variance / approxDistinct / approxPercentile) and 5 groupBy variants (exact / fixedWidth / range / duration / geohash); multi-layer nesting with `ACCURATE` / `APPROXIMATE` accuracy badging
+- **Link Resolution** — traverse foreign-key + M2M relationships, multi-hop searchAround with `ErrQueryTooLarge` guard
+- **Action Execution** — parameterized actions with validation rules, atomic / best-effort batch modes, optimistic concurrency (`expectedVersion` / `If-Match` / 409 `OptimisticVersionConflict`)
+- **Event Streaming** — NATS JetStream consumer applies edits to search indexes in real-time; user-edit-wins conflict resolution
+- **Web UI** — React 19 dashboard for exploring schemas, browsing objects, running aggregations, managing ontology definitions, and live realtime mode
+
+### v2 Deep Parity (Phase 6 – 8)
+
+- **Derived properties** — `withProperties` actually computes across links: count / sum / avg / min / max + reverse-link aggregations + formula expressions (Gap-Q2)
+- **Function-backed actions** — embedded `dop251/goja` sandboxed JS runtime drives Action / Query dispatch via Goja; HTTP dispatcher still available as a fallback (Gap-A5 / Phase 8 W1)
+- **Row + column + Marking security** — single `pkg/security/policy_engine.go` ANDs a Bleve query into the OSS pipeline, `AllowedProperties` filters wire serialization, `SetMarkingsEnabled` / `AllowedForIngest` merge marking decisions; CEL DSL for predicates beyond declarative `eq` / `in` (Gap-S1 + S2 + S3)
+- **Ontology branching + versioned RID** — `ontology_branches` table, `RID@vN` parser, `?branch=` / `X-Weave-Branch` header pinning, eight Get endpoints type-reject versioned reads with `501 VersionedLookupNotSupported` (Gap-T4)
+- **Realtime subscriptions** — SSE `/objectSets/{rid}/subscribe` with `Last-Event-ID` / `since` replay + per-user connection guard; WebSocket `/subscriptions/ws`; frontend `useObjectSetSubscription` hook + Browser realtime mode + `ObjectSetLivePage` (Gap-R1)
+- **Audit + observability** — `pkg/audit/*` core write-path + SIEM pipeline (syslog / S3 / batched / tee) + `RootHashPublisher` US-266 tamper-proof anchoring; business metrics + W3C TraceContext across NATS + outbound HTTP / webhook
+- **MCP completion** — `completion/complete` joins the existing `prompts/*` + `resources/*` surfaces so AI clients see live ontology / objectType suggestions as the user types `weave://...` URIs (Gap-D4)
+- **Python SDK builders** — `ObjectSetBuilder`, `AggregationAPI`, `TimeSeriesAPI`, `AttachmentsAPI`, criteria builders (`parameter_compare` / `and_` / `or_` / `not_`), typed exceptions (`WeaveValidationError`, `WeaveVersionedLookupError`), full sync + async client mirrors (Gap-D1 + D2)
+
+See [`docs/CHANGES-v2.md`](docs/CHANGES-v2.md) for the full v2 release notes
+and [`docs/PRD-Weave-OSv2-深度复刻-V2.md`](docs/PRD-Weave-OSv2-深度复刻-V2.md)
+for the Gap-* tracker and US-048 – US-081 implementation status matrix.
 
 ## Tech Stack
 

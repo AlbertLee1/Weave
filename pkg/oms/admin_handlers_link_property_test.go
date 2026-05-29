@@ -162,7 +162,7 @@ func newLinkPropRouter(handler *oms.OMSHandler) *chi.Mux {
 }
 
 func seedMembershipLinkType(repo *mockRepo) (ontRID, ltRID string) {
-	ontRID = seedOntology(repo)
+	ontRID = seedMockOntology(repo)
 	ltRID = "ri.ontology.main.link-type.user-group"
 	repo.linkTypes = append(repo.linkTypes, oms.LinkType{
 		RID:              ltRID,
@@ -245,7 +245,7 @@ func TestCreateLinkProperty_Duplicate(t *testing.T) {
 
 func TestCreateLinkProperty_UnknownLinkType(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	h, _, _ := wireLinkPropHandler(repo)
 	r := newLinkPropRouter(h)
 
@@ -453,7 +453,7 @@ func TestPutLinkEdgeProperties_RequiredMissing(t *testing.T) {
 
 func TestPutLinkEdgeProperties_UnknownLinkType(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	h, _, _ := wireLinkPropHandler(repo)
 
 	body := map[string]interface{}{"values": map[string]interface{}{}}

@@ -306,6 +306,78 @@ Live SSE streams apply per-event policy filtering through the `SSEEventFilter` i
 - **Cache**: Thread-safe via `sync.Mutex` over entries and LRU list.
 - **User attributes**: Read-only during evaluation -- no mutations.
 
+## Engine Implementation Details
+
+The sections above describe the contract; this section names the concrete
+files behind it so contributors know where to extend, debug, or benchmark.
+
+### CEL Expression DSL
+
+`pkg/security/cel_evaluator.go` provides a Google CEL evaluator for rule
+predicates that exceed the declarative `eq` / `in` / `markingSubset`
+shapes. A policy rule may carry a `cel` field whose value is a CEL
+expression evaluated against `{user, object, request}`. The evaluator
+returns a typed boolean — non-boolean results fail closed in the same
+manner as a missing user attribute.
+
+```json
+{
+  "type": "cel",
+  "cel": "user.region == object.salesRegion && size(user.markings) > 0"
+}
+```
+
+The CEL path is opt-in: rules without a `cel` field follow the original
+declarative dispatcher. Both paths compose under `ConjunctionQuery`, so a
+policy can mix declarative `eq` rules with one CEL rule for the unusual
+case. End-to-end coverage lives in
+`pkg/oss/row_policy_cel_integration_test.go` and
+`cmd/server/rls_cel_us487_bdd_test.go`.
+
+### Decision Cache vs Policy Cache
+
+Two separate caches sit in front of `Engine.Evaluate`:
+
+| Cache | Key | TTL | Purpose |
+|-------|-----|-----|---------|
+| `policy_cache.go::PolicyCache` | `(userID, objectTypeRID, policyVersion)` | configurable (default 5 min) | Compiled Bleve query for the row-level policy tree |
+| `decision_cache.go::DecisionCache` | per-request scoped | request lifetime | Memoize repeated `Evaluate` / `AllowedProperties` calls inside a single request that touches the same ObjectType multiple times (e.g. a Load with N hops) |
+
+The decision cache is request-local, so it does not need invalidation —
+the request context expires it. The policy cache is process-local and
+follows the version-bump invalidation rules described above.
+
+### Marking Write Guard
+
+In addition to the read-side `MatchAllQuery` / `MatchNoneQuery` branches,
+the engine exposes `AllowedForIngest(ctx, user, objectType) (bool, error)`
+on the write path. The Action executor calls it before applying an Edit
+that touches a marking-enabled ObjectType, returning `403
+MarkingPolicyDenied` when the user's marking set fails the AND-semantics
+check against the object's stamped markings. This closes the
+"read-blocked-but-write-leaks" hole that pure query-time filtering
+cannot.
+
+### Auto-Marking Inheritance
+
+Many ontology shapes carry markings transitively — e.g. a Customer is
+"PII", and every Order referring to that Customer should inherit "PII"
+automatically. `pkg/security/auto_marking_test.go` locks the inheritance
+semantics: when a parent property carries a marking, the dependent
+ObjectType picks it up at write time so downstream readers see the
+combined set. Auto-marking is opt-in per ObjectType and stops at the
+configured propagation depth to avoid runaway fan-out.
+
+### Performance Baseline
+
+`pkg/security/rls_bench_test.go` ships a benchmark baseline that exercises
+`Engine.Evaluate` at p50 / p99 latencies with a representative policy
+fan-out (8 rules per ObjectType, 4 user attributes, marking enabled).
+Run via `make bench` or directly with `go test -bench`. The baseline is
+the floor the policy hot path must keep below — regressions are caught
+by `make test-cover-check` against a tracked baseline file in
+`pkg/security/testdata/`.
+
 ## Quick Reference
 
 ### Adding a New Row-Level Policy

@@ -993,8 +993,13 @@ func TestBDD_MCPStatusDocReflectsLivePromptsResourcesBridge(t *testing.T) {
 		`case "resources/read":`,
 		`case "resources/subscribe":`,
 		`case "resources/unsubscribe":`,
-		`"resources": map[string]any{"listChanged": false, "subscribe": true}`,
-		`"prompts":   map[string]any{"listChanged": false}`,
+		`"resources":   map[string]any{"listChanged": false, "subscribe": true}`,
+		`"prompts":     map[string]any{"listChanged": false}`,
+		// Gap-D4 round 46: completion/complete capability +
+		// dispatcher case must both appear so AI clients see the
+		// method and can call it.
+		`"completions": map[string]any{}`,
+		`case "completion/complete":`,
 	} {
 		if !strings.Contains(mcpServer, required) {
 			t.Errorf("pkg/mcp/server.go must dispatch or advertise MCP fragment %q", required)
@@ -1090,7 +1095,27 @@ func readGolangCILintActionConfig(t *testing.T, path string) (string, bool) {
 				if !ok || strings.TrimSpace(version) == "" {
 					t.Fatalf("job %q golangci-lint action step %q must set with.version", jobName, step.Name)
 				}
-				return strings.TrimSpace(version), readBoolInput(step.With["only-new-issues"])
+				onlyNew := readBoolInput(step.With["only-new-issues"])
+				if !onlyNew {
+					// Round 154: also accept --new-from-rev= /
+					// --new-from-merge-base= / --new-from-patch=
+					// in args as equivalent to only-new-issues:true.
+					// The action's own only-new-issues flag fetches
+					// the GH PR patch which 406s on PRs > 300 files
+					// (Weave's Ralph self-iteration batches routinely
+					// exceed that), so we now drive new-issue detection
+					// via golangci-lint's own git diff — see commit
+					// 77514e1 "fix CI to use git merge-base instead of
+					// GH PR diff API".
+					if args, ok := step.With["args"].(string); ok {
+						if strings.Contains(args, "--new-from-rev=") ||
+							strings.Contains(args, "--new-from-merge-base=") ||
+							strings.Contains(args, "--new-from-patch=") {
+							onlyNew = true
+						}
+					}
+				}
+				return strings.TrimSpace(version), onlyNew
 			}
 		}
 	}

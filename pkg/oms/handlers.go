@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/httputil"
+	"github.com/liyang/weave/pkg/rid"
 	"github.com/liyang/weave/pkg/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -36,11 +37,28 @@ type OMSHandler struct {
 	commitJobStore            CommitJobStore
 	commitJobRunner           CommitJobRunner
 	indexBootstrapper         IndexBootstrapper
+	// criteriaValidator (round 135) statically validates an ActionType's
+	// submissionCriteria JSON at save time so authoring mistakes surface
+	// as 422 instead of as runtime errors at first apply. Wired by
+	// cmd/server to actions.ValidateCriteriaSchema; a nil validator
+	// disables enforcement (degraded-mode test routers preserve legacy
+	// behavior).
+	criteriaValidator func(json.RawMessage) error
 }
 
 // NewOMSHandler creates a new OMSHandler with the given repository.
 func NewOMSHandler(repo Repository) *OMSHandler {
 	return &OMSHandler{repo: repo}
+}
+
+// SetCriteriaValidator wires a static validator for the
+// submissionCriteria JSON sent on Create/Update ActionType. The
+// validator runs BEFORE persistence so authoring mistakes surface
+// as 422 at save time. A nil validator disables enforcement
+// (matches the legacy unguarded behavior; useful for tests).
+// Round 135 (PRD-V2 Gap-A3).
+func (h *OMSHandler) SetCriteriaValidator(fn func(json.RawMessage) error) {
+	h.criteriaValidator = fn
 }
 
 // SetQueryExecutor wires an optional QueryExecutor for function-backed query
@@ -93,7 +111,7 @@ func (h *OMSHandler) FunctionExecutionStore() FunctionExecutionStore {
 // quota enforcement so cached responses still respect both gates.
 //
 // A nil or unset cache disables result caching — the handler dispatches
-// every call directly to the executor, matching the legacy behaviour
+// every call directly to the executor, matching the legacy behavior
 // US-221 introduced this hook on top of.
 func (h *OMSHandler) SetFunctionResultCache(c FunctionResultCache) {
 	h.functionResultCache = c
@@ -171,12 +189,55 @@ func (h *OMSHandler) ColumnLineageStore() ColumnLineageStore {
 	return h.columnLineageStore
 }
 
+// rejectVersionedRID is the round-117/119 Gap-T4 step-2 short-circuit:
+// when “input“ parses as a RID with a version pin (round-91 @vN
+// suffix), the handler writes a 501 VersionedLookupNotSupported
+// response and returns true so the caller can early-exit. Returns
+// false when “input“ is a plain API name or an un-versioned RID,
+// in which case the caller proceeds with its normal lookup.
+//
+// “identifierField“ is the JSON key under which the original input
+// is echoed into the response parameters (e.g. "objectTypeApiName",
+// "actionTypeRid") so the SPA can surface a "version pinned, snapshots
+// pending" banner without having to remember which parameter it sent.
+// “extraParams“ accumulates any additional context (typically
+// {"ontologyApiName": ...}); the helper merges identifierField + the
+// parsed version into the same map.
+//
+// rid.Parse silently fails on plain API names — that's the
+// "not a RID at all" branch and we fall through (return false) so
+// per-API-name lookups keep working. The 501 distinction (vs 404)
+// matters because 404 would mislead callers into rewriting the RID.
+func rejectVersionedRID(
+	w http.ResponseWriter,
+	input string,
+	identifierField string,
+	extraParams map[string]string,
+) bool {
+	parsed, err := rid.Parse(input)
+	if err != nil || parsed.Version == "" {
+		return false
+	}
+	params := map[string]string{
+		"reason":        "RID @vN version suffix is recognized but snapshot lookups are not yet implemented",
+		identifierField: input,
+		"version":       parsed.Version,
+	}
+	for k, v := range extraParams {
+		params[k] = v
+	}
+	apierror.WriteJSON(w, apierror.NewNotImplemented("VersionedLookupNotSupported", params))
+	return true
+}
+
 // resolveRepo returns a Repository for the request. If ?branch= is set, it
 // wraps h.repo with a BranchedRepository that overlays branch changes on reads.
 // Returns (repo, true) on success or (nil, false) if an error was written.
 func (h *OMSHandler) resolveRepo(w http.ResponseWriter, r *http.Request) (Repository, bool) {
-	branchID := r.URL.Query().Get("branch")
-	if branchID == "" {
+	// Round 39 (Gap-T4): branch can be pinned via ?branch= query
+	// OR X-Weave-Branch header. Query wins when both are set.
+	branchID := ResolveBranchFromRequest(r)
+	if branchID == "" || branchID == DefaultBranch {
 		return h.repo, true
 	}
 	branch, err := h.repo.GetBranch(r.Context(), branchID)
@@ -198,7 +259,7 @@ func (h *OMSHandler) resolveRepo(w http.ResponseWriter, r *http.Request) (Reposi
 func (h *OMSHandler) ListOntologies(w http.ResponseWriter, r *http.Request) {
 	list, err := h.repo.ListOntologies(r.Context())
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewNotFound("ListOntologiesFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("ListOntologiesFailed", nil))
 		return
 	}
 	if list == nil {
@@ -220,7 +281,7 @@ func (h *OMSHandler) GetOntology(w http.ResponseWriter, r *http.Request) {
 			apierror.WriteJSON(w, apierror.NewNotFound("OntologyNotFound", map[string]string{"ontologyApiName": rid}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewNotFound("GetOntologyFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("GetOntologyFailed", nil))
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, o)
@@ -235,7 +296,7 @@ func (h *OMSHandler) ListObjectTypes(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	list, err := repo.ListObjectTypes(r.Context(), ontologyRID)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewNotFound("ListObjectTypesFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("ListObjectTypesFailed", nil))
 		return
 	}
 	if list == nil {
@@ -245,6 +306,17 @@ func (h *OMSHandler) ListObjectTypes(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetObjectType handles GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}.
+//
+// Round 117 (Gap-T4 step-2 pilot): the path parameter accepts either
+// an API name or a RID. When the input parses as a RID AND carries
+// the round-91 @vN version suffix, the system recognizes the version
+// semantics but refuses the lookup with 501 NotImplemented (errorName
+// VersionedLookupNotSupported) — the snapshot system isn't built yet,
+// and 501 is clearer than masquerading as 404 (which would mislead
+// the caller into rewriting the RID). Foundry-parity: their
+// equivalent endpoints route @vN to the historical metadata store
+// when present; without that store we'd rather signal "feature
+// pending" than silently downgrade to the latest version.
 func (h *OMSHandler) GetObjectType(w http.ResponseWriter, r *http.Request) {
 	repo, ok := h.resolveRepo(w, r)
 	if !ok {
@@ -252,6 +324,18 @@ func (h *OMSHandler) GetObjectType(w http.ResponseWriter, r *http.Request) {
 	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	apiName := chi.URLParam(r, "objectTypeApiName")
+
+	// Round 117 (Gap-T4 step-2): refuse @vN versioned lookups —
+	// round 119 extracts the check into rejectVersionedRID so the
+	// same 3-line guard applies uniformly across the metadata-Get
+	// surface (GetActionType, GetLinkType, GetInterfaceTypeV2,
+	// GetValueTypeV2, GetQueryTypeV2, GetSharedPropertyType,
+	// GetTypeGroup all use the same helper).
+	if rejectVersionedRID(w, apiName, "objectTypeApiName", map[string]string{
+		"ontologyApiName": ontologyRID,
+	}) {
+		return
+	}
 
 	ot, err := repo.GetObjectTypeByAPIName(r.Context(), ontologyRID, apiName)
 	if err != nil {
@@ -262,13 +346,13 @@ func (h *OMSHandler) GetObjectType(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewNotFound("GetObjectTypeFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectTypeFailed", nil))
 		return
 	}
 
 	wireData, err := ot.ToWireJSON()
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewNotFound("SerializationFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 		return
 	}
 
@@ -299,7 +383,7 @@ func (h *OMSHandler) GetObjectTypeResolved(w http.ResponseWriter, r *http.Reques
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewNotFound("GetObjectTypeFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectTypeFailed", nil))
 		return
 	}
 
@@ -405,13 +489,13 @@ func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Reques
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewNotFound("GetObjectTypeFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectTypeFailed", nil))
 		return
 	}
 
 	list, err := repo.ListOutgoingLinkTypes(r.Context(), ot.RID)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewNotFound("ListOutgoingLinkTypesFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("ListOutgoingLinkTypesFailed", nil))
 		return
 	}
 
@@ -420,7 +504,54 @@ func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Reques
 	for i := range list {
 		data, err := list[i].ToWireJSON()
 		if err != nil {
-			apierror.WriteJSON(w, apierror.NewNotFound("SerializationFailed", nil))
+			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
+			return
+		}
+		wireList = append(wireList, json.RawMessage(data))
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
+}
+
+// ListIncomingLinkTypes handles GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/incomingLinkTypes.
+// Round 77: closes the symmetry gap with ListOutgoingLinkTypes. Returns
+// every LinkType whose TargetObjectType matches the resolved ObjectType
+// (i.e. the links pointing INTO this type). The repo method existed
+// long ago with PG impl + mocks; previously no HTTP endpoint surfaced
+// it, so the ObjectType detail page had to scan every ObjectType and
+// call the outgoing direction N times to render the "incoming links"
+// panel.
+func (h *OMSHandler) ListIncomingLinkTypes(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	apiName := chi.URLParam(r, "objectTypeApiName")
+
+	ot, err := repo.GetObjectTypeByAPIName(r.Context(), ontologyRID, apiName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
+				"objectTypeApiName": apiName,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectTypeFailed", nil))
+		return
+	}
+
+	list, err := repo.ListIncomingLinkTypes(r.Context(), ot.RID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListIncomingLinkTypesFailed", nil))
+		return
+	}
+
+	wireList := make([]json.RawMessage, 0, len(list))
+	for i := range list {
+		data, err := list[i].ToWireJSON()
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 			return
 		}
 		wireList = append(wireList, json.RawMessage(data))
@@ -438,7 +569,7 @@ func (h *OMSHandler) ListActionTypes(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	list, err := repo.ListActionTypes(r.Context(), ontologyRID)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewNotFound("ListActionTypesFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("ListActionTypesFailed", nil))
 		return
 	}
 
@@ -446,7 +577,7 @@ func (h *OMSHandler) ListActionTypes(w http.ResponseWriter, r *http.Request) {
 	for i := range list {
 		data, err := list[i].ToWireJSON()
 		if err != nil {
-			apierror.WriteJSON(w, apierror.NewNotFound("SerializationFailed", nil))
+			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 			return
 		}
 		wireList = append(wireList, json.RawMessage(data))
@@ -666,6 +797,11 @@ func (h *OMSHandler) GetActionType(w http.ResponseWriter, r *http.Request) {
 	}
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	actionIdentifier := chi.URLParam(r, "actionTypeRid")
+	if rejectVersionedRID(w, actionIdentifier, "actionTypeRid", map[string]string{
+		"ontologyApiName": ontologyRID,
+	}) {
+		return
+	}
 	at, err := repo.GetActionTypeByAPIName(r.Context(), ontologyRID, actionIdentifier)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -674,13 +810,13 @@ func (h *OMSHandler) GetActionType(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewNotFound("GetActionTypeFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("GetActionTypeFailed", nil))
 		return
 	}
 
 	wireData, err := at.ToWireJSON()
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewNotFound("SerializationFailed", nil))
+		apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 		return
 	}
 

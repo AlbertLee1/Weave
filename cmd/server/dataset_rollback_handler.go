@@ -125,7 +125,7 @@ func (h *datasetRollbackHandler) CreateTransaction(w http.ResponseWriter, r *htt
 			apierror.WriteJSON(w, apierror.NewNotFound("DatasetNotFound", map[string]string{"rid": rid}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("DatasetRollbackFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("DatasetRollbackFailed", map[string]string{
 			"rid":   rid,
 			"error": err.Error(),
 		}))
@@ -151,7 +151,7 @@ func (h *datasetRollbackHandler) CreateTransaction(w http.ResponseWriter, r *htt
 
 	parent, err := h.store.LatestForOntology(r.Context(), ont.APIName)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("DatasetRollbackFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("DatasetRollbackFailed", map[string]string{
 			"rid":   rid,
 			"error": err.Error(),
 		}))
@@ -169,7 +169,7 @@ func (h *datasetRollbackHandler) CreateTransaction(w http.ResponseWriter, r *htt
 		tx.ParentTxID = parent.TxID
 	}
 	if err := h.store.RecordDatasetTransaction(r.Context(), tx); err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("DatasetRollbackFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("DatasetRollbackFailed", map[string]string{
 			"rid":   rid,
 			"error": err.Error(),
 		}))
@@ -243,7 +243,7 @@ func (h *datasetRollbackHandler) Rollback(w http.ResponseWriter, r *http.Request
 			apierror.WriteJSON(w, apierror.NewNotFound("DatasetNotFound", map[string]string{"rid": rid}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("DatasetRollbackFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("DatasetRollbackFailed", map[string]string{
 			"rid":   rid,
 			"error": err.Error(),
 		}))
@@ -260,7 +260,7 @@ func (h *datasetRollbackHandler) Rollback(w http.ResponseWriter, r *http.Request
 			apierror.WriteJSON(w, apierror.NewNotFound("RollbackTargetNotFound", map[string]string{"to": target}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("DatasetRollbackFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("DatasetRollbackFailed", map[string]string{
 			"rid":   rid,
 			"error": err.Error(),
 		}))
@@ -278,7 +278,7 @@ func (h *datasetRollbackHandler) Rollback(w http.ResponseWriter, r *http.Request
 	// Step 2: list newer txs.
 	newer, err := h.store.ListAfterCommittedAt(r.Context(), ont.APIName, targetTx.CommittedAt)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("DatasetRollbackFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("DatasetRollbackFailed", map[string]string{
 			"rid":   rid,
 			"error": err.Error(),
 		}))
@@ -298,7 +298,7 @@ func (h *datasetRollbackHandler) Rollback(w http.ResponseWriter, r *http.Request
 	if h.affectedStore != nil && h.historyStore != nil && h.indexMgr != nil {
 		restored, deleted, replayErr := h.replayObjects(r.Context(), ont, targetTx.CommittedAt)
 		if replayErr != nil {
-			apierror.WriteJSON(w, apierror.NewInvalidParameter("DatasetRollbackFailed", map[string]string{
+			apierror.WriteJSON(w, apierror.NewInternal("DatasetRollbackFailed", map[string]string{
 				"rid":   rid,
 				"error": replayErr.Error(),
 			}))
@@ -312,7 +312,7 @@ func (h *datasetRollbackHandler) Rollback(w http.ResponseWriter, r *http.Request
 	rolledBackAt := time.Now().UTC()
 	for _, tx := range newer {
 		if err := h.store.MarkRolledBack(r.Context(), tx.TxID, targetTx.TxID, rolledBackAt); err != nil {
-			apierror.WriteJSON(w, apierror.NewInvalidParameter("DatasetRollbackFailed", map[string]string{
+			apierror.WriteJSON(w, apierror.NewInternal("DatasetRollbackFailed", map[string]string{
 				"rid":   rid,
 				"txId":  tx.TxID,
 				"error": err.Error(),
@@ -332,7 +332,7 @@ func (h *datasetRollbackHandler) Rollback(w http.ResponseWriter, r *http.Request
 		RolledBackToTxID: targetTx.TxID,
 	}
 	if err := h.store.RecordDatasetTransaction(r.Context(), bookkeeping); err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("DatasetRollbackFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("DatasetRollbackFailed", map[string]string{
 			"rid":   rid,
 			"error": err.Error(),
 		}))

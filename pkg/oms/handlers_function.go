@@ -80,7 +80,7 @@ type CreateFunctionRequest struct {
 	// DependsOn (US-425) lists the ObjectType API names whose live state the
 	// Function reads. The cache invalidator drops every entry keyed on this
 	// Function's RID after an EditBatch touches any of the listed
-	// ObjectTypes. Empty / omitted keeps the legacy "TTL only" behaviour.
+	// ObjectTypes. Empty / omitted keeps the legacy "TTL only" behavior.
 	DependsOn []string `json:"dependsOn,omitempty"`
 }
 
@@ -153,10 +153,13 @@ func (h *OMSHandler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	// stamping); the body field is the legacy fallback for SDK callers that
 	// can't easily mutate the URL. Empty / "main" both normalise to the
 	// DefaultBranch sentinel so the row lands on trunk just like a pre-US-389
-	// publisher would have.
-	branchID := r.URL.Query().Get("branch")
-	if branchID == "" {
-		branchID = req.BranchID
+	// publisher would have. Round 39 (Gap-T4): also honor X-Weave-Branch
+	// header as a fallback when ?branch= is unset.
+	branchID := ResolveBranchFromRequest(r)
+	if branchID == "" || branchID == DefaultBranch {
+		if req.BranchID != "" {
+			branchID = req.BranchID
+		}
 	}
 	branchID = NormalizeBranchID(branchID)
 	fn := &Function{
@@ -406,7 +409,7 @@ func (h *OMSHandler) UpdateFunction(w http.ResponseWriter, r *http.Request) {
 // FunctionExecutor under a 5s context deadline. Validation failures surface
 // as 400 with a `parameter`+`code` payload; CPU-timeout / memory-limit
 // violations surface as 408 / 429 respectively so SDKs can map them back
-// to typed retry/backoff behaviour.
+// to typed retry/backoff behavior.
 //
 // US-219 streaming: when ?stream=1 is set, successful execution emits an
 // NDJSON stream (Content-Type: application/x-ndjson). One newline-delimited
@@ -427,7 +430,7 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 	// branch-specific function row when the branch has published its
 	// own version, falling back to main otherwise. Propagating via r so
 	// every downstream r.Context() inherits the scope.
-	r = r.WithContext(WithBranchScope(r.Context(), r.URL.Query().Get("branch")))
+	r = r.WithContext(WithBranchScope(r.Context(), ResolveBranchFromRequest(r)))
 	fn, err := h.resolveFunctionRef(r.Context(), ontologyAPIName, fnIdentifier)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -493,7 +496,7 @@ func (h *OMSHandler) ExecuteFunction(w http.ResponseWriter, r *http.Request) {
 	if h.functionExecutor == nil {
 		// Degraded-mode: no executor wired. Still surface the validated /
 		// coerced parameter map so callers can confirm the contract is
-		// honoured even when execution itself isn't available.
+		// honored even when execution itself isn't available.
 		w.Header().Set("X-Function-Executor", "not-configured")
 		httputil.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"functionRid": fn.RID,

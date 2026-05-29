@@ -138,6 +138,137 @@ All require `--ontology <name>` and `--type <api_name>`.
 | `get` | `--pk PK` | fetch by primary key |
 | `search` | `--where '<json>'` | POST a where clause |
 
+### `weave action apply`
+
+Invokes an ActionType against the server. Parameters can come from a
+single JSON blob (`--params`) **or** from repeated `--param key=value`
+flags, which are convenient for ad-hoc smoke tests. The two are
+mutually exclusive — `--params` wins when both are given.
+
+| Flag | Description |
+|---|---|
+| `--ontology <name>` | ontology api name (required) |
+| `--action <api-name>` | ActionType api name (required) |
+| `--params '<json>'` or `--params @file.json` | parameter object, literal JSON or `@/path/to/file.json` |
+| `--param key=value` | single string-valued parameter (repeatable) |
+| `--mode VALIDATE_ONLY \| VALIDATE_AND_EXECUTE` | Foundry-style mode toggle (server default = execute) |
+| `--returnEdits ALL \| ALL_V2 \| NONE` | edits return policy (server default = `ALL`) |
+| `--json` | emit raw JSON envelope (default `true`) |
+
+```bash
+# Submit a CreateOrder action against the Northwind ontology.
+weave action apply \
+    --ontology northwind \
+    --action createOrder \
+    --params '{"customerId":"ALFKI","employeeId":"5","shipCity":"Berlin"}'
+
+# Repeated --param flags for one-off shapes (string-typed values only).
+weave action apply --ontology northwind --action createCustomer \
+    --param customerId=NEWCO \
+    --param companyName='New Co LLC' \
+    --param country=DE
+
+# Dry-run via VALIDATE_ONLY; the response carries `validation.result` only.
+weave action apply --ontology northwind --action createOrder \
+    --params @order-shape.json \
+    --mode VALIDATE_ONLY
+```
+
+### `weave aggregate`
+
+Runs a single `POST .../objects/{type}/aggregate` request. The request
+body is forwarded verbatim — the CLI does NOT validate the
+`aggregation` / `groupBy` shape locally so server-side error messages
+surface unchanged.
+
+| Flag | Description |
+|---|---|
+| `--ontology <name>` | ontology api name (required) |
+| `--type <api-name>` | ObjectType api name (required) |
+| `--body '<json>'` or `--body @file.json` | aggregation body (required) |
+| `--output json \| table` | response rendering (default `json`); `table` flattens one-level groupBy + metric results |
+
+```bash
+# Count orders per country.
+weave aggregate --ontology northwind --type Order \
+    --body '{
+      "aggregation": [{"type": "count", "name": "n"}],
+      "groupBy":     [{"field": "country", "type": "exact"}]
+    }' \
+    --output table
+```
+
+Common body templates:
+
+```jsonc
+// Total revenue.
+{"aggregation": [{"type": "sum", "field": "freight", "name": "total"}]}
+
+// Two-level groupBy with multiple metrics.
+{
+  "aggregation": [
+    {"type": "count", "name": "orderCount"},
+    {"type": "sum",   "field": "freight", "name": "totalFreight"}
+  ],
+  "groupBy": [
+    {"field": "country", "type": "exact"},
+    {"field": "year",    "type": "exact"}
+  ]
+}
+```
+
+### `weave objectset <load|create-temporary>`
+
+Composable ObjectSet operations. Both subcommands take a JSON body
+(literal or `@file`) and forward it to the server unchanged.
+
+| Subcommand | Flags | Description |
+|---|---|---|
+| `load` | `--ontology <name>` `--body '<json>'` | `POST .../objectSets/loadObjects`; resolves the ObjectSet and returns the matching objects + pagination cursor |
+| `create-temporary` | `--ontology <name>` `--body '<json>'` | `POST .../objectSets/createTemporary`; persists the ObjectSet definition for ~1h reuse and returns the assigned `objectSetRid` |
+
+```bash
+# Filter then load a page of objects.
+weave objectset load --ontology northwind --body '{
+  "objectSet": {
+    "type": "filter",
+    "objectSet": {"type": "base", "objectType": "Customer"},
+    "where":     {"type": "eq", "field": "country", "value": "Germany"}
+  },
+  "select":   ["customerId", "companyName"],
+  "pageSize": 25
+}'
+
+# Persist a re-usable ObjectSet (RID is returned for later reference).
+weave objectset create-temporary --ontology northwind --body '{
+  "objectSet": {
+    "type": "searchAround",
+    "objectSet": {"type": "base", "objectType": "Customer"},
+    "link":      "orders"
+  }
+}'
+```
+
+Body templates worth memorising:
+
+```jsonc
+// Set difference: Customers minus VIPs.
+{"objectSet": {
+  "type": "subtract",
+  "objectSets": [
+    {"type": "base", "objectType": "Customer"},
+    {"type": "base", "objectType": "VipCustomer"}
+  ]
+}}
+
+// Multi-hop searchAround Customer → orders → orderItems.
+{"objectSet": {
+  "type": "searchAround",
+  "objectSet": {"type": "base", "objectType": "Customer"},
+  "path": [{"link": "orders"}, {"link": "items"}]
+}}
+```
+
 ### `weave auth <login|logout|status>`
 
 | Subcommand | Flags | Description |

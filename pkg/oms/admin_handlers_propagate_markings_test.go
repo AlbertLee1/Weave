@@ -15,7 +15,7 @@ import (
 
 func TestCreateLinkType_WithPropagateMarkings_Persisted(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newLinkTypeRouter(oms.NewOMSHandler(repo))
 
 	body := `{
@@ -48,7 +48,7 @@ func TestCreateLinkType_WithPropagateMarkings_Persisted(t *testing.T) {
 
 func TestCreateLinkType_WithoutPropagateMarkings_DefaultsFalseAndOmitted(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	r := newLinkTypeRouter(oms.NewOMSHandler(repo))
 
 	body := `{
@@ -78,7 +78,7 @@ func TestCreateLinkType_WithoutPropagateMarkings_DefaultsFalseAndOmitted(t *test
 
 func TestUpdateLinkType_PropagateMarkings_TriStateOmitPreserves(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	existing := oms.LinkType{
 		RID:               "ri.lt.x",
 		OntologyRID:       ontRID,
@@ -109,7 +109,7 @@ func TestUpdateLinkType_PropagateMarkings_TriStateOmitPreserves(t *testing.T) {
 
 func TestUpdateLinkType_PropagateMarkings_ExplicitFalseDisables(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	existing := oms.LinkType{
 		RID:               "ri.lt.x",
 		OntologyRID:       ontRID,
@@ -139,7 +139,7 @@ func TestUpdateLinkType_PropagateMarkings_ExplicitFalseDisables(t *testing.T) {
 
 func TestUpdateLinkType_PropagateMarkings_ExplicitTrueEnables(t *testing.T) {
 	repo := &mockRepo{}
-	ontRID := seedOntology(repo)
+	ontRID := seedMockOntology(repo)
 	existing := oms.LinkType{
 		RID:              "ri.lt.x",
 		OntologyRID:      ontRID,

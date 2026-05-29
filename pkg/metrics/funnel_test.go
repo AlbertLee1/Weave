@@ -131,3 +131,130 @@ func TestFunnelDLQSizePoll_ErrorContinuesLoop(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// weave_funnel_lag_messages — PRD-V2 §4.6 Gap-O1 follow-up to round 3's Gap-O4.
+// The /health/ready handler already surfaces lag as a degraded signal; this
+// gauge is the Prometheus metric oncall scrapes for trend / alerting. Same
+// poll-loop shape as the DLQ size gauge above so operators have one mental
+// model for both funnel observability surfaces.
+// ---------------------------------------------------------------------------
+
+// fakeLagSizer drives RunFunnelConsumerLagPollLoop without a real Consumer.
+type fakeLagSizer struct {
+	calls int
+	value uint64
+	err   error
+}
+
+func (f *fakeLagSizer) Lag() (uint64, error) {
+	f.calls++
+	return f.value, f.err
+}
+
+// TestBDD_FunnelConsumerLag_GaugeContract pins the wire contract for the
+// new weave_funnel_lag_messages gauge: a Set call mirrors verbatim onto the
+// gauge, the metric name + help survive into the /metrics page, and the
+// gauge is exposed to other packages via FunnelConsumerLagGauge so admin
+// handlers can push fresh observations without waiting for the next poll
+// tick.
+func TestBDD_FunnelConsumerLag_GaugeContract(t *testing.T) {
+	t.Run("Set mirrors onto the gauge", func(t *testing.T) {
+		SetFunnelConsumerLag(0)
+		t.Cleanup(func() { SetFunnelConsumerLag(0) })
+		SetFunnelConsumerLag(2417)
+		if got := testutil.ToFloat64(funnelLagMessages); got != 2417 {
+			t.Fatalf("gauge = %v, want 2417", got)
+		}
+	})
+
+	t.Run("name and help line shape stays stable for dashboards", func(t *testing.T) {
+		desc := funnelLagMessages.Desc().String()
+		if !strings.Contains(desc, "weave_funnel_lag_messages") {
+			t.Fatalf("expected weave_funnel_lag_messages in desc, got %s", desc)
+		}
+	})
+
+	t.Run("FunnelConsumerLagGauge exposes the package-private gauge", func(t *testing.T) {
+		if g := FunnelConsumerLagGauge(); g == nil {
+			t.Fatal("FunnelConsumerLagGauge() must not return nil")
+		}
+	})
+}
+
+// TestBDD_FunnelConsumerLagPoll covers the poll loop's lifecycle (mirrors the
+// DLQ size loop): tick once after the first interval, gauge reflects the
+// returned value, cancel exits cleanly. Nil sizer no-ops so a degraded-mode
+// boot (NATS not wired) doesn't spin a goroutine that wakes every interval
+// to do nothing. Errors do NOT clobber the gauge — the last good observation
+// stays visible so a transient StreamInfo blip doesn't disappear the lag
+// reading.
+func TestBDD_FunnelConsumerLagPoll(t *testing.T) {
+	t.Run("Tick observes and updates gauge, cancel exits", func(t *testing.T) {
+		SetFunnelConsumerLag(0)
+		t.Cleanup(func() { SetFunnelConsumerLag(0) })
+		sizer := &fakeLagSizer{value: 87}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			RunFunnelConsumerLagPollLoop(ctx, sizer, 20*time.Millisecond, nil)
+			close(done)
+		}()
+		time.Sleep(80 * time.Millisecond)
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("lag poll loop did not exit on context cancel")
+		}
+		if sizer.calls == 0 {
+			t.Fatal("expected Lag() to be called at least once, got 0")
+		}
+		if got := testutil.ToFloat64(funnelLagMessages); got != 87 {
+			t.Fatalf("gauge = %v, want 87", got)
+		}
+	})
+
+	t.Run("Nil sizer no-ops so degraded boot doesn't spin a wake-every-tick goroutine", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan struct{})
+		go func() {
+			RunFunnelConsumerLagPollLoop(ctx, nil, 10*time.Millisecond, nil)
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(200 * time.Millisecond):
+			t.Fatal("lag poll loop should no-op when sizer is nil")
+		}
+	})
+
+	t.Run("Sizer error fires onError but keeps last good observation visible", func(t *testing.T) {
+		SetFunnelConsumerLag(0)
+		t.Cleanup(func() { SetFunnelConsumerLag(0) })
+		// Seed a healthy value, then flip the sizer to error.
+		SetFunnelConsumerLag(42)
+		sizer := &fakeLagSizer{err: errors.New("stream info: connection reset")}
+		var errs []error
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			RunFunnelConsumerLagPollLoop(ctx, sizer, 15*time.Millisecond, func(err error) { errs = append(errs, err) })
+			close(done)
+		}()
+		time.Sleep(60 * time.Millisecond)
+		cancel()
+		<-done
+		if len(errs) == 0 {
+			t.Fatal("expected onError to be called at least once on sizer error")
+		}
+		// Gauge must NOT have been clobbered by the error path — a
+		// transient StreamInfo blip shouldn't make the lag panel
+		// disappear / drop to zero on the dashboard. The seeded 42
+		// stays visible until the next successful read.
+		if got := testutil.ToFloat64(funnelLagMessages); got != 42 {
+			t.Fatalf("gauge = %v, want 42 (last good value preserved through errors)", got)
+		}
+	})
+}

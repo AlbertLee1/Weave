@@ -4,7 +4,24 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ._http import quote_path
-from .types import ApplyActionResponse, BatchApplyActionResponse
+from .types import (
+    ActionCheckBatchResponse,
+    ActionCheckResponse,
+    ApplyActionResponse,
+    BatchApplyActionResponse,
+)
+
+
+def _validate_check(payload: Any) -> ActionCheckResponse:
+    if hasattr(ActionCheckResponse, "model_validate"):
+        return ActionCheckResponse.model_validate(payload or {})
+    return ActionCheckResponse(**(payload or {}))
+
+
+def _validate_check_batch(payload: Any) -> ActionCheckBatchResponse:
+    if hasattr(ActionCheckBatchResponse, "model_validate"):
+        return ActionCheckBatchResponse.model_validate(payload or {})
+    return ActionCheckBatchResponse(**(payload or {}))
 
 if TYPE_CHECKING:
     from .client import Client
@@ -104,3 +121,45 @@ class ActionsAPI:
         )
         resp = self._client._request("POST", path, json_body=body)
         return resp or {}
+
+    def check_batch(
+        self,
+        ontology: str,
+        action_types: List[str],
+    ) -> ActionCheckBatchResponse:
+        """Bulk-probe N actions on one ontology (round 110).
+
+        Mirrors round-109 backend POST /api/v2/me/checks/actionTypes.
+        Sibling of round-108 c.objects.check_batch — together the
+        two batch endpoints let the SPA resolve OT read/write matrix
+        AND applicable-actions list in TWO round-trips on page load.
+
+        Each result entry carries .found discriminator so callers
+        distinguish "action removed from config" from "exists but no
+        perm" — found=False entries always have can_apply=False
+        regardless of caller perms. Empty action_types raises
+        WeaveError (server-side 400) — wrapper stays thin.
+        """
+        body = {
+            "ontologyApiName": ontology,
+            "actionTypeApiNames": action_types,
+        }
+        resp = self._client._request(
+            "POST", "/api/v2/me/checks/actionTypes", json_body=body)
+        return _validate_check_batch(resp)
+
+    def check(self, ontology: str, action_type: str) -> ActionCheckResponse:
+        """Probe whether the caller can apply a named action (round 104).
+
+        Mirrors round-103 backend GET /api/v2/ontologies/{ontology}/
+        actions/{action}/check. Returns a typed ActionCheckResponse;
+        always 200 with canApply boolean (never 403 — the probe is
+        informational for SPA UI gating). 404 ActionTypeNotFound when
+        the action does not exist (distinguishes "no" from "missing").
+        """
+        path = (
+            f"/api/v2/ontologies/{quote_path(ontology)}"
+            f"/actions/{quote_path(action_type)}/check"
+        )
+        resp = self._client._request("GET", path)
+        return _validate_check(resp)

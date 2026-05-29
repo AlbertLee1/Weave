@@ -67,6 +67,33 @@ func (h *OMSHandler) ListNotifications(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetNotificationsUnreadCount handles GET /api/v2/notifications/unread-count.
+// Returns the authenticated user's unread notification count without
+// loading any rows. The Foundry navbar polls this endpoint every few
+// seconds; backing it via Repository.CountNotifications + the
+// idx_notifications_user_unread partial index keeps the request
+// O(returned-count) regardless of table size.
+//
+// Response shape is intentionally minimal: {"count": <int>}. The
+// endpoint MUST NOT return a "data" array — that would defeat the
+// "lightweight badge" contract the SPA depends on.
+func (h *OMSHandler) GetNotificationsUnreadCount(w http.ResponseWriter, r *http.Request) {
+	userID := "dev-user"
+	if h.actorFn != nil {
+		if id := h.actorFn(r.Context()); id != "" {
+			userID = id
+		}
+	}
+	count, err := h.repo.CountNotifications(r.Context(), userID, true)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("CountNotificationsFailed", nil))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"count": count,
+	})
+}
+
 // MarkAllNotificationsRead handles POST /api/v2/notifications/read-all.
 // Marks every unread notification belonging to the calling user as read.
 // Optionally narrowed by ?type=<csv> to scope the action to one or more

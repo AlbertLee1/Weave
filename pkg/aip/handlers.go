@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -141,7 +140,7 @@ func (h *Handler) CreateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createThreadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -247,7 +246,7 @@ func (h *Handler) UpdateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req updateThreadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
 			"reason": err.Error(),
 		}))
@@ -361,7 +360,7 @@ func (h *Handler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req sendMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httputil.ReadJSON(r, &req); err != nil {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody", map[string]string{
 			"reason": err.Error(),
 		}))

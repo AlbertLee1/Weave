@@ -2,6 +2,7 @@ package where
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,7 +12,28 @@ import (
 
 // ConvertToBleveQueryWithOpts translates a WhereClause into a Bleve query with
 // optional settings such as fuzzy matching.
+//
+// Every error returned wraps `ErrInvalidWhereClause` (round 36 wire-shape
+// sentinel) so handlers can distinguish "the caller's where clause is
+// malformed / unsupported" (HTTP 400 INVALID_ARGUMENT) from downstream
+// Bleve / Postgres failures the handler routes via separate paths
+// (HTTP 500 INTERNAL). Use `errors.Is(err, where.ErrInvalidWhereClause)`
+// at the handler boundary.
 func ConvertToBleveQueryWithOpts(clause *WhereClause, opts *ConvertOptions) (query.Query, error) {
+	q, err := convertToBleveQueryUnwrapped(clause, opts)
+	if err != nil {
+		// Don't double-wrap if a sub-converter already chained the sentinel
+		// (e.g. recursive and/or/not branches).
+		if errors.Is(err, ErrInvalidWhereClause) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %w", ErrInvalidWhereClause, err)
+	}
+	return q, nil
+}
+
+//nolint:gocyclo // refactoring out of scope for this PR
+func convertToBleveQueryUnwrapped(clause *WhereClause, opts *ConvertOptions) (query.Query, error) {
 	if clause == nil {
 		return nil, fmt.Errorf("where clause is nil")
 	}

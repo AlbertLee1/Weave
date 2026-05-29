@@ -3,6 +3,7 @@ package objectset
 import (
 	"context"
 	"fmt"
+	"sort"
 )
 
 // NNVectorQuery is the request the executor passes to a NNVectorStore. It
@@ -23,7 +24,7 @@ type NNVectorQuery struct {
 	Model           string
 }
 
-// NearestNeighborMatch is one row of an nearest-neighbours search. Distance
+// NearestNeighborMatch is one row of an nearest-neighbors search. Distance
 // is the cosine distance between the query vector and the stored embedding.
 type NearestNeighborMatch struct {
 	PrimaryKey string
@@ -95,34 +96,161 @@ func (e *Executor) executeNearestNeighbors(ctx context.Context, def *Definition)
 		model = e.embedProvider.Model()
 	}
 
-	var propAPIName string
-	if def.PropertyIdentifier != nil {
-		propAPIName = def.PropertyIdentifier.Property.APIName
+	// Build the per-column dispatch list. The singular field and
+	// plural list are mutually exclusive (enforced by Validate) and
+	// at least one must be set, so this list has 1+ entries.
+	propAPINames := nnPropertyAPINames(def)
+
+	baseQ := NNVectorQuery{
+		Ontology:     OntologyScopeFromContextOrEmpty(ctx),
+		ObjectType:   inner.ObjectType,
+		QueryVector:  queryVec,
+		K:            k,
+		CandidatePKs: inner.PrimaryKeys,
+		Model:        model,
 	}
 
-	q := NNVectorQuery{
-		Ontology:        OntologyScopeFromContextOrEmpty(ctx),
-		ObjectType:      inner.ObjectType,
-		PropertyAPIName: propAPIName,
-		QueryVector:     queryVec,
-		K:               k,
-		CandidatePKs:    inner.PrimaryKeys,
-		Model:           model,
-	}
-	matches, err := e.vectorStore.FindNearestNeighbors(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("nearestNeighbors store: %w", err)
+	// Single-column fast path preserves byte-for-byte the legacy
+	// behavior — same store call shape, same ordering.
+	if len(propAPINames) == 1 {
+		q := baseQ
+		q.PropertyAPIName = propAPINames[0]
+		matches, err := e.vectorStore.FindNearestNeighbors(ctx, q)
+		if err != nil {
+			return nil, fmt.Errorf("nearestNeighbors store: %w", err)
+		}
+		pks := make([]string, 0, len(matches))
+		for _, m := range matches {
+			pks = append(pks, m.PrimaryKey)
+		}
+		return &Result{
+			ObjectType:  inner.ObjectType,
+			PrimaryKeys: pks,
+			Truncated:   inner.Truncated,
+		}, nil
 	}
 
-	pks := make([]string, 0, len(matches))
-	for _, m := range matches {
-		pks = append(pks, m.PrimaryKey)
+	// Multi-column path: one store call per column. The per-column
+	// match lists are kept so the chosen fusion strategy can score
+	// them (min-distance discards ranks; RRF needs them).
+	perColumn := make([][]NearestNeighborMatch, 0, len(propAPINames))
+	for _, prop := range propAPINames {
+		q := baseQ
+		q.PropertyAPIName = prop
+		matches, err := e.vectorStore.FindNearestNeighbors(ctx, q)
+		if err != nil {
+			return nil, fmt.Errorf("nearestNeighbors store (column %q): %w", prop, err)
+		}
+		perColumn = append(perColumn, matches)
 	}
+
+	var fusedPKs []string
+	switch def.FusionStrategy {
+	case "rrf":
+		fusedPKs = fuseRRF(perColumn, k)
+	default: // "" and "min"
+		fusedPKs = fuseMinDistance(perColumn, k)
+	}
+
 	return &Result{
 		ObjectType:  inner.ObjectType,
-		PrimaryKeys: pks,
+		PrimaryKeys: fusedPKs,
 		Truncated:   inner.Truncated,
 	}, nil
+}
+
+// fuseMinDistance combines per-column NN results by keeping the
+// smallest distance per primary key, sorts ascending, breaks ties on
+// PK for determinism, then truncates to k.
+func fuseMinDistance(perColumn [][]NearestNeighborMatch, k int) []string {
+	best := make(map[string]float32)
+	for _, matches := range perColumn {
+		for _, m := range matches {
+			if prev, seen := best[m.PrimaryKey]; !seen || m.Distance < prev {
+				best[m.PrimaryKey] = m.Distance
+			}
+		}
+	}
+	fused := make([]NearestNeighborMatch, 0, len(best))
+	for pk, d := range best {
+		fused = append(fused, NearestNeighborMatch{PrimaryKey: pk, Distance: d})
+	}
+	sort.Slice(fused, func(i, j int) bool {
+		if fused[i].Distance != fused[j].Distance {
+			return fused[i].Distance < fused[j].Distance
+		}
+		return fused[i].PrimaryKey < fused[j].PrimaryKey
+	})
+	if len(fused) > k {
+		fused = fused[:k]
+	}
+	pks := make([]string, 0, len(fused))
+	for _, m := range fused {
+		pks = append(pks, m.PrimaryKey)
+	}
+	return pks
+}
+
+// rrfK is the smoothing constant from the original RRF paper (Cormack
+// et al., 2009). 60 is the de-facto industry default — small enough
+// that top-ranked items still dominate, large enough that absent or
+// late-ranked items don't get zeroed out completely.
+const rrfK = 60.0
+
+// fuseRRF implements Reciprocal Rank Fusion across per-column NN
+// results. Each PK's score is the sum of 1/(rrfK+rank) across the
+// columns where it appears (rank starts at 1; absent PKs contribute
+// 0). Sort descending by score, break ties on PK for determinism,
+// truncate to k. RRF rewards PKs that appear in multiple columns —
+// the property min-distance fusion cannot express.
+func fuseRRF(perColumn [][]NearestNeighborMatch, k int) []string {
+	score := make(map[string]float64)
+	for _, matches := range perColumn {
+		for rank, m := range matches {
+			// rank is 0-based in range; the RRF formula uses 1-based.
+			score[m.PrimaryKey] += 1.0 / (rrfK + float64(rank+1))
+		}
+	}
+	type rrfRow struct {
+		PK    string
+		Score float64
+	}
+	rows := make([]rrfRow, 0, len(score))
+	for pk, s := range score {
+		rows = append(rows, rrfRow{PK: pk, Score: s})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Score != rows[j].Score {
+			return rows[i].Score > rows[j].Score
+		}
+		return rows[i].PK < rows[j].PK
+	})
+	if len(rows) > k {
+		rows = rows[:k]
+	}
+	pks := make([]string, 0, len(rows))
+	for _, r := range rows {
+		pks = append(pks, r.PK)
+	}
+	return pks
+}
+
+// nnPropertyAPINames resolves the per-column dispatch list from either
+// the singular PropertyIdentifier or the plural PropertyIdentifiers.
+// Validate guarantees exactly one is populated; this helper just
+// normalises both into a slice the executor can iterate over.
+func nnPropertyAPINames(def *Definition) []string {
+	if len(def.PropertyIdentifiers) > 0 {
+		out := make([]string, 0, len(def.PropertyIdentifiers))
+		for _, pi := range def.PropertyIdentifiers {
+			out = append(out, pi.Property.APIName)
+		}
+		return out
+	}
+	if def.PropertyIdentifier != nil {
+		return []string{def.PropertyIdentifier.Property.APIName}
+	}
+	return nil
 }
 
 // resolveNNQuery returns the float32 query vector for the given NNQuery.

@@ -16,6 +16,13 @@ import (
 var ErrNotFound = errors.New("not found")
 var ErrDuplicate = errors.New("duplicate")
 
+// ErrInvalidState is returned by state-transition methods when the
+// caller asks for a flip that the current state forbids (e.g.
+// MarkSideEffectDLQAbandoned on a row that already has
+// replay_status='replayed'). Maps to HTTP 409 Conflict at the handler
+// boundary.
+var ErrInvalidState = errors.New("invalid state transition")
+
 type PGRepository struct {
 	pool *pgxpool.Pool
 }
@@ -1071,6 +1078,24 @@ func (r *PGRepository) DeleteSharedProperty(ctx context.Context, rid string) err
 	return nil
 }
 
+// CountPropertiesUsingSharedProperty returns the number of properties
+// rows whose shared_property_rid column matches spRID. A pre-delete
+// guard in the admin handler uses this to refuse Conflict (HTTP 409)
+// when downstream consumers exist; an empty spRID returns 0 without
+// touching the DB so callers don't have to special-case it.
+func (r *PGRepository) CountPropertiesUsingSharedProperty(ctx context.Context, spRID string) (int, error) {
+	if spRID == "" {
+		return 0, nil
+	}
+	var count int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM properties WHERE shared_property_rid = $1`, spRID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // --- TypeGroup ---
 
 func (r *PGRepository) CreateTypeGroup(ctx context.Context, tg *TypeGroup) error {
@@ -1148,6 +1173,25 @@ func (r *PGRepository) DeleteTypeGroup(ctx context.Context, rid string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// CountObjectTypesInTypeGroup returns the number of object_type_groups
+// assignment rows that reference tgRID. The DeleteTypeGroup admin
+// handler uses this for the pre-delete guard so a TypeGroup with
+// active assignments returns 409 TypeGroupInUse rather than silently
+// leaving dangling assignment rows. Empty tgRID short-circuits to 0
+// without touching the DB.
+func (r *PGRepository) CountObjectTypesInTypeGroup(ctx context.Context, tgRID string) (int, error) {
+	if tgRID == "" {
+		return 0, nil
+	}
+	var count int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM object_type_groups WHERE type_group_rid = $1`, tgRID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (r *PGRepository) AssignTypeGroup(ctx context.Context, objectTypeRID, typeGroupRID string) error {
@@ -1970,15 +2014,23 @@ func (r *PGRepository) GetActionLog(ctx context.Context, id int64) (*ActionLog, 
 	al := &ActionLog{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, action_type_rid, user_id, parameters, edits, COALESCE(prev_edits, 'null'),
-		 status, COALESCE(error_message, ''), created_at
+		 status, COALESCE(error_message, ''), created_at,
+		 COALESCE(side_effect_status, 'null')
 		 FROM action_logs WHERE id = $1`, id).
 		Scan(&al.ID, &al.ActionTypeRID, &al.UserID, &al.Parameters, &al.Edits,
-			&al.PrevEdits, &al.Status, &al.ErrorMessage, &al.CreatedAt)
+			&al.PrevEdits, &al.Status, &al.ErrorMessage, &al.CreatedAt,
+			&al.SideEffectStatus)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	// Pre-migration rows (or actions with no side effects) come back as
+	// JSON `null` thanks to COALESCE; normalize to nil so callers see the
+	// natural Go zero value.
+	if string(al.SideEffectStatus) == "null" {
+		al.SideEffectStatus = nil
 	}
 	return al, nil
 }
@@ -1996,10 +2048,249 @@ func (r *PGRepository) UpdateActionLogStatus(ctx context.Context, id int64, stat
 	return nil
 }
 
+// InsertSideEffectDLQRow appends a failed-after-retries side-effect to
+// the dead-letter queue (PRD-V2 Gap-A4 round 33). Back-fills the row's
+// ID and CreatedAt on success. ErrDuplicate is returned when the same
+// (action_log_id, effect_index) was already queued — defends against
+// double-executor runs without silently double-inserting.
+func (r *PGRepository) InsertSideEffectDLQRow(ctx context.Context, row *SideEffectDLQRow) error {
+	if row == nil {
+		return fmt.Errorf("InsertSideEffectDLQRow: row is nil")
+	}
+	status := row.ReplayStatus
+	if status == "" {
+		status = SideEffectDLQStatusPending
+	}
+	cfg := nilIfEmptyJSON(row.EffectConfig)
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO action_log_side_effect_dlq
+		   (action_log_id, effect_index, effect_type, effect_config, outcome, replay_status)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, created_at`,
+		row.ActionLogID, row.EffectIndex, row.EffectType, cfg, []byte(row.Outcome), status).
+		Scan(&row.ID, &row.CreatedAt)
+	if err != nil {
+		errMsg := err.Error()
+		if contains(errMsg, "23505") || contains(errMsg, "duplicate key") {
+			return ErrDuplicate
+		}
+		return err
+	}
+	row.ReplayStatus = status
+	return nil
+}
+
+// ListSideEffectDLQByActionLog returns the DLQ rows for the given
+// action_log id, ordered by effect_index ascending so callers see the
+// failures in the same order they appeared in the original SideEffects
+// array. Returns an empty (non-nil) slice when the action had no
+// failed dispatches.
+func (r *PGRepository) ListSideEffectDLQByActionLog(ctx context.Context, actionLogID int64) ([]SideEffectDLQRow, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, action_log_id, effect_index, effect_type,
+		        COALESCE(effect_config, 'null'::jsonb), outcome,
+		        created_at, replay_status, replayed_at, replay_count
+		 FROM action_log_side_effect_dlq
+		 WHERE action_log_id = $1
+		 ORDER BY effect_index ASC`,
+		actionLogID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]SideEffectDLQRow, 0)
+	for rows.Next() {
+		var d SideEffectDLQRow
+		if err := rows.Scan(&d.ID, &d.ActionLogID, &d.EffectIndex, &d.EffectType,
+			&d.EffectConfig, &d.Outcome, &d.CreatedAt, &d.ReplayStatus,
+			&d.ReplayedAt, &d.ReplayCount); err != nil {
+			return nil, err
+		}
+		if string(d.EffectConfig) == "null" {
+			d.EffectConfig = nil
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// nilIfEmptyJSON converts a zero-length json.RawMessage to nil so the
+// pgx driver writes SQL NULL instead of an empty byte string.
+func nilIfEmptyJSON(raw json.RawMessage) interface{} {
+	if len(raw) == 0 {
+		return nil
+	}
+	return []byte(raw)
+}
+
+// ListPendingSideEffectDLQRows returns up to `limit` pending DLQ rows
+// ordered newest-first. The partial index on (replay_status, created_at
+// DESC) WHERE replay_status='pending' keeps the scan cheap even on a
+// large DLQ. Used by the Gap-A4 round-34 admin listing endpoint.
+func (r *PGRepository) ListPendingSideEffectDLQRows(ctx context.Context, limit int) ([]SideEffectDLQRow, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, action_log_id, effect_index, effect_type,
+		        COALESCE(effect_config, 'null'::jsonb), outcome,
+		        created_at, replay_status, replayed_at, replay_count
+		 FROM action_log_side_effect_dlq
+		 WHERE replay_status = $1
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT $2`,
+		SideEffectDLQStatusPending, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]SideEffectDLQRow, 0)
+	for rows.Next() {
+		var d SideEffectDLQRow
+		if err := rows.Scan(&d.ID, &d.ActionLogID, &d.EffectIndex, &d.EffectType,
+			&d.EffectConfig, &d.Outcome, &d.CreatedAt, &d.ReplayStatus,
+			&d.ReplayedAt, &d.ReplayCount); err != nil {
+			return nil, err
+		}
+		if string(d.EffectConfig) == "null" {
+			d.EffectConfig = nil
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// GetSideEffectDLQRow returns one DLQ row by id. Used by the admin
+// replay handler (Gap-A4 round 35) to load the snapshotted effect
+// config + linked action_log_id before re-dispatching.
+func (r *PGRepository) GetSideEffectDLQRow(ctx context.Context, id int64) (*SideEffectDLQRow, error) {
+	d := &SideEffectDLQRow{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, action_log_id, effect_index, effect_type,
+		        COALESCE(effect_config, 'null'::jsonb), outcome,
+		        created_at, replay_status, replayed_at, replay_count
+		 FROM action_log_side_effect_dlq WHERE id = $1`, id).
+		Scan(&d.ID, &d.ActionLogID, &d.EffectIndex, &d.EffectType,
+			&d.EffectConfig, &d.Outcome, &d.CreatedAt, &d.ReplayStatus,
+			&d.ReplayedAt, &d.ReplayCount)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if string(d.EffectConfig) == "null" {
+		d.EffectConfig = nil
+	}
+	return d, nil
+}
+
+// UpdateSideEffectDLQAfterReplay records the result of one manual
+// replay attempt. Always bumps replay_count and writes the latest
+// outcome; sets replayed_at to now; flips replay_status to 'replayed'
+// only on success. Returns ErrInvalidState when the current
+// replay_status is not 'pending' (replay is only valid from pending).
+// Returns ErrNotFound when the id doesn't exist.
+func (r *PGRepository) UpdateSideEffectDLQAfterReplay(ctx context.Context, id int64, outcome json.RawMessage, success bool) error {
+	var current string
+	err := r.pool.QueryRow(ctx,
+		`SELECT replay_status FROM action_log_side_effect_dlq WHERE id = $1`, id).
+		Scan(&current)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if current != SideEffectDLQStatusPending {
+		return ErrInvalidState
+	}
+	newStatus := SideEffectDLQStatusPending
+	if success {
+		newStatus = SideEffectDLQStatusReplayed
+	}
+	outcomeArg := nilIfEmptyJSON(outcome)
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE action_log_side_effect_dlq
+		 SET replay_status = $1,
+		     replayed_at   = now(),
+		     replay_count  = replay_count + 1,
+		     outcome       = COALESCE($2, outcome)
+		 WHERE id = $3 AND replay_status = $4`,
+		newStatus, outcomeArg, id, SideEffectDLQStatusPending)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkSideEffectDLQAbandoned flips a pending row's replay_status to
+// 'abandoned'. Idempotent on rows already in 'abandoned' status.
+// Rejects flipping a 'replayed' row to abandoned (would mask the
+// successful dispatch) by returning ErrInvalidState. Returns
+// ErrNotFound when the id doesn't exist.
+func (r *PGRepository) MarkSideEffectDLQAbandoned(ctx context.Context, id int64) error {
+	var current string
+	err := r.pool.QueryRow(ctx,
+		`SELECT replay_status FROM action_log_side_effect_dlq WHERE id = $1`, id).
+		Scan(&current)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if current == SideEffectDLQStatusAbandoned {
+		return nil
+	}
+	if current == SideEffectDLQStatusReplayed {
+		return ErrInvalidState
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE action_log_side_effect_dlq
+		 SET replay_status = $1
+		 WHERE id = $2 AND replay_status = $3`,
+		SideEffectDLQStatusAbandoned, id, SideEffectDLQStatusPending)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateActionLogSideEffectStatus stamps the per-effect dispatch outcome
+// JSONB array onto the action_logs row. Passing a nil or zero-length
+// status writes SQL NULL — callers can use this to clear the column or
+// skip storage when the action had no side effects. PRD-V2 Gap-A4.
+func (r *PGRepository) UpdateActionLogSideEffectStatus(ctx context.Context, id int64, status json.RawMessage) error {
+	var arg interface{}
+	if len(status) == 0 {
+		arg = nil
+	} else {
+		arg = []byte(status)
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE action_logs SET side_effect_status = $1 WHERE id = $2`,
+		arg, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *PGRepository) ListActionLogs(ctx context.Context, actionTypeRID string, limit, offset int) ([]ActionLog, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, action_type_rid, user_id, parameters, edits, status,
-		 COALESCE(error_message, ''), created_at
+		 COALESCE(error_message, ''), created_at,
+		 COALESCE(side_effect_status, 'null')
 		 FROM action_logs WHERE action_type_rid = $1
 		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
 		actionTypeRID, limit, offset)
@@ -2012,8 +2303,12 @@ func (r *PGRepository) ListActionLogs(ctx context.Context, actionTypeRID string,
 	for rows.Next() {
 		var al ActionLog
 		if err := rows.Scan(&al.ID, &al.ActionTypeRID, &al.UserID, &al.Parameters,
-			&al.Edits, &al.Status, &al.ErrorMessage, &al.CreatedAt); err != nil {
+			&al.Edits, &al.Status, &al.ErrorMessage, &al.CreatedAt,
+			&al.SideEffectStatus); err != nil {
 			return nil, err
+		}
+		if string(al.SideEffectStatus) == "null" {
+			al.SideEffectStatus = nil
 		}
 		result = append(result, al)
 	}
@@ -3024,6 +3319,23 @@ func (r *PGRepository) ListNotifications(ctx context.Context, userID string, unr
 		result = append(result, n)
 	}
 	return result, nil
+}
+
+// CountNotifications returns the row count for userID, optionally
+// scoped to unread-only. When unreadOnly is true the query benefits
+// from the partial index idx_notifications_user_unread defined in
+// migration 000028 (WHERE read = false), so the navbar polling
+// path stays O(returned-count) rather than O(table-size).
+func (r *PGRepository) CountNotifications(ctx context.Context, userID string, unreadOnly bool) (int, error) {
+	query := `SELECT COUNT(*) FROM notifications WHERE user_id = $1`
+	if unreadOnly {
+		query += ` AND read = false`
+	}
+	var count int
+	if err := r.pool.QueryRow(ctx, query, userID).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (r *PGRepository) MarkNotificationRead(ctx context.Context, id string) error {

@@ -17,8 +17,23 @@ from typing import Any, Optional
 
 from ._http import HTTPResponse, Transport
 from ._retry import RetryPolicy
-from .exceptions import WeaveAuthError, WeaveError, WeaveNotFoundError
-from .types import LoginResponse
+from .exceptions import (
+    WeaveAuthError,
+    WeaveError,
+    WeaveNotFoundError,
+    WeaveValidationError,
+    WeaveVersionedLookupError,
+)
+from typing import List
+
+from .types import (
+    BuildInfo,
+    ConnectionStats,
+    Dependency,
+    Feature,
+    LoginResponse,
+    ServerInfo,
+)
 
 
 class Client:
@@ -45,10 +60,20 @@ class Client:
 
         # Lazy import to avoid circular references at module-import time.
         from .actions import ActionsAPI
+        from .attachments import AttachmentsAPI
+        from .dashboards import DashboardsAPI
         from .functions import FunctionsAPI
         from .objects import ObjectsAPI
         from .objectsets import ObjectSetsAPI
         from .ontologies import OntologiesAPI
+        from .notifications import NotificationsAPI
+        from .permissions import PermissionsAPI
+        from .permissionrequests import PermissionRequestsAPI
+        from .queries import QueriesAPI
+        from .reactions import ReactionsAPI
+        from .sessions import SessionsAPI
+        from .timeseries import TimeSeriesAPI
+        from .transactions import TransactionsAPI
         from .vertex import VertexAPI
 
         self.ontologies = OntologiesAPI(self)
@@ -56,6 +81,16 @@ class Client:
         self.actions = ActionsAPI(self)
         self.objectsets = ObjectSetsAPI(self)
         self.functions = FunctionsAPI(self)
+        self.timeseries = TimeSeriesAPI(self)
+        self.attachments = AttachmentsAPI(self)
+        self.transactions = TransactionsAPI(self)
+        self.reactions = ReactionsAPI(self)
+        self.notifications = NotificationsAPI(self)
+        self.dashboards = DashboardsAPI(self)
+        self.permissionrequests = PermissionRequestsAPI(self)
+        self.permissions = PermissionsAPI(self)
+        self.queries = QueriesAPI(self)
+        self.sessions = SessionsAPI(self)
         self.vertex = VertexAPI(self)
 
     @property
@@ -109,6 +144,60 @@ class Client:
         )
         return self._handle(resp)
 
+    def _upload_binary(
+        self,
+        method: str,
+        path: str,
+        *,
+        body: bytes,
+        content_type: str,
+        extra_headers: Optional[dict] = None,
+    ) -> Any:
+        """Send a raw-bytes request body and decode the JSON response.
+
+        Used by round-45 attachment uploads — the server's
+        ``/attachments/upload`` endpoint streams the request body
+        verbatim into the BlobStore. ``content_type`` is mandatory
+        because the server uses it to populate ``Attachment.media_type``
+        on the persisted blob.
+        """
+        url = self.base_url + path
+        headers = self._headers()
+        headers["Content-Type"] = content_type
+        if extra_headers:
+            headers = {**headers, **extra_headers}
+        resp = self._transport.request(
+            method, url, headers=headers, raw_body=body,
+        )
+        return self._handle(resp)
+
+    def _download_binary(
+        self,
+        method: str,
+        path: str,
+        *,
+        extra_headers: Optional[dict] = None,
+    ) -> bytes:
+        """Fetch a binary response body.
+
+        Returns the raw bytes; the caller is responsible for
+        interpreting them (e.g. image / archive payloads). On a
+        non-2xx the standard JSON error envelope path runs unchanged —
+        exceptions surface via ``_handle`` as usual.
+        """
+        url = self.base_url + path
+        headers = self._headers()
+        if extra_headers:
+            headers = {**headers, **extra_headers}
+        resp = self._transport.request(
+            method, url, headers=headers, accept_binary=True,
+        )
+        if 200 <= resp.status_code < 300:
+            return resp.body_bytes or b""
+        # Reuse the standard error-handling path on non-2xx.
+        self._handle(resp)
+        return b""  # unreachable; _handle raises
+
     @staticmethod
     def _handle(resp: HTTPResponse) -> Any:
         if 200 <= resp.status_code < 300:
@@ -139,6 +228,21 @@ class Client:
             raise WeaveAuthError(**kwargs)
         if resp.status_code == 404:
             raise WeaveNotFoundError(**kwargs)
+        # Round 118: narrow-typed 501 dispatch for the round-117
+        # backend pilot. Only the VersionedLookupNotSupported
+        # variant gets the typed exception; other 501s fall through
+        # to plain WeaveError so future unrelated 501 surfaces
+        # aren't auto-captured by this branch.
+        if (resp.status_code == 501 and
+                kwargs["error_name"] == "VersionedLookupNotSupported"):
+            raise WeaveVersionedLookupError(**kwargs)
+        # Round 136: narrow-typed 400 dispatch for the round-135
+        # admin handler's criteria-structure validator. Only the
+        # InvalidParameter:submissionCriteria variant gets the typed
+        # exception; other InvalidParameter:* fall through.
+        if (resp.status_code == 400 and
+                kwargs["error_name"] == "InvalidParameter:submissionCriteria"):
+            raise WeaveValidationError(**kwargs)
         raise WeaveError(**kwargs)
 
     # ---- top-level convenience --------------------------------------------
@@ -165,3 +269,84 @@ class Client:
         body = {"refresh_token": refresh_token} if refresh_token else None
         self._request("POST", "/api/auth/logout", json_body=body, anonymous=True)
         self.access_token = None
+
+    def build_info(self) -> BuildInfo:
+        """Fetch the server's build metadata (round 124).
+
+        Mirrors round-123 backend GET /api/v2/build-info. Returns a
+        typed BuildInfo (version / commit / go_version / build_time).
+        Endpoint is public — no Authorization header is attached
+        even when the client has credentials, mirroring the
+        backend's security:[] declaration.
+        """
+        body = self._request("GET", "/api/v2/build-info", anonymous=True)
+        if hasattr(BuildInfo, "model_validate"):
+            return BuildInfo.model_validate(body or {})
+        return BuildInfo(**(body or {}))
+
+    def build_info_dependencies(self) -> List[Dependency]:
+        """Fetch the server's Go module dependency inventory (round 126).
+
+        Mirrors round-125 backend GET /api/v2/build-info/dependencies.
+        Returns typed Dependency entries (path / version / sum /
+        replace). Empty list when the backend has no embedded build
+        info (defensive: backend guarantees `[]` not null). Same
+        anonymous public access as ``build_info()``.
+        """
+        body = self._request(
+            "GET", "/api/v2/build-info/dependencies", anonymous=True)
+        items = (body or {}).get("dependencies", []) if isinstance(body, dict) else []
+        if hasattr(Dependency, "model_validate"):
+            return [Dependency.model_validate(d) for d in items]
+        return [Dependency(**d) for d in items]
+
+    def build_info_features(self) -> List[Feature]:
+        """Fetch the server's capability feature manifest (round 128).
+
+        Mirrors round-127 backend GET /api/v2/build-info/features.
+        Returns typed Feature entries (name / enabled / description
+        / reason). SPA reads this at page-load to decide which UI
+        affordances to render without poking endpoints for 404s.
+        Same anonymous public access as ``build_info()``.
+        """
+        body = self._request(
+            "GET", "/api/v2/build-info/features", anonymous=True)
+        items = (body or {}).get("features", []) if isinstance(body, dict) else []
+        if hasattr(Feature, "model_validate"):
+            return [Feature.model_validate(f) for f in items]
+        return [Feature(**f) for f in items]
+
+    def server_info(self) -> ServerInfo:
+        """Fetch live runtime stats — uptime, goroutines, memory (round 130).
+
+        Mirrors round-129 backend GET /api/v2/server-info. Returns
+        typed ServerInfo. Sibling of ``build_info()``: build_info
+        is compile-time identity (stable across requests),
+        server_info is live state (mutates per call). On-call
+        pairs the two for full debug context.
+
+        Same anonymous public access as the rest of the
+        server-observability family (rounds 124/126/128).
+        """
+        body = self._request("GET", "/api/v2/server-info", anonymous=True)
+        if hasattr(ServerInfo, "model_validate"):
+            return ServerInfo.model_validate(body or {})
+        return ServerInfo(**(body or {}))
+
+    def server_info_connections(self) -> ConnectionStats:
+        """Fetch PG pool + NATS connection state (round 132).
+
+        Mirrors round-131 backend GET /api/v2/server-info/connections.
+        Returns typed ConnectionStats. Per-service nullability:
+        each .postgres/.nats is Optional — degraded boot or
+        partial boot (PG up, NATS down) surfaces as Python None
+        so caller code can ``if stats.postgres is None:`` cleanly.
+
+        Same anonymous public access as the rest of the
+        server-observability family.
+        """
+        body = self._request(
+            "GET", "/api/v2/server-info/connections", anonymous=True)
+        if hasattr(ConnectionStats, "model_validate"):
+            return ConnectionStats.model_validate(body or {})
+        return ConnectionStats(**(body or {}))

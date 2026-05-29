@@ -20,14 +20,17 @@ import (
 )
 
 // withBranchScope wraps r so downstream handler code that propagates
-// r.Context() through the executor sees the request's `?branch=` param
-// stamped via oms.WithBranchScope. The branch scope is what drives
+// r.Context() through the executor sees the request's branch pin
+// stamped via oms.WithBranchScope. The branch can come from either
+// ?branch= query (Foundry-style explicit URL pin, wins on conflict)
+// or X-Weave-Branch header (round 39 / Gap-T4 — lets SDK clients
+// pin without rewriting every URL). The branch scope is what drives
 // US-384 routing of ActionType and Function lookups to the
 // branch-specific row when the branch has published its own version.
 // An empty / "main" branch input is a no-op so the legacy main-only
 // path stays free of context churn.
 func withBranchScope(r *http.Request) *http.Request {
-	branch := r.URL.Query().Get("branch")
+	branch := oms.ResolveBranchFromRequest(r)
 	if branch == "" || branch == oms.DefaultBranch {
 		return r
 	}
@@ -59,6 +62,29 @@ func typedAPIError(err error) *apierror.APIError {
 	var apiErr *apierror.APIError
 	if errors.As(err, &apiErr) {
 		return apiErr
+	}
+	return nil
+}
+
+// sentinelActionError converts the round-38 wire-shape sentinels
+// (ErrActionTypeNotFound, ErrInvalidActionParameters) to the proper
+// HTTP status / errorName envelopes. Returns nil when err carries
+// neither sentinel so the caller can fall through to the default
+// 500 ActionFailed envelope. Caller MUST check
+// staleObjectAPIError + typedAPIError first because those richer
+// envelopes (StaleObject 409, WEAVE_VALIDATION_ENUM 422) wrap the
+// underlying typed errors and shouldn't be flattened to the
+// sentinel layer.
+func sentinelActionError(err error) *apierror.APIError {
+	if errors.Is(err, ErrActionTypeNotFound) {
+		return apierror.NewNotFound("ActionTypeNotFound", map[string]string{
+			"reason": err.Error(),
+		})
+	}
+	if errors.Is(err, ErrInvalidActionParameters) {
+		return apierror.NewInvalidParameter("InvalidActionParameters", map[string]string{
+			"reason": err.Error(),
+		})
 	}
 	return nil
 }
@@ -171,7 +197,14 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 			apierror.WriteJSON(w, apiErr)
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()}))
+		// Round 38: route the new wire-shape sentinels before the
+		// default. ActionTypeNotFound → 404, InvalidActionParameters →
+		// 400; anything else is a server-side failure → 500.
+		if apiErr := sentinelActionError(err); apiErr != nil {
+			apierror.WriteJSON(w, apiErr)
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("ActionFailed", map[string]string{"error": err.Error()}))
 		return
 	}
 
@@ -185,6 +218,103 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// Validate handles POST /api/v2/ontologies/{ontologyApiName}/actions/{action}/validate.
+//
+// This is the Foundry-1:1 dedicated validate surface (see
+// pkg/actions/handler_validate_bdd_test.go for the wire contract). SDKs
+// hit it on every form-field change to drive client-side validation
+// without ever publishing to NATS. The endpoint is a pure report:
+//
+//   - HTTP 200 ALWAYS when the path is well-formed, even if the
+//     ValidateActionResponse.Result is INVALID — the wire envelope is
+//     a validation report, not an HTTP error.
+//   - Unknown action types surface as INVALID with a submissionCriterion
+//     carrying the lookup error message; they are NOT 404s, because
+//     "the form's actionType slug is stale" is a validation outcome
+//     the SDK should render as a regular validation error rather than
+//     surface as an HTTP exception that breaks the form.
+//   - Missing path segment ({action} empty) IS a 400 MissingActionType:
+//     a malformed URL is a programmer error, not a validation outcome.
+//
+// Validate MUST NOT publish to NATS or fire side effects — it runs
+// Executor.Prepare only and discards the prepared edits.
+func (h *Handler) Validate(w http.ResponseWriter, r *http.Request) {
+	r = withBranchScope(r)
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	action := chi.URLParam(r, "action")
+
+	if action == "" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("MissingActionType", nil))
+		return
+	}
+
+	var req ApplyRequest
+	if err := httputil.ReadJSON(r, &req); err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidRequestBody",
+			map[string]string{"error": err.Error()}))
+		return
+	}
+	req.ActionType = action
+
+	// Resolve action type for per-parameter metadata (Required flags).
+	// A failure here is itself a validation outcome (stale slug), not
+	// an HTTP error — fall through with empty paramDefs and let the
+	// Prepare error bubble up into the submissionCriteria summary.
+	var paramDefs []ParameterDef
+	if at, resolveErr := h.executor.ResolveActionType(r.Context(), ontologyRID, action); resolveErr == nil && at != nil {
+		if defs, err := ParseParameterDefs(at.Parameters); err == nil {
+			paramDefs = defs
+		}
+	}
+
+	paramMap := make(map[string]ParameterValidationResult, len(paramDefs))
+	for _, def := range paramDefs {
+		paramMap[def.ID] = ParameterValidationResult{
+			Result:               "VALID",
+			Required:             def.Required,
+			EvaluatedConstraints: []EvaluatedConstraint{},
+		}
+	}
+
+	_, prepareErr := h.executor.Prepare(r.Context(), ontologyRID, &req)
+	if prepareErr != nil {
+		// Per-parameter attribution: if the Prepare error mentions a
+		// known parameter id, mark that parameter INVALID so the SDK
+		// can red-line a specific form field. Otherwise leave all
+		// parameters VALID and rely on submissionCriteria to surface
+		// the failure at form-level (e.g. unknown action, rule
+		// execution error). The id-match uses both quoted and bare
+		// forms because Prepare's wrapped errors quote ("name") but
+		// rule-engine errors may not.
+		msg := prepareErr.Error()
+		for id, pr := range paramMap {
+			if strings.Contains(msg, `"`+id+`"`) || strings.Contains(msg, " "+id+" ") {
+				pr.Result = "INVALID"
+				pr.EvaluatedConstraints = []EvaluatedConstraint{{
+					Type:   "required",
+					Result: "INVALID",
+				}}
+				paramMap[id] = pr
+			}
+		}
+		httputil.WriteJSON(w, http.StatusOK, &ValidateActionResponse{
+			Result: "INVALID",
+			SubmissionCriteria: []SubmissionCriterionResult{{
+				Result:                   "INVALID",
+				ConfiguredFailureMessage: prepareErr.Error(),
+			}},
+			Parameters: paramMap,
+		})
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, &ValidateActionResponse{
+		Result:             "VALID",
+		SubmissionCriteria: []SubmissionCriterionResult{},
+		Parameters:         paramMap,
+	})
 }
 
 // serveAsyncApply persists a PENDING ActionJob, kicks off a detached goroutine
@@ -745,7 +875,12 @@ func (h *Handler) ApplyWithOverrides(w http.ResponseWriter, r *http.Request) {
 			apierror.WriteJSON(w, apiErr)
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()}))
+		// Round 38: same sentinel routing as the Apply path above.
+		if apiErr := sentinelActionError(err); apiErr != nil {
+			apierror.WriteJSON(w, apiErr)
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("ActionFailed", map[string]string{"error": err.Error()}))
 		return
 	}
 
@@ -904,20 +1039,30 @@ func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 // ActionFailed. US-208: when the BatchError wraps a typed *apierror.APIError
 // (e.g. WEAVE_VALIDATION_ENUM from constraint validation) the typed error is
 // surfaced verbatim with its original status code + parameters.
+//
+// Round 38: also checks the round-38 sentinels before the *BatchError
+// fallback so a BatchError wrapping ErrActionTypeNotFound /
+// ErrInvalidActionParameters still routes to 404 / 400 respectively
+// (preserves the per-action attribution via the inner error chain).
+// The fallback at the bottom now uses NewInternal (500) for genuine
+// server-side batch failures.
 func asBatchError(err error) *apierror.APIError {
 	if apiErr := typedAPIError(err); apiErr != nil {
 		return apiErr
 	}
+	if apiErr := sentinelActionError(err); apiErr != nil {
+		return apiErr
+	}
 	var be *BatchError
 	if errors.As(err, &be) {
-		return apierror.NewInvalidParameter("ActionFailed", map[string]string{
+		return apierror.NewInternal("ActionFailed", map[string]string{
 			"phase":             be.Phase,
 			"failedActionIndex": strconv.Itoa(be.FailedActionIndex),
 			"actionType":        be.ActionType,
 			"error":             be.Message,
 		})
 	}
-	return apierror.NewInvalidParameter("ActionFailed", map[string]string{"error": err.Error()})
+	return apierror.NewInternal("ActionFailed", map[string]string{"error": err.Error()})
 }
 
 // revertRequest is the JSON body for POST .../actions/revert.

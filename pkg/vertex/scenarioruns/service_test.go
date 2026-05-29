@@ -70,6 +70,18 @@ func (m *memRepo) ListResumable(_ context.Context) ([]scenarioruns.Run, error) {
 	return out, nil
 }
 
+func (m *memRepo) ListRunsForScenario(_ context.Context, scenarioRID string) ([]scenarioruns.Run, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []scenarioruns.Run{}
+	for _, r := range m.runs {
+		if r.ScenarioRID == scenarioRID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 // stubScenarioReader resolves a scenario into its activities. Real impl
 // will join scenarios + actions + models from the OMS / Vertex tables.
 type stubScenarioReader struct {

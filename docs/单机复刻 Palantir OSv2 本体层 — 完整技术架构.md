@@ -1372,3 +1372,31 @@ github.com/golang-migrate/migrate  # 数据库迁移
 | WebSocket 推送延迟 | < 50ms | NATS pub/sub |
 | 物化周期 | 可配置（默认 6h） | Parquet 写入 |
 | 索引重建时间（100万对象） | 5-15 分钟 | Bleve 批量索引 |
+
+---
+
+## 附录 A：Phase 6-8 落地状态（round 162 更新）
+
+> 本文档主体写于 v1 阶段（2026-03 中旬），分阶段路线图截止 Phase 6
+> "完善与优化"。其后 Weave 在 Phase 6 → Phase 8 周期内补齐了 OSv2
+> MUST/SHOULD 语义深度。本附录单点更新各层的现状，主体章节内容仍
+> 作为 v1 架构基线参考，但下表才是 v2 实际形态。详尽变更见
+> `docs/CHANGES-v2.md` 与 `docs/PRD-Weave-OSv2-深度复刻-V2.md`。
+
+| 主体章节 | v2 已落地状态 | 实现锚点 |
+|---|---|---|
+| §2.2 OMS | RID 解析支持 `@vN` 语义版本后缀，`ontology_branches` 表（migration 000024 + 000091 parent_tx）+ `?branch=` / `X-Weave-Branch` header 读路径 | `pkg/rid/rid.go::splitVersionSuffix`、`pkg/oms/branch_scope.go` |
+| §2.3 OSS 查询 | `withProperties` 跨 link 真实聚合（不止参数透传）+ `nearestNeighbors` 多字段 + RRF fusion + Interface 多态 composite cursor + multi-groupBy ExactValue×FixedWidth×Duration 端到端 | `pkg/oss/objectset/executor.go::executeWithProperties`、`pkg/oss/pagination/composite_cursor.go`、`test/foundry_parity/us015_multi_groupby.json` |
+| §2.4 Actions | 嵌入式 `dop251/goja` ECMAScript 沙箱运行时（Phase 8 W1）+ Function-backed Action / executeQuery 双 dispatch；submission criteria 支持 `parameterCompare` 跨字段 + AND/OR/NOT 复合 + admin 保存时结构化校验；side-effect webhook 完整重试 + DLQ + admin replay + W3C TraceContext 注入 | `pkg/functions/goja_runtime.go`、`pkg/actions/goja_dispatcher.go`、`pkg/queryexec/goja.go`、`pkg/actions/criteria.go`、`pkg/actions/effects.go` |
+| §2.5 Funnel + §2.7 实时订阅 | SSE `/objectSets/{rid}/subscribe` + WebSocket `/subscriptions/ws` + `Last-Event-ID` / `since` replay；rehydrate 灾难恢复 BDD-locked（杀 Bleve 目录 → 新 manager → 从 PG 源 rebuild → 查询等价） | `pkg/oss/subscribe_sse.go`、`pkg/subscriptions/`、`pkg/index/rehydrate_disaster_recovery_bdd_test.go` |
+| 安全（原文档未单列章节） | 行级 + 列级 + Marking 三套挂在主查询路径上，单一 `Engine` 统一裁决；CEL DSL evaluator + decision/policy 双缓存 | `pkg/security/policy_engine.go::Evaluate` / `AllowedProperties` / `SetMarkingsEnabled` / `AllowedForIngest`、`pkg/security/cel_evaluator.go` |
+| §四 类型系统 | 21 基础类型完整 + Struct / Array 递归校验（`struct field "x":` / `array element [i]:` 错误路径前缀）+ ValueType 约束执行（regex/min/max/enum），SQL Query 沙箱 30+ 关键字 + 系统表防御 + pgx.ReadOnly + 5s timeout + 10K row cap | `pkg/types/validate.go`、`pkg/types/constraints.go`、`pkg/sqlqueries/safety.go` + `engine.go` |
+| 可观测性（原文档未单列） | 业务 metrics 全套（objectset_execute / load_duration / actions_apply / funnel_lag）+ OTel HTTPMiddleware + PgxTracer + 跨 NATS TraceContext 注入 + 出站 HTTP / webhook W3C 传播；audit `pkg/audit/*` 全链路 + SIEM `export/*` 流水线（syslog / S3 / batched / tee）+ `RootHashPublisher` US-266 tamper-proof anchoring | `pkg/metrics/*`、`pkg/tracing/*`、`pkg/funnel/tracing.go`、`pkg/audit/*`、`pkg/audit/export/*` |
+| §三 REST API | 67 路由全部 ✓；新增 `GET /api/v2/build-info` + `/server-info` 族（version + connections + features + dependencies）、`me/permissions/check`、`me/ontologies`、check 探针族（object / action / query 的 single + batch）、`getByRidBatch` 对称性补齐（valueTypes / sharedPropertyTypes / typeGroups / queryTypes / linkTypes / interfaceTypes）、SDK 同步 + 异步双向镜像 | 见 PRD §6 US-048 ~ US-081 总览表 |
+| §九 路线图 | Phase 6 "Deep Parity I 语义正确性" + Phase 7 "Deep Parity II 安全 + 实时" + Phase 8 "Deep Parity III 语义深度 + 运行时" 全部落地（25/27 US ✅ + 2 SHOULD-layer follow-up） | `docs/PRD-Weave-OSv2-深度复刻-V2.md` §6 实施状态总览 |
+| 文档体系 | `docs/CHANGES-v2.md` v2 release notes + `docs/mcp.md` 补 `## Completion` 段 + `docs/python-sdk.md` 补 `## v2 APIs` 段 + `docs/cookbook/07-builders.md` 新章节（ObjectSetBuilder / AggregationAPI / criteria_builders / typed errors）+ `docs/cli.md` action/aggregate/objectset 三章节 | docs/ 全栈 |
+
+> **如何阅读本文档**：主体章节（§1 ~ §10）描述 OSv2 单机复刻的目标
+> 架构与 v1 阶段交付，附录 A 是 v2 周期叠加的落地证据。新读者可以
+> 把主体当 "为什么这样设计" 看，把附录当 "今天实际上到了哪一步"
+> 看 — PRD §4 Gap-* 分析则在中间提供逐项收口。

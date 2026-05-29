@@ -26,6 +26,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Need full history (and origin/main) so golangci-lint can compute
+          # merge-base for --new-from-merge-base. The action's own
+          # `only-new-issues: true` falls back to the GH PR diff API, which
+          # 406s on PRs > 300 changed files (Weave's Ralph self-iteration
+          # batches routinely exceed that), silently turning the lint job
+          # into "report every pre-existing issue on main".
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -49,8 +57,10 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.11.4
-          args: --timeout=5m
-          only-new-issues: true
+          # Use golangci-lint's own merge-base diff so the new-issue gate
+          # works regardless of PR size; the action's `only-new-issues`
+          # fetches the GH PR patch which 406s above 300 changed files.
+          args: --timeout=5m --new-from-merge-base=origin/main
 
       - name: Test (with race + coverage)
         run: go test -race -coverprofile=coverage.out -covermode=atomic $(./scripts/ci/go-packages.sh)

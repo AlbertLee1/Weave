@@ -95,13 +95,38 @@ func Validate(value interface{}, dataType DataType, nullable bool) error {
 		}
 
 	case Array:
-		if _, ok := value.([]interface{}); !ok {
+		arr, ok := value.([]interface{})
+		if !ok {
 			return fmt.Errorf("expected array, got %T", value)
+		}
+		// Gap-T2: recurse into the declared element type so a typed Array
+		// validates every element. An untyped Array (no SubType) stays
+		// permissive to keep ad-hoc / pre-schema arrays usable.
+		if dataType.SubType != nil {
+			for i, elem := range arr {
+				if err := Validate(elem, *dataType.SubType, nullable); err != nil {
+					return fmt.Errorf("array element [%d]: %w", i, err)
+				}
+			}
 		}
 
 	case Struct:
-		if _, ok := value.(map[string]interface{}); !ok {
+		m, ok := value.(map[string]interface{})
+		if !ok {
 			return fmt.Errorf("expected struct (map), got %T", value)
+		}
+		// Gap-T2: validate every PRESENT field that the schema declares.
+		// Extra fields (not in Fields) are tolerated — Foundry round-trips
+		// unknown fields. Absent declared fields are also tolerated so
+		// partial MODIFY edits can supply only changed fields.
+		for fieldName, fieldType := range dataType.Fields {
+			fieldValue, present := m[fieldName]
+			if !present {
+				continue
+			}
+			if err := Validate(fieldValue, fieldType, nullable); err != nil {
+				return fmt.Errorf("struct field %q: %w", fieldName, err)
+			}
 		}
 
 	case Union:

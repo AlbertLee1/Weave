@@ -2,6 +2,7 @@ package oms_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -233,6 +234,9 @@ func (*noopRepo) ListSharedProperties(context.Context, string) ([]oms.SharedProp
 }
 func (*noopRepo) UpdateSharedProperty(context.Context, *oms.SharedProperty) error { return nil }
 func (*noopRepo) DeleteSharedProperty(context.Context, string) error              { return nil }
+func (*noopRepo) CountPropertiesUsingSharedProperty(context.Context, string) (int, error) {
+	return 0, nil
+}
 func (*noopRepo) CreateTypeGroup(context.Context, *oms.TypeGroup) error           { return nil }
 func (*noopRepo) GetTypeGroup(context.Context, string) (*oms.TypeGroup, error) {
 	return nil, nil
@@ -246,6 +250,9 @@ func (*noopRepo) AssignTypeGroup(context.Context, string, string) error { return
 func (*noopRepo) RemoveTypeGroup(context.Context, string, string) error { return nil }
 func (*noopRepo) ListTypeGroupsForObjectType(context.Context, string) ([]oms.TypeGroup, error) {
 	return nil, nil
+}
+func (*noopRepo) CountObjectTypesInTypeGroup(context.Context, string) (int, error) {
+	return 0, nil
 }
 func (*noopRepo) CreateValueType(context.Context, *oms.ValueType) error { return nil }
 func (*noopRepo) GetValueType(context.Context, string) (*oms.ValueType, error) {
@@ -321,6 +328,23 @@ func (*noopRepo) ListActionLogs(context.Context, string, int, int) ([]oms.Action
 }
 func (*noopRepo) CountActionLogs(context.Context, string) (int, error)             { return 0, nil }
 func (*noopRepo) UpdateActionLogStatus(context.Context, int64, string) error       { return nil }
+func (*noopRepo) UpdateActionLogSideEffectStatus(context.Context, int64, json.RawMessage) error {
+	return nil
+}
+func (*noopRepo) InsertSideEffectDLQRow(context.Context, *oms.SideEffectDLQRow) error { return nil }
+func (*noopRepo) ListSideEffectDLQByActionLog(context.Context, int64) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (*noopRepo) ListPendingSideEffectDLQRows(context.Context, int) ([]oms.SideEffectDLQRow, error) {
+	return nil, nil
+}
+func (*noopRepo) MarkSideEffectDLQAbandoned(context.Context, int64) error { return nil }
+func (*noopRepo) GetSideEffectDLQRow(context.Context, int64) (*oms.SideEffectDLQRow, error) {
+	return nil, oms.ErrNotFound
+}
+func (*noopRepo) UpdateSideEffectDLQAfterReplay(context.Context, int64, json.RawMessage, bool) error {
+	return nil
+}
 func (*noopRepo) InsertObjectHistory(context.Context, *oms.ObjectHistory) error {
 	return nil
 }

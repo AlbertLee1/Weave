@@ -153,7 +153,7 @@ func (h *Handler) CreateSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.persistedSnapshots.CreatePersistedSnapshot(ctx, snap); err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("SnapshotPersistFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("SnapshotPersistFailed", map[string]string{
 			"error": err.Error(),
 		}))
 		return
@@ -200,7 +200,7 @@ func (h *Handler) GetSnapshot(w http.ResponseWriter, r *http.Request) {
 			}))
 			return
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("SnapshotLookupFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("SnapshotLookupFailed", map[string]string{
 			"error": err.Error(),
 		}))
 		return
@@ -223,7 +223,7 @@ func (h *Handler) GetSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	data, err = h.applyPropertyVisibility(ctx, snap.ObjectType, data)
 	if err != nil {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("PropertyFilterFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("PropertyFilterFailed", map[string]string{
 			"error": err.Error(),
 		}))
 		return

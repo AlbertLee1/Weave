@@ -95,6 +95,17 @@ func NewInternal(name string, params map[string]string) *APIError {
 	return newAPIError("INTERNAL", name, params, http.StatusInternalServerError)
 }
 
+// NewNotImplemented creates an UNIMPLEMENTED API error (HTTP 501).
+// Used by surfaces that recognize the request shape but don't yet
+// support the requested variant — e.g. round-117 GetObjectType
+// returning this for versioned-RID lookups (Gap-T4 step-2): the
+// system knows what @vN means but the snapshot system isn't built
+// yet, so we return 501 rather than masquerading as 404 (which
+// would mislead the caller into thinking the RID is wrong).
+func NewNotImplemented(name string, params map[string]string) *APIError {
+	return newAPIError("UNIMPLEMENTED", name, params, http.StatusNotImplemented)
+}
+
 // NewTooManyRequests creates a RESOURCE_EXHAUSTED API error (HTTP 429). Used
 // by rate-limited surfaces such as the SSE subscribe endpoint when the
 // per-user connection cap has been reached.

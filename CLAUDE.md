@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Weave is a single-machine Ontology Layer engine inspired by Palantir Foundry OSv2, written in Go with a React frontend. It provides ontology metadata management, object retrieval, full-text search, aggregation, link resolution, and action execution.
+Weave is a single-machine Ontology Layer engine inspired by Palantir Foundry OSv2, written in Go with a React frontend. It provides ontology metadata management, object retrieval, full-text search, aggregation, link resolution, action execution, plus the v2 Deep Parity surfaces (`withProperties` derived properties, row + column + Marking security via a single `policy_engine`, Goja embedded JS runtime for Function-backed Actions / `executeQuery`, ontology branching + RID `@vN` versioned reads, SIEM-pipelined audit with `RootHashPublisher` tamper-proof anchoring, MCP `completion/complete`, and a Python SDK with `ObjectSetBuilder` / `AggregationAPI` / `TimeSeriesAPI` / `AttachmentsAPI` / criteria builders / typed exceptions). See [`docs/CHANGES-v2.md`](docs/CHANGES-v2.md) for the full v2 release notes and [`docs/PRD-Weave-OSv2-深度复刻-V2.md`](docs/PRD-Weave-OSv2-深度复刻-V2.md) for the Gap-* tracker + US-048~US-081 backlog status.
 
 ## Common Commands
 
@@ -55,23 +55,89 @@ cmd/server/        Entry point, route registration, SPA handler
     │
     ├── pkg/oms/         OMS (Ontology Metadata Service)
     │                    Repository interface → PostgreSQL implementation
-    │                    Models: Ontology, ObjectType, Property, LinkType, ActionType, Interface
+    │                    Models: Ontology, ObjectType, Property, LinkType,
+    │                    ActionType, Interface, SharedPropertyType,
+    │                    TypeGroup, ValueType, QueryType
+    │                    ontology_branches table + branch_scope.go for
+    │                    ?branch=/X-Weave-Branch read-time pinning
     │
     ├── pkg/oss/         OSS (Object Set Service)
-    │   ├── objectset/   Composable ObjectSet definitions (base/filter/union/intersect/subtract/searchAround)
-    │   │                Lazy evaluation via Executor, in-memory Store with TTL
-    │   ├── aggregation/ Aggregation engine backed by Bleve indexes
-    │   ├── pagination/  Cursor-based pagination
-    │   └── where/       Query filter clause types and SQL conversion
+    │   ├── objectset/   15 composable variants: base / filter / union /
+    │   │                intersect / subtract / searchAround / static /
+    │   │                reference / nearestNeighbors / asType /
+    │   │                asBaseObjectTypes / interfaceBase / withProperties /
+    │   │                interfaceLinkSearchAround / methodInput.
+    │   │                executeWithProperties does real cross-link
+    │   │                count/sum/avg/min/max (Gap-Q2)
+    │   ├── aggregation/ Bleve-facet engine: full metric family + 5 groupBy
+    │   │                + multi-layer nesting + ACCURATE/APPROXIMATE badging
+    │   ├── pagination/  Cursor-based; composite_cursor.go for Interface
+    │   │                multi-type stable paging
+    │   ├── where/       Query filter clause types and SQL conversion
+    │   └── subscribe_sse.go  SSE ObjectSet subscription endpoint
     │
-    ├── pkg/index/       Bleve full-text search index manager (per-ObjectType indexes)
-    ├── pkg/links/       Link resolution via foreign key config in OMS metadata
-    ├── pkg/actions/     Action execution: validate params → apply rules → generate edits → publish to NATS
-    ├── pkg/funnel/      NATS JetStream publisher/consumer for EditBatch events
-    ├── pkg/auth/        Auth middleware (dev mode: no-op; token mode: Bearer validation)
-    ├── pkg/rid/         Resource Identifier format: ri.{service}.{realm}.{resourceType}.{uuid}
-    ├── pkg/types/       Base type system (21 types) with coercion and validation
-    ├── pkg/apierror/    Standardized error responses
+    ├── pkg/security/    Row + column + Marking policy engine
+    │                    (policy_engine.go Evaluate / AllowedProperties /
+    │                    SetMarkingsEnabled / AllowedForIngest) +
+    │                    CEL DSL (cel_evaluator.go) + 2 caches
+    │                    (policy_cache / decision_cache) — Gap-S1+S2+S3
+    │
+    ├── pkg/functions/   Embedded dop251/goja JS sandbox runtime + ontology
+    │                    shim + cache + typed errors — Gap-A5 / Phase 8 W1
+    ├── pkg/queryexec/   Goja-backed executeQuery path (US-067)
+    ├── pkg/actions/     Action execution: criteria (always /
+    │                    parameterMatch / parameterCompare / and_ / or_ /
+    │                    not_) → rules → generate edits → publish to NATS.
+    │                    goja_dispatcher.go routes function-backed actions
+    │                    (US-066). effects.go: webhook side-effects with
+    │                    exponential backoff + DLQ + W3C TraceContext
+    │
+    ├── pkg/index/       Bleve full-text search index manager; mapping_builder
+    │                    drives TypeClass analyzers (not_analyzed / keyword
+    │                    / english). RebuildWithOptions covers disaster
+    │                    recovery (rehydrate BDD locks the contract)
+    ├── pkg/links/       FK + M2M link resolution; multi-hop searchAround
+    │                    (US-366) with ErrQueryTooLarge guard
+    ├── pkg/funnel/      NATS JetStream publisher/consumer for EditBatch;
+    │                    broadcast.go fans events to SSE + WebSocket
+    ├── pkg/subscriptions/  WebSocket subscription handler with cursor +
+    │                    replay buffer (US-418)
+    ├── pkg/auth/        Auth middleware: dev / JWT modes; bootstrap admin;
+    │                    sessions API (list / revoke / revoke-others —
+    │                    rounds 101-102); API key (wvk_ prefix); typed
+    │                    WeaveAuthError
+    ├── pkg/audit/       audit_events + hash chain + RedactingStore +
+    │                    RootHashPublisher (US-266 tamper-proof) +
+    │                    pkg/audit/export/* SIEM pipeline (syslog / S3 /
+    │                    batched / tee) — Gap-S4
+    ├── pkg/tracing/     OTel: HTTPMiddleware + BaggageMiddleware +
+    │                    PgxTracer + cross-NATS TraceContext injection
+    ├── pkg/metrics/     Business metrics: objectset / actions / funnel
+    │                    durations + funnel_lag; surfaced on /health/ready
+    ├── pkg/rid/         Resource Identifier format including optional @vN
+    │                    suffix (splitVersionSuffix, US-070)
+    ├── pkg/types/       Base type system (21 types) + recursive Struct/
+    │                    Array validation + ValueType constraints (Gap-T2/T3)
+    ├── pkg/sqlqueries/  SQL Query sandbox (safety.go tokenizer + 30+
+    │                    forbidden keywords + system-table guard;
+    │                    engine.go pgx.ReadOnly + 5s timeout + 10K row cap)
+    ├── pkg/mcp/         MCP HTTP /mcp + prompts.go + resources.go +
+    │                    completion.go + completion_ontology_source.go
+    │                    (Gap-D4)
+    ├── pkg/buildinfo/   build-info / dependencies / features endpoints
+    ├── pkg/serverinfo/  server-info / connections endpoints
+    ├── pkg/permissionrequests/  request-access workflow + soft cancel
+    ├── pkg/dashboards/  dashboard CRUD + duplicate (Foundry "Duplicate")
+    ├── pkg/notifications/  notification center + fan-out
+    ├── pkg/reactions/   ReactionBar API
+    ├── pkg/timeseries/  PG / VictoriaMetrics stores + downsample pushdown
+    │                    + timeseries_cagg_5min
+    ├── pkg/geotemporal/ PG store + PostGIS spatial indexes (000208)
+    ├── pkg/vertex/      graphsvc + scenarioruns + sideeffects gating
+    ├── pkg/quiver/      TimeSeries dashboard workbench
+    ├── pkg/aip/         AIP semantic search + MCP tooling + logic flows
+    ├── pkg/apierror/    Standardized error responses including typed
+    │                    NewNotImplemented (501) / NewGone (410) helpers
     └── pkg/httputil/    JSON encoding utilities
 
 internal/

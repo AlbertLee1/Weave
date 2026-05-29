@@ -33,6 +33,7 @@ import (
 	"github.com/liyang/weave/pkg/attachment"
 	"github.com/liyang/weave/pkg/audit"
 	"github.com/liyang/weave/pkg/auth"
+	"github.com/liyang/weave/pkg/buildinfo"
 	"github.com/liyang/weave/pkg/cellsec"
 	"github.com/liyang/weave/pkg/cipher"
 	"github.com/liyang/weave/pkg/comments"
@@ -69,6 +70,7 @@ import (
 	"github.com/liyang/weave/pkg/savedsearches"
 	"github.com/liyang/weave/pkg/security"
 	"github.com/liyang/weave/pkg/security/pii"
+	"github.com/liyang/weave/pkg/serverinfo"
 	"github.com/liyang/weave/pkg/sqlqueries"
 	"github.com/liyang/weave/pkg/subscriptions"
 	"github.com/liyang/weave/pkg/tenants"
@@ -529,6 +531,40 @@ func (d *ServerDeps) ProbeBleve() error {
 	return nil
 }
 
+// DefaultFunnelLagThreshold is the maximum number of unprocessed messages
+// the JetStream edit consumer is allowed to fall behind the stream tip
+// before /health/ready flips status=degraded. Set to a value that catches
+// real backpressure (1k+ unprocessed messages) without flapping during
+// normal burst-write windows. Operators can override at boot via the
+// WEAVE_FUNNEL_LAG_THRESHOLD environment variable (parsed by config).
+const DefaultFunnelLagThreshold uint64 = 1000
+
+// ProbeFunnel satisfies HealthProbes. Returns:
+//
+//   - ErrProbeUnconfigured when no consumer is wired (degraded-mode boot
+//     with no NATS connection — the readiness handler records "skipped");
+//   - wrapped ErrFunnelLagDegraded when the consumer is more than
+//     DefaultFunnelLagThreshold messages behind the stream tip (the
+//     readiness handler flips overall status to "degraded" but keeps
+//     HTTP 200 so k8s doesn't pull the pod);
+//   - the underlying StreamInfo error when JetStream is unreachable (hard
+//     probe failure → status=unready → HTTP 503).
+//
+// nil = the consumer is caught up (lag == 0) or within threshold.
+func (d *ServerDeps) ProbeFunnel(_ context.Context) error {
+	if d == nil || d.FunnelConsumer == nil {
+		return ErrProbeUnconfigured
+	}
+	lag, err := d.FunnelConsumer.Lag()
+	if err != nil {
+		return err
+	}
+	if lag > DefaultFunnelLagThreshold {
+		return fmt.Errorf("%w: lag=%d threshold=%d", ErrFunnelLagDegraded, lag, DefaultFunnelLagThreshold)
+	}
+	return nil
+}
+
 func buildScenarioRunService(deps *ServerDeps) *scenarioruns.Service {
 	if deps.ScenarioRunService != nil {
 		return deps.ScenarioRunService
@@ -652,6 +688,36 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	r.Method(http.MethodGet, "/swagger/", swaggerUIHandler())
 	r.Method(http.MethodGet, "/swagger", http.RedirectHandler("/swagger/", http.StatusMovedPermanently))
 
+	// Round 123: server build metadata. Public unauthenticated so
+	// the on-call can answer "which commit is this?" without a
+	// token. ldflags-overridable package vars in pkg/buildinfo.
+	r.Method(http.MethodGet, "/api/v2/build-info", buildinfo.Handler())
+	// Round 125: dependency inventory from runtime/debug.ReadBuildInfo
+	// — on-call answers "which version of pgx do we have?" without
+	// rebuilding or grepping go.sum.
+	r.Method(http.MethodGet, "/api/v2/build-info/dependencies",
+		buildinfo.DependenciesHandler())
+	// Round 127: capability discovery — SPA/SDK detects which
+	// optional features the server has wired without poking
+	// endpoints for 404s. Registry populated below from deps state.
+	r.Method(http.MethodGet, "/api/v2/build-info/features",
+		buildinfo.FeaturesHandler())
+	buildinfo.SetFeatures(detectFeatures(deps))
+
+	// Round 129: runtime statistics (uptime, goroutines, memory).
+	// Sibling of build-info: compile-time identity vs LIVE state.
+	// startedAt anchors uptime to NewFullRouter call time so each
+	// boot has a clean reference point.
+	serverinfo.SetStartedAt(time.Now())
+	r.Method(http.MethodGet, "/api/v2/server-info", serverinfo.Handler())
+	// Round 131: PG pool + NATS connection state snapshot. Provider
+	// closure in cmd/server/connections_provider.go reads live
+	// pgxpool.Stat + nats.Conn.Status — pkg/serverinfo stays free
+	// of pgx/nats imports.
+	serverinfo.SetStatsProvider(connectionsProvider(deps))
+	r.Method(http.MethodGet, "/api/v2/server-info/connections",
+		serverinfo.ConnectionsHandler())
+
 	// MCP server (public JSON-RPC 2.0 endpoint for AI agents).
 	//
 	// OSV2-303: register POST /mcp UNCONDITIONALLY. The previous wiring gated
@@ -676,6 +742,16 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 	// resources/list and resources/read methods still work for ontologies.
 	if deps.ObjSetStore != nil {
 		mcpSrv.SetObjectSetCatalog(newObjectSetCatalogAdapter(deps.ObjSetStore))
+	}
+	// Gap-D4 round 47: wire the ontology-backed completion/complete
+	// provider so AI clients get real autocomplete for prompt
+	// arguments named objectType/actionType/linkType and for
+	// weave://objecttype/<ontology>/ + weave://ontology/ resource
+	// URI templates. A nil OmsRepo (degraded boot) makes the source
+	// a no-op — completion/complete still answers with empty
+	// envelopes rather than -32601 method-not-found.
+	if deps.OmsRepo != nil {
+		mcpSrv.SetCompletionSource(mcp.NewOntologyCompletionSource(deps.OmsRepo))
 	}
 	r.Method(http.MethodPost, "/mcp", mcp.NewHTTPHandler(mcpSrv))
 
@@ -848,6 +924,69 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 		// Current-user endpoint (RBAC Phase 1)
 		api.Method(http.MethodGet, "/api/v2/me", auth.MeHandler())
 
+		// Round 95: per-ontology /me — caller's resolved role +
+		// effective permissions for ONE specific ontology. Mounted
+		// only when the OMS repo is available (it resolves
+		// ontologyApiName -> RID via the omsOntologyResolver
+		// adapter that bridges pkg/auth and pkg/oms without taking
+		// an import cycle).
+		var ontologyResolverForAuth auth.OntologyResolver
+		if deps.OmsRepo != nil {
+			ontologyResolverForAuth = &omsOntologyResolver{repo: deps.OmsRepo}
+			api.Method(http.MethodGet, "/api/v2/ontologies/{ontologyApiName}/me",
+				auth.OntologyMeHandler(ontologyResolverForAuth))
+		}
+
+		// Round 97: Foundry-parity fine-grained permission probe.
+		// Always mounted (works in degraded mode with nil resolver
+		// — refuses `ontology` field but still serves global checks).
+		api.Method(http.MethodPost, "/api/v2/me/permissions/check",
+			auth.PermissionsCheckHandler(ontologyResolverForAuth))
+
+		// Round 99: caller-scoped ontology inventory. Mounted only
+		// when the OMS repo is available because we need to list
+		// ontologies. The same adapter struct doubles as the
+		// OntologyLister (cmd/server/ontology_me_resolver.go).
+		//
+		// Round 103: same adapter now also implements
+		// auth.ActionTypeResolver for the action-check handler —
+		// single struct, four interfaces.
+		if deps.OmsRepo != nil {
+			resolver := &omsOntologyResolver{repo: deps.OmsRepo}
+			api.Method(http.MethodGet, "/api/v2/me/ontologies",
+				auth.MeOntologiesHandler(resolver))
+			api.Method(http.MethodGet,
+				"/api/v2/ontologies/{ontologyApiName}/actions/{actionApiName}/check",
+				auth.ActionCheckHandler(resolver, resolver))
+			// Round 105: object-type read/write probe; single resolver
+			// implements both OntologyResolver and ObjectTypeResolver.
+			api.Method(http.MethodGet,
+				"/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/check",
+				auth.ObjectCheckHandler(resolver, resolver))
+			// Round 107: bulk OT batch probe — same {resolver, resolver}
+			// pair, one round-trip for N object types.
+			api.Method(http.MethodPost,
+				"/api/v2/me/checks/objectTypes",
+				auth.ObjectCheckBatchHandler(resolver, resolver))
+			// Round 109: bulk action batch probe — sibling of OT
+			// bulk; SPA page-load resolves OT matrix + applicable
+			// actions in 2 POSTs instead of K+M parallel GETs.
+			api.Method(http.MethodPost,
+				"/api/v2/me/checks/actionTypes",
+				auth.ActionCheckBatchHandler(resolver, resolver))
+			// Round 113: third axis of the per-resource check
+			// family — query-type execution gating. Same resolver
+			// struct (6th interface implementation).
+			api.Method(http.MethodGet,
+				"/api/v2/ontologies/{ontologyApiName}/queryTypes/{queryTypeApiName}/check",
+				auth.QueryCheckHandler(resolver, resolver))
+			// Round 115: bulk query check completes the three-axis
+			// bulk trio (objects r107 + actions r109 + queries).
+			api.Method(http.MethodPost,
+				"/api/v2/me/checks/queryTypes",
+				auth.QueryCheckBatchHandler(resolver, resolver))
+		}
+
 		// US-254: active-session inventory. Mounted inside the auth group so
 		// only authenticated callers can enumerate/revoke their own sessions.
 		// When SessionStore is nil (degraded mode / tests) the routes are
@@ -954,6 +1093,12 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.IndexMgr != nil {
 				omsHandler.SetIndexBootstrapper(newIndexBootstrapAdapter(deps.IndexMgr))
 			}
+			// Round 135 (PRD-V2 Gap-A3): static validation of
+			// submissionCriteria on admin Create/Update ActionType so
+			// authoring mistakes (unknown type, missing field, malformed
+			// group) surface as 400 InvalidParameter at save time
+			// instead of as confusing runtime errors at first apply.
+			omsHandler.SetCriteriaValidator(actions.ValidateCriteriaSchema)
 			RegisterRoutes(api, omsHandler)
 		}
 
@@ -1000,6 +1145,11 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/apply", actionHandler.Apply)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyBatch", actionHandler.ApplyBatch)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/applyWithOverrides", actionHandler.ApplyWithOverrides)
+			// Foundry OSv2 dedicated validate surface. SDKs (TypeScript/Python
+			// OSDK) hit this on every form-field change to drive client-side
+			// validation without ever publishing to NATS — see
+			// pkg/actions/handler_validate_bdd_test.go for the wire contract.
+			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/{action}/validate", actionHandler.Validate)
 			api.Post("/api/v2/ontologies/{ontologyApiName}/actions/revert", actionHandler.Revert)
 			// US-369: multi-step saga with idempotency + DLQ.
 			//   POST /api/v2/ontologies/{ontology}/actions/applySaga
@@ -1326,6 +1476,23 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			Method(http.MethodPost, "/api/admin/funnel/dlq/{id}/replay", NewAdminFunnelDLQReplayHandler(funnelDLQDeps))
 		api.With(auth.RequirePermission(auth.PermUserManage)).
 			Method(http.MethodPost, "/api/admin/funnel/dlq/{id}/discard", NewAdminFunnelDLQDiscardHandler(funnelDLQDeps))
+
+		// PRD-V2 Gap-A4 round 34: admin surface for the action_log_
+		// side_effect_dlq table (round 33). List pending failed-after-
+		// retries side-effect dispatches and abandon individual rows.
+		// Replay endpoint deferred to a follow-up round — needs payload
+		// reconstruction from action_logs.
+		var sideEffectDLQRepo SideEffectDLQRepo
+		if deps.OmsRepo != nil {
+			sideEffectDLQRepo = deps.OmsRepo
+		}
+		sideEffectDLQDeps := AdminSideEffectDLQDeps{Repo: sideEffectDLQRepo}
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodGet, "/api/admin/side-effect-dlq", NewAdminSideEffectDLQListHandler(sideEffectDLQDeps))
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/side-effect-dlq/{id}/abandon", NewAdminSideEffectDLQAbandonHandler(sideEffectDLQDeps))
+		api.With(auth.RequirePermission(auth.PermUserManage)).
+			Method(http.MethodPost, "/api/admin/side-effect-dlq/{id}/replay", NewAdminSideEffectDLQReplayHandler(sideEffectDLQDeps))
 
 		// US-490: zero-downtime JWT signing key rotation. The handler
 		// generates a fresh RSA-2048 keypair and appends it to the
@@ -2879,6 +3046,15 @@ func main() {
 		deps.FunnelDLQPublish = dlqPub
 		go metrics.RunFunnelDLQSizePollLoop(ctx, deps.FunnelDLQReader, 30*time.Second, func(err error) {
 			log.Printf("[funnel-dlq] size poll error: %v", err)
+		})
+
+		// PRD-V2 §4.6 Gap-O4 follow-up: the readiness handler already
+		// surfaces funnel lag as a soft degraded signal, but oncall
+		// needs a Prometheus gauge for trend + alerting. Same 30s
+		// cadence as the DLQ size loop so operators see both funnel
+		// observability surfaces refresh on the same beat.
+		go metrics.RunFunnelConsumerLagPollLoop(ctx, deps.FunnelConsumer, 30*time.Second, func(err error) {
+			log.Printf("[funnel-consumer] lag poll error: %v", err)
 		})
 
 		// US-055: stand up the in-process SSE broadcast hub and have the

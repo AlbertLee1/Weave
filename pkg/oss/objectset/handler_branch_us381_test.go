@@ -329,7 +329,11 @@ func TestBranchScope_BranchNotFoundFromProvider(t *testing.T) {
 
 // TestBranchScope_PropagatesProviderError forces an unrecognised provider
 // error and asserts it surfaces as the generic BranchScopeFailed envelope
-// so configuration mistakes stay visible without leaking the 404 code.
+// at HTTP 500 INTERNAL — a downstream BranchScopeProvider failure (DB
+// unreachable, config wrong) is server-side, NOT bad user input. The
+// sentinel ErrBranchNotFound case keeps its dedicated 400 BranchNotFound
+// envelope so callers can still distinguish "you asked for a branch
+// that does not exist" from "the server can't reach its branch store".
 func TestBranchScope_PropagatesProviderError(t *testing.T) {
 	handler, _, _ := setupHandlerTest(t)
 	prov := newFakeBranchScopeProvider()
@@ -344,8 +348,8 @@ func TestBranchScope_PropagatesProviderError(t *testing.T) {
 	rr := httptest.NewRecorder()
 	newAsOfRouter(t, handler).ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", rr.Code, rr.Body.String())
 	}
 	apiErr := decodeJSON[struct {
 		ErrorName  string            `json:"errorName"`

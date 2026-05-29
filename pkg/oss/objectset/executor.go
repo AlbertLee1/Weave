@@ -14,6 +14,7 @@ import (
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/links"
+	"github.com/liyang/weave/pkg/metrics"
 	"github.com/liyang/weave/pkg/oss/where"
 	"github.com/liyang/weave/pkg/types/formula"
 )
@@ -203,11 +204,37 @@ type Result struct {
 }
 
 // Execute evaluates an ObjectSet definition and returns matching primary keys.
+//
+// PRD-V2 §4.6 Gap-O1 wiring: the call is wrapped with a deferred Observe
+// onto weave_objectset_execute_duration_seconds, labeled by definition
+// kind (base / filter / union / …) and outcome (ok | error). The metric
+// is captured at THIS layer rather than inside the per-kind helpers so
+// composite ObjectSets (union/intersect/subtract) record one observation
+// per public Execute call rather than one per recursive child — the
+// Grafana panel asks "how long did this operator take end-to-end?",
+// not "how long did each subtree take?". Use the recursive private
+// execute() if you need per-subtree timings in the future.
 func (e *Executor) Execute(ctx context.Context, def *Definition) (*Result, error) {
 	if err := def.Validate(); err != nil {
-		return nil, err
+		// Validation failure happens before we've classified the
+		// definition; record it under definition_type="invalid" so the
+		// dashboard can spot SDK clients sending malformed bodies
+		// without conflating them with backend-level errors.
+		metrics.ObserveObjectSetExecute("invalid", "error", 0)
+		// Round 37: wrap with the user-side sentinel so handlers route
+		// to 400 InvalidObjectSet rather than 500 — Definition.Validate
+		// only reports shape problems the caller can fix.
+		return nil, fmt.Errorf("%w: %w", ErrInvalidObjectSetDefinition, err)
 	}
-	return e.execute(ctx, def)
+	defType := def.Type
+	start := time.Now()
+	res, err := e.execute(ctx, def)
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
+	}
+	metrics.ObserveObjectSetExecute(defType, outcome, time.Since(start).Seconds())
+	return res, err
 }
 
 func (e *Executor) execute(ctx context.Context, def *Definition) (*Result, error) {
@@ -243,9 +270,14 @@ func (e *Executor) execute(ctx context.Context, def *Definition) (*Result, error
 	case "sample":
 		return e.executeSample(ctx, def)
 	case "methodInput":
-		return nil, fmt.Errorf("methodInput objectSet not yet supported: bind at function invocation time")
+		// Round 37: caller-side error — methodInput is a user-supplied
+		// type the executor explicitly rejects at runtime.
+		return nil, fmt.Errorf("%w: methodInput objectSet not yet supported: bind at function invocation time",
+			ErrInvalidObjectSetDefinition)
 	default:
-		return nil, fmt.Errorf("unknown objectSet type: %q", def.Type)
+		// Round 37: caller supplied an unknown type. User-side bug.
+		return nil, fmt.Errorf("%w: unknown objectSet type: %q",
+			ErrInvalidObjectSetDefinition, def.Type)
 	}
 }
 
@@ -429,7 +461,7 @@ func (e *Executor) executeInterfaceLinkSearchAround(ctx context.Context, def *De
 //   - Hot-only window (From ≥ now-hotWindow): skip the cold lookup entirely.
 //   - Cold-only window (To ≤ now-hotWindow): skip the Bleve search and
 //     pass the request's upper bound to the cold tier as the cutoff so
-//     materialise rows beyond the window are clipped before merge.
+//     materialize rows beyond the window are clipped before merge.
 //   - Cross-window (straddles now-hotWindow): both tiers, classic union.
 func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, error) {
 	policyQ, err := e.resolvePolicyQuery(ctx, def.ObjectType)
@@ -499,7 +531,7 @@ func (e *Executor) executeBase(ctx context.Context, def *Definition) (*Result, e
 // rebuilt, hiding live data behind the rolling window.
 //
 // When no cold tier is wired this returns an empty result. That is the
-// correct degraded-mode behaviour: the rebuild was operator-initiated
+// correct degraded-mode behavior: the rebuild was operator-initiated
 // and the operator accepted that base reads degrade until the rebuild
 // completes.
 func (e *Executor) executeBaseDuringRebuild(ctx context.Context, def *Definition) (*Result, error) {
@@ -524,13 +556,18 @@ func (e *Executor) executeFilter(ctx context.Context, def *Definition) (*Result,
 		return nil, fmt.Errorf("execute filter base: %w", err)
 	}
 
-	// Parse the where clause
+	// Parse the where clause. Bad JSON is user-side; wrap with the
+	// round-37 sentinel so the handler routes to 400 InvalidObjectSet
+	// rather than 500.
 	var clause where.WhereClause
 	if err := json.Unmarshal(def.Where, &clause); err != nil {
-		return nil, fmt.Errorf("parse where clause: %w", err)
+		return nil, fmt.Errorf("%w: parse where clause: %w", ErrInvalidObjectSetDefinition, err)
 	}
 
-	// Convert to Bleve query
+	// Convert to Bleve query. The converter already wraps its errors
+	// with where.ErrInvalidWhereClause (round 36); just chain via %w
+	// so the handler's errors.Is at the handler boundary still sees
+	// the sentinel.
 	bleveQuery, err := where.ConvertToBleveQuery(&clause)
 	if err != nil {
 		return nil, fmt.Errorf("convert where clause: %w", err)
@@ -691,7 +728,7 @@ func (e *Executor) executeSearchAround(ctx context.Context, def *Definition) (*R
 		return nil, fmt.Errorf("searchAround direction: %w", err)
 	}
 
-	// Forward: use legacy API name path (unchanged behaviour).
+	// Forward: use legacy API name path (unchanged behavior).
 	// Reverse: the inner set's ObjectType is the link's *target*, so we cannot
 	// use ResolveLinkedObjectsByAPIName (which scans outgoing links from the
 	// source). Instead, find the link via the OMS repo-backed resolver and

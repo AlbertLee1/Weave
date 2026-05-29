@@ -120,6 +120,12 @@ linters:
           - unparam
           - noctx
           - bodyclose
+      # CANCELLED is the on-the-wire DB enum value for the
+      # permission_requests.status column (migration 000215). en-GB
+      # spelling is required for compatibility — do not flag it.
+      - path: ^pkg/permissionrequests/
+        linters:
+          - misspell
       - path: ^test/
         linters:
           - errcheck

@@ -285,7 +285,7 @@ func (h *Handler) Diff(w http.ResponseWriter, r *http.Request) {
 	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
 	ctx := WithOntologyScope(r.Context(), ontologyAPIName)
 
-	branch, apiErr := resolveBranch(r.URL.Query().Get("branch"))
+	branch, apiErr := resolveBranch(branchFromRequest(r))
 	if apiErr != nil {
 		apierror.WriteJSON(w, apiErr)
 		return

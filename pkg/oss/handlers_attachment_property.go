@@ -97,7 +97,7 @@ func (h *Handler) resolveAttachmentPropertyRID(w http.ResponseWriter, r *http.Re
 			}))
 			return "", false
 		}
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("GetObjectFailed", map[string]string{
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectFailed", map[string]string{
 			"reason": err.Error(),
 		}))
 		return "", false

@@ -13,6 +13,7 @@ import (
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/funnel"
+	"github.com/liyang/weave/pkg/metrics"
 	"github.com/liyang/weave/pkg/oms"
 	"github.com/liyang/weave/pkg/tracing"
 	"github.com/liyang/weave/pkg/types"
@@ -153,6 +154,59 @@ type ValidationResult struct {
 // ValidateOnlyResponse is the response envelope for VALIDATE_ONLY apply.
 type ValidateOnlyResponse struct {
 	Validation *ValidationResult `json:"validation"`
+}
+
+// ValidateActionResponse is the Foundry OSv2 response envelope for the
+// dedicated POST /api/v2/ontologies/{ontology}/actions/{action}/validate
+// endpoint (see pkg/actions/handler_validate_bdd_test.go and
+// docs/PRD-Weave-OSv2-深度复刻-V2.md). The shape intentionally mirrors
+// what Foundry SDKs (TypeScript / Python OSDK) consume on every form-field
+// change: a single overall result, a list of submissionCriteria each
+// carrying their configured failure message, and a per-parameter map
+// keyed by parameter id so a form can red-line exactly the field that
+// failed.
+//
+// SubmissionCriteria and Parameters MUST be non-nil so the JSON wire
+// shape is `[]`/`{}` rather than `null`. SDKs that did length checks
+// without first nil-guarding would otherwise NPE on a VALID response.
+type ValidateActionResponse struct {
+	Result             string                               `json:"result"` // VALID | INVALID
+	SubmissionCriteria []SubmissionCriterionResult          `json:"submissionCriteria"`
+	Parameters         map[string]ParameterValidationResult `json:"parameters"`
+}
+
+// SubmissionCriterionResult is one entry in ValidateActionResponse.SubmissionCriteria.
+// Foundry's submission-criteria pipeline emits one envelope per declared
+// criterion; Weave's MVP synthesizes a single entry on INVALID that
+// carries the underlying validation error verbatim into
+// configuredFailureMessage so the SDK has something to render in the
+// form-level summary banner.
+type SubmissionCriterionResult struct {
+	Result                   string `json:"result"` // VALID | INVALID
+	ConfiguredFailureMessage string `json:"configuredFailureMessage,omitempty"`
+}
+
+// ParameterValidationResult is one entry in ValidateActionResponse.Parameters.
+// EvaluatedConstraints is non-nil so SDKs can iterate without a nil
+// check; Weave's MVP populates a single {type:"required",
+// result:"INVALID"} entry when a required parameter is missing and
+// leaves the slice empty for VALID rows. The Required field is sourced
+// from the ActionType.Parameters definition.
+type ParameterValidationResult struct {
+	Result               string                `json:"result"` // VALID | INVALID
+	Required             bool                  `json:"required"`
+	EvaluatedConstraints []EvaluatedConstraint `json:"evaluatedConstraints"`
+}
+
+// EvaluatedConstraint is one entry in
+// ParameterValidationResult.EvaluatedConstraints. Foundry surfaces a
+// richer taxonomy (range, oneOf, objectQuery, …); Weave starts with the
+// "required" / "type" pair so the per-parameter wire shape is forwards-
+// compatible and SDKs can switch on Type without breaking when richer
+// constraint kinds land.
+type EvaluatedConstraint struct {
+	Type   string `json:"type"`
+	Result string `json:"result"` // VALID | INVALID
 }
 
 // Publisher is the minimal contract the Executor needs from the funnel
@@ -410,6 +464,16 @@ func (e *BatchError) Unwrap() error {
 // does NOT publish to NATS, write the action log, or fire side effects. The
 // returned PreparedAction can be committed later via CommitBatch.
 func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRequest) (*PreparedAction, error) {
+	actionName := ""
+	if req != nil {
+		actionName = req.ActionType
+	}
+	ctx, span := tracing.StartSpan(ctx, "actions.Prepare",
+		attribute.String("ontology.rid", ontologyRID),
+		attribute.String("action.type", actionName),
+	)
+	defer span.End()
+
 	// Step 1: Look up ActionType
 	actionTypes, err := e.omsRepo.ListActionTypes(ctx, ontologyRID)
 	if err != nil {
@@ -424,18 +488,28 @@ func (e *Executor) Prepare(ctx context.Context, ontologyRID string, req *ApplyRe
 		}
 	}
 	if actionType == nil {
-		return nil, fmt.Errorf("action type %q not found", req.ActionType)
+		// Round 38: wrap with sentinel so handler routes to 404
+		// ActionTypeNotFound rather than the historical 400 ActionFailed.
+		return nil, fmt.Errorf("%w: action type %q not found", ErrActionTypeNotFound, req.ActionType)
 	}
 
 	// Step 2: Parse parameter definitions
 	paramDefs, err := ParseParameterDefs(actionType.Parameters)
 	if err != nil {
-		return nil, fmt.Errorf("parse params: %w", err)
+		// Bad ActionType.Parameters JSON is technically a schema-author
+		// bug (server-side data issue), but in practice it surfaces to
+		// the SDK caller because the malformed schema blocks every
+		// invocation. Treat as InvalidActionParameters so the SDK
+		// surface routes consistently with the user-side flavor.
+		return nil, fmt.Errorf("%w: parse params: %w", ErrInvalidActionParameters, err)
 	}
 
 	// Step 3: Validate parameters
 	if err := ValidateParameters(paramDefs, req.Parameters); err != nil {
-		return nil, fmt.Errorf("validate params: %w", err)
+		// Round 38: caller-supplied parameters failed shape/value
+		// validation. Wrap with sentinel so the handler routes to 400
+		// InvalidActionParameters rather than 500 ActionFailed.
+		return nil, fmt.Errorf("%w: validate params: %w", ErrInvalidActionParameters, err)
 	}
 
 	// Step 3b (US-245): evaluate the optional Draft-07 JSON Schema. Schema
@@ -853,6 +927,12 @@ func tagEditsAsUserSource(edits []funnel.Edit) {
 // publisher can route the message onto a per-ontology NATS subject and the
 // consumer can apply edits to the per-ontology Bleve index.
 func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prepared []*PreparedAction) (*BatchResult, error) {
+	ctx, span := tracing.StartSpan(ctx, "actions.CommitBatch",
+		attribute.String("ontology.rid", ontologyAPIName),
+		attribute.Int("batch.size", len(prepared)),
+	)
+	defer span.End()
+
 	result := &BatchResult{
 		Mode:    "atomic",
 		Results: make([]*ApplyResult, 0, len(prepared)),
@@ -953,16 +1033,78 @@ func (e *Executor) CommitBatch(ctx context.Context, ontologyAPIName string, prep
 		e.recordLineage(ctx, logRow.ID, p.Edits)
 	}
 
-	// Fire per-action side effects (best-effort, non-blocking).
+	// Fire per-action side effects (best-effort, non-blocking) and stamp
+	// the per-effect outcomes onto the action_logs row so the Foundry-
+	// style action history surface can render "webhook 1/2 succeeded on
+	// 2nd attempt" without scraping logs. Gap-A4 round 32 wiring; round
+	// 33 also routes failed outcomes to the side-effect DLQ.
 	for i, p := range prepared {
-		ExecuteSideEffects(p.ActionType.SideEffects, ActionResult{
+		outcomes, effects, _ := ExecuteSideEffectsWithOutcomesCtx(ctx, p.ActionType.SideEffects, ActionResult{
 			ActionRID: p.ActionType.RID,
 			BatchID:   batch.ID,
 			Edits:     result.Results[i].Edits,
 		})
+		e.persistSideEffectOutcomes(ctx, result.Results[i].ActionLogID, outcomes, effects)
 	}
 
 	return result, nil
+}
+
+// persistSideEffectOutcomes marshals the per-effect outcomes and stamps
+// them onto action_logs.side_effect_status. Best-effort: a failed
+// persistence call (or a missing action log id from a degraded-mode
+// router) logs once and moves on — side-effect status is observability,
+// not a write barrier. Empty / nil outcomes skip the call entirely so
+// actions with no side effects don't churn the column.
+//
+// Round-33 DLQ wiring: outcomes with Status=failed (the round-30 retry
+// loop exhausted its budget on a transient failure) are also persisted
+// to action_log_side_effect_dlq so operators can review / replay via
+// the admin surface (round 34). The EffectConfig snapshot is the
+// original SideEffect.Config blob from the ActionType so a future
+// replay can dispatch without re-reading the ActionType definition.
+func (e *Executor) persistSideEffectOutcomes(ctx context.Context, actionLogID int64, outcomes []SideEffectOutcome, effects []SideEffect) {
+	if actionLogID == 0 || len(outcomes) == 0 || e.omsRepo == nil {
+		return
+	}
+	payload, err := json.Marshal(outcomes)
+	if err != nil {
+		log.Printf("actions: failed to marshal side-effect outcomes for action_log %d: %v", actionLogID, err)
+		return
+	}
+	if err := e.omsRepo.UpdateActionLogSideEffectStatus(ctx, actionLogID, payload); err != nil {
+		log.Printf("actions: failed to persist side-effect outcomes for action_log %d: %v", actionLogID, err)
+	}
+	// Route failed outcomes to the DLQ. Iterating in declared order so
+	// effect_index matches the original SideEffects array. effects may
+	// be nil when ExecuteSideEffectsWithOutcomes was called on an
+	// already-decoded array — that's a defensive degrade path; skip DLQ
+	// rather than persist a half-shaped row.
+	for i, oc := range outcomes {
+		if oc.Status != SideEffectStatusFailed {
+			continue
+		}
+		var cfg json.RawMessage
+		if i < len(effects) {
+			cfg = effects[i].Config
+		}
+		ocBytes, marshalErr := json.Marshal(oc)
+		if marshalErr != nil {
+			log.Printf("actions: failed to marshal DLQ outcome for action_log %d effect %d: %v", actionLogID, i, marshalErr)
+			continue
+		}
+		dlqRow := &oms.SideEffectDLQRow{
+			ActionLogID:  actionLogID,
+			EffectIndex:  i,
+			EffectType:   oc.Type,
+			EffectConfig: cfg,
+			Outcome:      ocBytes,
+			ReplayStatus: oms.SideEffectDLQStatusPending,
+		}
+		if dlqErr := e.omsRepo.InsertSideEffectDLQRow(ctx, dlqRow); dlqErr != nil {
+			log.Printf("actions: failed to queue side-effect DLQ row for action_log %d effect %d: %v", actionLogID, i, dlqErr)
+		}
+	}
 }
 
 // Apply executes a single action. Preserved as the backwards-compatible entry
@@ -979,8 +1121,20 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 	)
 	defer span.End()
 
+	// Gap-O1 round 41: emit weave_actions_applied_total + weave_actions
+	// _duration_seconds. Histogram + counter were registered in
+	// pkg/metrics but no caller fired them until this round. Label by
+	// actionName (api name) — cardinality bounded by the number of
+	// declared action types in the ontology, no PII risk.
+	applyStart := time.Now()
+	var applyErr error
+	defer func() {
+		metrics.ActionApplied(actionName, applyErr, time.Since(applyStart))
+	}()
+
 	prep, err := e.Prepare(ctx, ontologyRID, req)
 	if err != nil {
+		applyErr = err
 		return nil, err
 	}
 
@@ -992,6 +1146,7 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 	// rather than the pure request → edits transform.
 	if hasOptimisticLockOptions(req.Options) {
 		if err := e.checkExpectedVersions(ctx, ontologyRID, prep.Edits, req.Options); err != nil {
+			applyErr = err
 			return nil, err
 		}
 	}
@@ -1006,6 +1161,7 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 
 	br, err := e.CommitBatch(ctx, ontologyRID, []*PreparedAction{prep})
 	if err != nil {
+		applyErr = err
 		// Unwrap a *BatchError so the legacy Apply caller sees a plain
 		// string-shaped error (preserves wire compatibility with callers
 		// that predate BatchError).
@@ -1033,10 +1189,33 @@ func (e *Executor) Apply(ctx context.Context, ontologyRID string, req *ApplyRequ
 // *BatchError) so the handler routes it through staleObjectAPIError → 409
 // StaleObject, identical to the single-Apply 409 shape.
 func (e *Executor) ApplyBatchAtomic(ctx context.Context, ontologyRID string, reqs []ApplyRequest) (*BatchResult, error) {
+	ctx, span := tracing.StartSpan(ctx, "actions.ApplyBatchAtomic",
+		attribute.String("ontology.rid", ontologyRID),
+		attribute.Int("batch.size", len(reqs)),
+	)
+	defer span.End()
+
+	// Gap-O1 round 42: emit per-action weave_actions_applied_total +
+	// weave_actions_duration_seconds. ApplyBatchAtomic is all-or-
+	// nothing — every action in the batch either commits together or
+	// none commit. Emit one observation per request with the SAME
+	// final status (ok / error) so dashboards aggregating by
+	// action_type see honest wall-clock latency. duration is the
+	// total batch time (every action participated in that wait).
+	batchStart := time.Now()
+	var batchErr error
+	defer func() {
+		dur := time.Since(batchStart)
+		for i := range reqs {
+			metrics.ActionApplied(reqs[i].ActionType, batchErr, dur)
+		}
+	}()
+
 	prepared := make([]*PreparedAction, 0, len(reqs))
 	for i := range reqs {
 		p, err := e.Prepare(ctx, ontologyRID, &reqs[i])
 		if err != nil {
+			batchErr = err
 			return nil, &BatchError{
 				Phase:             classifyPrepareError(err),
 				FailedActionIndex: i,
@@ -1048,9 +1227,15 @@ func (e *Executor) ApplyBatchAtomic(ctx context.Context, ontologyRID string, req
 		prepared = append(prepared, p)
 	}
 	if err := e.enforceBatchOptimisticLock(ctx, ontologyRID, reqs, prepared); err != nil {
+		batchErr = err
 		return nil, err
 	}
-	return e.CommitBatch(ctx, ontologyRID, prepared)
+	br, err := e.CommitBatch(ctx, ontologyRID, prepared)
+	if err != nil {
+		batchErr = err
+		return nil, err
+	}
+	return br, nil
 }
 
 // enforceBatchOptimisticLock walks every prepared action and runs the
@@ -1081,6 +1266,12 @@ func (e *Executor) enforceBatchOptimisticLock(ctx context.Context, ontologyRID s
 // the returned BatchResult; a publish failure is still returned as an error
 // because "commit what you can" cannot partially commit a single NATS message.
 func (e *Executor) ApplyBatchBestEffort(ctx context.Context, ontologyRID string, reqs []ApplyRequest) (*BatchResult, error) {
+	ctx, span := tracing.StartSpan(ctx, "actions.ApplyBatchBestEffort",
+		attribute.String("ontology.rid", ontologyRID),
+		attribute.Int("batch.size", len(reqs)),
+	)
+	defer span.End()
+
 	var prepared []*PreparedAction
 	var failures []BatchFailure
 	for i := range reqs {
@@ -1133,6 +1324,12 @@ func (e *Executor) ApplyBatchAtomicTx(ctx context.Context, ontologyRID string, r
 	if e.atomicLogStore == nil {
 		return e.ApplyBatchAtomic(ctx, ontologyRID, reqs)
 	}
+
+	ctx, span := tracing.StartSpan(ctx, "actions.ApplyBatchAtomicTx",
+		attribute.String("ontology.rid", ontologyRID),
+		attribute.Int("batch.size", len(reqs)),
+	)
+	defer span.End()
 
 	prepared := make([]*PreparedAction, 0, len(reqs))
 	for i := range reqs {
@@ -1269,13 +1466,17 @@ func (e *Executor) commitBatchAtomicTx(ctx context.Context, ontologyAPIName stri
 		e.recordLineage(ctx, logs[i].ID, p.Edits)
 	}
 
-	// Per-action side effects (best-effort, non-blocking). Mirrors CommitBatch.
+	// Per-action side effects (best-effort, non-blocking). Mirrors
+	// CommitBatch — stamps per-effect outcomes onto action_logs.
+	// side_effect_status via persistSideEffectOutcomes and queues
+	// failed outcomes to the side-effect DLQ. Gap-A4 rounds 32+33.
 	for i, p := range prepared {
-		ExecuteSideEffects(p.ActionType.SideEffects, ActionResult{
+		outcomes, effects, _ := ExecuteSideEffectsWithOutcomes(p.ActionType.SideEffects, ActionResult{
 			ActionRID: p.ActionType.RID,
 			BatchID:   batch.ID,
 			Edits:     result.Results[i].Edits,
 		})
+		e.persistSideEffectOutcomes(ctx, logs[i].ID, outcomes, effects)
 	}
 
 	return result, nil
@@ -1392,7 +1593,7 @@ func (e *Executor) checkExpectedVersions(ctx context.Context, ontologyRID string
 // lookupObjectVersion resolves an ObjectType API name to its RID and
 // returns the current object_history version count for (RID, primaryKey).
 // Falls back to the raw API name when no mapping is configured, mirroring
-// pkg/funnel consumer behaviour for degraded-mode test routers.
+// pkg/funnel consumer behavior for degraded-mode test routers.
 func (e *Executor) lookupObjectVersion(ctx context.Context, ontologyRID, objectType, primaryKey string) (int64, error) {
 	otRID := objectType
 	if e.omsRepo != nil {
