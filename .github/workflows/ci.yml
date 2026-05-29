@@ -124,7 +124,7 @@ jobs:
 
       - name: Upload coverage gate report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: |
@@ -152,7 +152,7 @@ jobs:
         run: make vulncheck
 
       - name: Upload Go coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: go-coverage
           path: coverage.out
@@ -210,7 +210,7 @@ jobs:
           zzz-login-rate-limit.spec.ts
 
       - name: Upload web coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-coverage
           path: web/coverage
