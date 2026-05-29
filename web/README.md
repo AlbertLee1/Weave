@@ -17,6 +17,30 @@ The dev server defaults to `http://localhost:5173`. Authentication behavior is
 controlled by the backend `AUTH_MODE`; the E2E stack seeds deterministic users
 for token-mode flows and runs safely in dev-mode as well.
 
+## Pages
+
+The router mounts these top-level surfaces (see `web/src/router.tsx` for
+the canonical map):
+
+| Route | Component | What it shows |
+|---|---|---|
+| `/` | `DashboardPage` | per-ontology object-type counters + recent Actions roll-up |
+| `/explorer/:ontology` | `ExplorerPage` | TypeClass-aware schema explorer (`analyzer.not_analyzed` / `keyword` / `english` hints surfaced via [`typeclass-hints.ts`](src/lib/typeclass-hints.ts)) |
+| `/browser/:ontology/:objectType` | `BrowserPage` | object table with realtime mode (`useObjectSetSubscription` SSE), saved searches, active-search indicator |
+| `/objectsets/live/:rid` | `ObjectSetLivePage` | ObjectSet Live page driven by `/objectSets/{rid}/subscribe` |
+| `/admin` | `AdminPage` | ontology / object-type / link-type / action-type CRUD; submission-criteria builder (criteria_builders + parameter_compare cross-field) |
+| `/actions/:ontology` | `ActionsPage` | parameterised Action apply with optimistic concurrency surface (`expectedVersion` + 409 `OptimisticVersionConflict`) |
+| `/aggregation/:ontology/:objectType` | `AggregationPage` | groupBy + metrics; `ACCURATE` / `APPROXIMATE` accuracy badging |
+| `/vertex/:rid` | Vertex workspace | scenarios + scenario-runs (PG-backed via `pkg/vertex/scenarioruns`) |
+| `/quiver/:ontology` | Quiver workbench | TimeSeries dashboards with sparklines |
+| `/aip/logic-flows` | `LogicFlowsPage` | AIP Logic Flows workspace (US-373) |
+| `/login` | `LoginPage` | JWT login + session management (sessions list / revoke-others — see [`docs/authentication.md`](../docs/authentication.md#会话管理rounds-101-102)) |
+
+Realtime is wired through `useObjectSetSubscription` against the SSE
+endpoint or `WeaveAsyncClient.objects.subscribe` over WebSocket; see
+[`docs/subscriptions/sse.md`](../docs/subscriptions/sse.md) and
+[`ws.md`](../docs/subscriptions/ws.md).
+
 ## Verification
 
 Use the narrowest command that proves the change, then run the broader gate
