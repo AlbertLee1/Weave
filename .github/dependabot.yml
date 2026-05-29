@@ -35,6 +35,17 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: scope
+    ignore:
+      # Pin vite below 8 until @tailwindcss/vite supports it. As of
+      # @tailwindcss/vite@4.2.1 the peer range is `vite ^5.2.0 || ^6 || ^7`
+      # (no vite 8), so even the coordinated vite-ecosystem group below
+      # would pick vite 8 (latest) and ERESOLVE-deadlock again. Capping at
+      # <8 lets the group settle on the highest self-consistent combo
+      # (vite 7 + @vitejs/plugin-react 6, which needs peer vite ^7, +
+      # @tailwindcss/vite ^7). Remove this ignore once @tailwindcss/vite
+      # ships a release whose peer range includes vite 8.
+      - dependency-name: "vite"
+        versions: [">=8"]
     groups:
       # The Vite build/test toolchain is version-coupled: @vitejs/plugin-react
       # and @tailwindcss/vite declare peer ranges on vite, and vitest tracks
