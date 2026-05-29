@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.1
 	github.com/axiomhq/hyperloglog v0.2.6
 	github.com/blevesearch/bleve/v2 v2.6.0
-	github.com/blevesearch/bleve_index_api v1.3.11
+	github.com/blevesearch/bleve_index_api v1.3.12
 	github.com/capitalone/fpe v1.2.1
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/cucumber/godog v0.15.1
