@@ -36,6 +36,29 @@ updates:
       prefix: "chore(deps)"
       include: scope
     groups:
+      # The Vite build/test toolchain is version-coupled: @vitejs/plugin-react
+      # and @tailwindcss/vite declare peer ranges on vite, and vitest tracks
+      # vite's major. Bumping any one of them on its own (the default for
+      # majors, which the web-minor-and-patch group below does NOT cover)
+      # produces an ERESOLVE peer-dependency dead-lock PR — e.g. vite 6→8 was
+      # blocked by @tailwindcss/vite (peer vite ^5||^6||^7), and
+      # @vitejs/plugin-react 6 requires peer vite ^7. Grouping the whole
+      # ecosystem (incl. majors) makes Dependabot raise one coordinated PR so
+      # the versions are resolved together against each other's peer ranges,
+      # instead of N unmergeable single-package majors. Listed before
+      # web-minor-and-patch so these packages match here first.
+      vite-ecosystem:
+        applies-to: version-updates
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+          - "@tailwindcss/vite"
+          - "vitest"
+          - "@vitest/*"
+        update-types:
+          - minor
+          - patch
+          - major
       web-minor-and-patch:
         applies-to: version-updates
         update-types:
