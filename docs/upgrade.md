@@ -75,6 +75,26 @@ manifest 不需要任何修改即可继续工作)。两条路径返回完全相�
 在 `go test ./internal/upgrade/...` 时执行,对所有 `migrations/*.up.sql`
 做静态扫描,任何新引入的破坏性 SQL 在 PR 提交时就会被 CI 拦下。
 
+### v2 周期新增 schema 概览
+
+Phase 6 – 8 周期内迁移目录从 ~41 个增长到 125 个 up migrations，全部
+forward-compatible（forward_compat_test 已守哨），rolling 升级不需
+maintenance window。按主题归类的代表性 migration：
+
+| 主题 | 关键 migration | 用途 |
+|---|---|---|
+| Ontology 分支 + semver | `000024_ontology_branches`, `000025_ontology_proposals`, `000091_ontology_branches_parent_tx`, `000086_aip_messages_branch` | `ontology_branches` 表 + branch 谱系 + AIP message 上的 branch 维度（Gap-T4） |
+| Audit + tamper-proof | `000020_audit_events`, `000061_object_type_data_access_audit`, `000062_audit_hash_chain` | `audit_events` + `chain_seq` / `prev_hash` / `entry_hash` 链式校验（Gap-S4） |
+| GeoTemporal | `000205_geotemporal_values`, `000208_geotemporal_spatial_indexes` | bbox + 时间过滤索引 |
+| TimeSeries | `timeseries_cagg_5min`（5 分钟连续聚合） + retention | downsample pushdown 支撑 |
+| Vertex / Quiver | `000105_vertex_scenarios`, `000109_vertex_scenario_runs` | scenarios + scenario_runs 持久层 |
+| 上层体验 | `000215_permission_requests_status_cancelled` + dashboards / notifications / reactions / permission_requests 表 | request-access workflow / 通知中心 / ReactionBar |
+| Security | `security_policies` + `value_types` + `datasource_bindings` | row + column + Marking 决策的元数据存储 |
+
+没有任何 v2 migration 进入"已登记的破坏性迁移"表 — 所有 schema 增长
+都走 `ADD COLUMN ... NULL` / 新表 / `CREATE INDEX IF NOT EXISTS` 之类
+forward-compat 形态，旧二进制读新 schema 不会失败。
+
 ## 3. 双实例演练脚本 (rolling-upgrade.sh)
 
 `scripts/rolling-upgrade.sh` 在本地或 CI 中以 `9117` (旧) / `9118` (新)
