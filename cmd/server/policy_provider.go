@@ -11,6 +11,7 @@ import (
 	"github.com/liyang/weave/pkg/auth"
 	"github.com/liyang/weave/pkg/index"
 	"github.com/liyang/weave/pkg/oms"
+	"github.com/liyang/weave/pkg/oss"
 	"github.com/liyang/weave/pkg/rls"
 	"github.com/liyang/weave/pkg/security"
 )
@@ -196,5 +197,116 @@ func (a *policyQueryAdapter) PolicyQuery(ctx context.Context, objectType string)
 		return rlsQ, nil
 	default:
 		return bleve.NewConjunctionQuery(abacQ, rlsQ), nil
+	}
+}
+
+// markingFilterAdapter implements pkg/oss/objectset.MarkingFilterProvider by
+// resolving apiName -> ObjectType (via the ontology scope on ctx) and
+// delegating to *security.Engine for the markings-enabled flag and to
+// auth.EvaluateMarkings for the strict subset check. This brings the
+// objectSets/loadObjects path to parity with ServiceImpl.applyMarkingFilter
+// (Load/Search/Get already enforce the subset refinement; the ObjectSet path
+// previously only had the executor's overlap-query pushdown).
+type markingFilterAdapter struct {
+	repo   policyProviderRepo
+	engine *security.Engine
+}
+
+func newMarkingFilterAdapter(repo policyProviderRepo, engine *security.Engine) *markingFilterAdapter {
+	return &markingFilterAdapter{repo: repo, engine: engine}
+}
+
+func (a *markingFilterAdapter) resolveObjectType(ctx context.Context, objectType string) *oms.ObjectType {
+	if a == nil || a.repo == nil {
+		return nil
+	}
+	scope := index.OntologyScopeFromContext(ctx)
+	if scope == "" {
+		return nil
+	}
+	ont, err := a.repo.GetOntology(ctx, scope)
+	if err != nil || ont == nil {
+		return nil
+	}
+	ot, err := a.repo.GetObjectTypeByAPIName(ctx, ont.RID, objectType)
+	if err != nil {
+		return nil
+	}
+	return ot
+}
+
+// MarkingsEnabled reports whether objectType opts into marking filtering.
+// Fails closed-ish in the safe direction: an unresolvable type or unwired
+// engine returns false (no extra _markings fetch), which is correct because
+// FilterByMarkings is then also a no-op.
+func (a *markingFilterAdapter) MarkingsEnabled(ctx context.Context, objectType string) bool {
+	if a == nil || a.engine == nil {
+		return false
+	}
+	ot := a.resolveObjectType(ctx, objectType)
+	if ot == nil {
+		return false
+	}
+	return a.engine.MarkingsEnabled(ot.RID)
+}
+
+// FilterByMarkings drops objects whose _markings set is not a subset of the
+// caller's markings. No-op when the engine is unwired, the type is not
+// markings-enabled, or the slice is empty.
+func (a *markingFilterAdapter) FilterByMarkings(ctx context.Context, objectType string, objs []*oss.WireObject) []*oss.WireObject {
+	if a == nil || a.engine == nil || len(objs) == 0 {
+		return objs
+	}
+	ot := a.resolveObjectType(ctx, objectType)
+	if ot == nil || !a.engine.MarkingsEnabled(ot.RID) {
+		return objs
+	}
+	user := auth.UserFromContext(ctx)
+	userMarkings := markingsAttributeSlice(user)
+	out := make([]*oss.WireObject, 0, len(objs))
+	for _, o := range objs {
+		if o == nil {
+			continue
+		}
+		var objMarkings []string
+		if o.Properties != nil {
+			objMarkings = coerceMarkingStrings(o.Properties[security.MarkingField])
+		}
+		if !auth.EvaluateMarkings(userMarkings, objMarkings) {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+func markingsAttributeSlice(user *auth.User) []string {
+	if user == nil || user.Attributes == nil {
+		return nil
+	}
+	return coerceMarkingStrings(user.Attributes["markings"])
+}
+
+// coerceMarkingStrings normalises the []string / []any / scalar-string shapes
+// Bleve and the auth layer can produce into a plain []string.
+func coerceMarkingStrings(raw any) []string {
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	default:
+		return nil
 	}
 }

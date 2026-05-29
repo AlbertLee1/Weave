@@ -1345,6 +1345,11 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			// returning full property payloads.
 			if deps.PolicyEngine != nil && deps.OmsRepo != nil {
 				objSetHandler.SetPropertyFilterProvider(newPropertyFilterAdapter(deps.OmsRepo, deps.PolicyEngine))
+				// Strict marking-subset refinement on loadObjects, to parity
+				// with ServiceImpl.applyMarkingFilter. The executor's overlap
+				// query already covers single-valued markings; this fixes the
+				// multi-valued AND case. Nil engine/repo => no-op.
+				objSetHandler.SetMarkingFilterProvider(newMarkingFilterAdapter(deps.OmsRepo, deps.PolicyEngine))
 			}
 			// US-223: wire the time-travel snapshot provider when both an
 			// OMS repo (for ObjectType resolution) and the uncached
