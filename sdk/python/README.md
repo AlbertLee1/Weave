@@ -2,10 +2,27 @@
 
 Python SDK for the [Weave](../../README.md) ontology engine.
 
-This is a hand-written, thin, typed wrapper around the Weave REST API. It
-covers the MVP surface (auth, ontology metadata, object retrieval and search,
-action apply) and intentionally leaves richer features such as composable
-ObjectSets to the HTTP API.
+A hand-written, typed wrapper around the Weave REST API covering both the
+v1 core (auth, ontology metadata, object retrieval / search, action apply)
+and the v2 Deep Parity surface that landed in Phase 6 – 8:
+
+- **`ObjectSetBuilder`** — chainable composable ObjectSets (no more raw dict)
+- **`AggregationAPI`** — builders for every metric + groupBy variant with
+  typed responses (`accuracy=ACCURATE|APPROXIMATE`)
+- **`TimeSeriesAPI`** — seven per-property TimeSeries endpoints, including
+  the `transform` path that pushes `resample` down to the server
+- **`AttachmentsAPI`** — global + per-property attachment upload / read
+- **`criteria_builders`** — submission-criteria DSL (`parameter_compare`
+  cross-field comparison + `and_` / `or_` / `not_`)
+- **`WeaveAsyncClient`** — full async mirror of every namespace
+- Typed exceptions for branching on contract instead of prose:
+  `WeaveValidationError` (400 `InvalidParameter:submissionCriteria`),
+  `WeaveVersionedLookupError` (501 `VersionedLookupNotSupported`),
+  `WeaveAuthError` (401/403, plus session management endpoints)
+
+See [`docs/python-sdk.md` § v2 APIs](../../docs/python-sdk.md#v2-apis) for
+the full reference and [`docs/cookbook/07-builders.md`](../../docs/cookbook/07-builders.md)
+for a runnable end-to-end example covering all of the above.
 
 ## Install
 
