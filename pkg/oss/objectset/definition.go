@@ -190,6 +190,9 @@ func (d *Definition) Validate() error {
 			if d.Link != "" {
 				return fmt.Errorf("searchAround objectSet cannot set both link and path")
 			}
+			if len(d.Path) > MaxSearchAroundHops {
+				return fmt.Errorf("searchAround path has %d hops, exceeds the %d-hop limit for chained searchAround", len(d.Path), MaxSearchAroundHops)
+			}
 			for i, step := range d.Path {
 				if step.Link == "" {
 					return fmt.Errorf("searchAround path[%d] requires link", i)
