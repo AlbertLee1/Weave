@@ -1340,6 +1340,47 @@ func TestBDD_Aggregate_MetricDirection_OrdersBuckets(t *testing.T) {
 	}
 }
 
+// TestBDD_Aggregate_MetricPropertyIdentifier is the HTTP contract for naming
+// an aggregation metric's target via propertyIdentifier instead of a bare
+// field (syntax ref L461).
+//
+//	Given employees with ages summing to 150
+//	When the client aggregates sum via propertyIdentifier{apiName:"age"}
+//	     grouped by department
+//	Then the metric resolves to the age field and the per-bucket sums total
+//	     150 — identical to using field:"age".
+func TestBDD_Aggregate_MetricPropertyIdentifier(t *testing.T) {
+	env := setupTestServer(t)
+	ontRid, _ := seedOntology(t, env)
+	indexEmployees(t, env)
+
+	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/objects/Employee/aggregate", map[string]interface{}{
+		"aggregation": []map[string]interface{}{
+			{"type": "sum", "name": "totalAge",
+				"propertyIdentifier": map[string]interface{}{"property": map[string]interface{}{"apiName": "age"}}},
+		},
+		"groupBy": []map[string]interface{}{
+			{"type": "exact", "field": "department"},
+		},
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var body map[string]interface{}
+	decodeJSON(t, resp, &body)
+	data := body["data"].([]interface{})
+	total := 0.0
+	for _, row := range data {
+		metrics := row.(map[string]interface{})["metrics"].([]interface{})
+		total += findE2EMetric(t, metrics, "totalAge").(float64)
+	}
+	if total != 150 {
+		t.Fatalf("sum(age) via propertyIdentifier across buckets = %v, want 150", total)
+	}
+}
+
 // seedEventOntology creates an ontology + "Event" ObjectType whose startDate
 // property is a numeric (epoch-seconds) field, then ensures its Bleve index.
 // Returns the ontology RID. Used by the duration-bucketing BDD scenarios.

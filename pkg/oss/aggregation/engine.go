@@ -117,6 +117,16 @@ type HavingClause struct {
 	Value  float64 `json:"value"`
 }
 
+// PropertyIdentifier is the Palantir alternative to a bare `field` on an
+// aggregation metric (syntax ref L105/L461): {"property":{"apiName":"x"}}.
+// `field` and `propertyIdentifier` are mutually exclusive; the engine resolves
+// the latter to Field before any metric runs.
+type PropertyIdentifier struct {
+	Property struct {
+		APIName string `json:"apiName"`
+	} `json:"property"`
+}
+
 // AggregationSpec defines what to aggregate.
 type AggregationSpec struct {
 	Type        string    `json:"type"`                  // "count", "min", "max", "sum", "avg", "approximateDistinct", "exactDistinct", "standardDeviation", "variance", "approximatePercentile", "collectList"
@@ -133,6 +143,10 @@ type AggregationSpec struct {
 	// When several metrics carry a direction the first one wins. Ignored when
 	// there is no groupBy (a single result row has nothing to order).
 	Direction string `json:"direction,omitempty"`
+	// PropertyIdentifier is the structured alternative to Field (syntax ref
+	// L461). Mutually exclusive with Field; resolved to Field before metrics
+	// run. nil falls back to the plain Field path.
+	PropertyIdentifier *PropertyIdentifier `json:"propertyIdentifier,omitempty"`
 }
 
 // GroupBySpec defines how to group results.
@@ -219,6 +233,9 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 		return nil, err
 	}
 	if err := validateApproxConfig(req); err != nil {
+		return nil, err
+	}
+	if err := resolveMetricPropertyIdentifiers(req); err != nil {
 		return nil, err
 	}
 	if err := validateMetricDirections(req.Aggregations); err != nil {

@@ -79,6 +79,11 @@ Last updated: round 158 (after PR #57 merge).
   `fusionStrategy: min | rrf` (RRF k = 60) for rank fusion.
 * `composite_cursor.go` makes 3-type Northwind HasOwner interface paging
   stable; `us463_interface_cursor_stability_test.go` locks the wire shape.
+* Aggregation metrics may now name their target via `propertyIdentifier`
+  (`{"property":{"apiName":"x"}}`) as an alternative to a bare `field`
+  (syntax ref L461) — mutually exclusive with `field`, resolved before any
+  metric runs, and applied recursively to subAggregations. See
+  `metric_property.go` + `TestBDD_Aggregate_MetricPropertyIdentifier`.
 * Aggregation result rows can now be ordered by an aggregated value: an
   `aggregation` metric carrying a `direction` (`ASC`/`DESC`) sorts the groupBy
   buckets by that metric (Palantir "按聚合值排序", syntax ref L463/L623) — e.g.
