@@ -223,6 +223,12 @@ func (d *Definition) Validate() error {
 		default:
 			return fmt.Errorf("nearestNeighbors: unknown fusionStrategy %q (allowed: \"\" / \"min\" / \"rrf\")", d.FusionStrategy)
 		}
+		if d.NumNeighbors != nil && *d.NumNeighbors > MaxNearestNeighbors {
+			return fmt.Errorf("nearestNeighbors: numNeighbors %d exceeds the %d-neighbor limit", *d.NumNeighbors, MaxNearestNeighbors)
+		}
+		if d.Query != nil && d.Query.Vector != nil && len(d.Query.Vector.Value) > MaxVectorDimension {
+			return fmt.Errorf("nearestNeighbors: query vector has %d dimensions, exceeds the %d-dimension limit", len(d.Query.Vector.Value), MaxVectorDimension)
+		}
 	case "withProperties":
 		if d.ObjectSet == nil {
 			return fmt.Errorf("withProperties requires objectSet")

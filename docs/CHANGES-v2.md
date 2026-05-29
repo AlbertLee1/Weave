@@ -79,6 +79,11 @@ Last updated: round 158 (after PR #57 merge).
   `fusionStrategy: min | rrf` (RRF k = 60) for rank fusion.
 * `composite_cursor.go` makes 3-type Northwind HasOwner interface paging
   stable; `us463_interface_cursor_stability_test.go` locks the wire shape.
+* `nearestNeighbors` now enforces the Foundry-documented limits K ≤ 100 and
+  vector dimension ≤ 2048 (syntax ref L115): `numNeighbors` > 100 or a raw
+  query vector longer than 2048 is rejected at `Definition.Validate` with a
+  400 `InvalidObjectSet` instead of being handed to the vector store. See
+  `nn_caps_test.go::TestBDD_NearestNeighbors_OverLimitK_Rejected`.
 * Chained `searchAround` now enforces the Foundry-documented 3-hop ceiling
   ("最多 3 层链式 SearchAround", syntax ref L97/L226): a `Path` of more than
   `MaxSearchAroundHops` (3) is rejected at `Definition.Validate` with a 400

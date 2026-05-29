@@ -6,6 +6,17 @@ import (
 	"sort"
 )
 
+// MaxNearestNeighbors and MaxVectorDimension are the Foundry-documented
+// ceilings on a nearestNeighbors query: "限制：K ≤ 100，向量维度 ≤ 2048"
+// (docs/Palantir ObjectSet & OntologyAggregation 完整语法参考.md L115).
+// Definition.Validate rejects requests above these with
+// ErrInvalidObjectSetDefinition (400) so an over-large K or a mis-dimensioned
+// raw query vector fails at validation instead of stressing the vector store.
+const (
+	MaxNearestNeighbors = 100
+	MaxVectorDimension  = 2048
+)
+
 // NNVectorQuery is the request the executor passes to a NNVectorStore. It
 // carries the resolved query vector together with the metadata the store
 // needs to scope its kNN search.
