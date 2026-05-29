@@ -1114,6 +1114,18 @@ func NewFullRouter(deps *ServerDeps) *chi.Mux {
 			if deps.PolicyEngine != nil && deps.OmsRepo != nil {
 				ossHandler.SetPropertyFilterProvider(newPropertyFilterAdapter(deps.OmsRepo, deps.PolicyEngine))
 			}
+			// Row-level parity for the direct /objects/{type}/aggregate path:
+			// reuse the SAME policyQueryAdapter the ObjectSet aggregate path
+			// uses (US-046 / US-256) so count/sum/avg cannot leak rows the
+			// caller's row policy forbids. Without this the endpoint hit Bleve
+			// with MatchAll and aggregated over every row regardless of policy.
+			if deps.OmsRepo != nil && (deps.PolicyEngine != nil || deps.RowPolicyEngine != nil) {
+				rowPolicyAdapter := newPolicyQueryAdapter(deps.OmsRepo, deps.PolicyEngine)
+				if deps.RowPolicyEngine != nil {
+					rowPolicyAdapter.SetRowPolicyEngine(deps.RowPolicyEngine)
+				}
+				ossHandler.SetRowPolicyQueryProvider(rowPolicyAdapter)
+			}
 			if deps.OmsRepo != nil {
 				ossHandler.SetOmsRepo(deps.OmsRepo)
 			}

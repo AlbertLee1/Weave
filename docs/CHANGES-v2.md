@@ -108,6 +108,18 @@ Last updated: round 158 (after PR #57 merge).
   marking semantics, fronted by a CEL DSL evaluator and decision / policy
   caches. Wired into `pkg/oss/service_impl.go` so the gates are on the hot
   path, with integration / aggregate / BDD / bench tests.
+* Row-level policy is now pushed down on the direct
+  `/objects/{objectType}/aggregate` endpoint too: `handlers_aggregate.go`
+  previously hit Bleve with `MatchAll`, so `count`/`sum`/`avg` leaked the
+  existence and values of rows the caller's row policy forbids (only the
+  column-level `PropertyFilterProvider` gate was applied). It now compiles
+  the caller's policy via a `RowPolicyQueryProvider` (the same
+  `policyQueryAdapter` the ObjectSet aggregate path uses) and feeds it to
+  `aggregation.Engine.AggregateWithQuery` as the base query. See
+  `handlers_aggregate_row_policy_test.go::TestBDD_Aggregation_RowPolicyScopesCount`.
+  Strict marking-subset and row-CEL enforcement on the facet path (vs the
+  loose marking-overlap clause already baked into the compiled query) remains
+  a SHOULD-layer follow-up that needs an engine-level doc-ID prefilter.
 * SQL Query sandbox: 30+ forbidden keywords, system-table guard, full
   tokenizer; `pgx.ReadOnly` + 5 s timeout + 10 K row cap with
   `ErrQueryTimeout` typed mapping.

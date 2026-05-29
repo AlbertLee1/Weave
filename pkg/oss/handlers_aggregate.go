@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 
+	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/go-chi/chi/v5"
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/httputil"
@@ -42,6 +43,29 @@ func (h *Handler) SetAggregation(engine *aggregation.Engine, mgr *index.Manager)
 // unrestricted access.
 func (h *Handler) SetPropertyFilterProvider(p PropertyFilterProvider) {
 	h.propertyFilter = p
+}
+
+// RowPolicyQueryProvider compiles the caller's row-level policy into a Bleve
+// query for objectType on ctx. The contract mirrors
+// pkg/oss/objectset.PolicyQueryProvider so cmd/server can wire the SAME
+// *policyQueryAdapter into both the ObjectSet aggregate path and the direct
+// /objects/{type}/aggregate path: return a *query.MatchAllQuery (or nil)
+// when no ROW-scope policy is attached, otherwise the compiled filter. Kept
+// as a narrow interface so pkg/oss does not import pkg/security / pkg/rls
+// directly. An error fails the request closed (500) rather than silently
+// aggregating over the whole index.
+type RowPolicyQueryProvider interface {
+	PolicyQuery(ctx context.Context, objectType string) (query.Query, error)
+}
+
+// SetRowPolicyQueryProvider wires the row-level policy gate into the
+// aggregation handler. When attached, AggregateObjects pushes the compiled
+// policy query down as the aggregation base query (AND-combined with the
+// caller's where), so count/sum/avg only ever observe rows the caller is
+// permitted to read. A nil provider leaves the legacy MatchAll behaviour
+// untouched.
+func (h *Handler) SetRowPolicyQueryProvider(p RowPolicyQueryProvider) {
+	h.rowPolicyProvider = p
 }
 
 // rejectFilteredAggregationFields enforces the US-049 column-level gate on
@@ -266,7 +290,23 @@ func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.aggEngine.Aggregate(idx, &req)
+	// Row-level policy pushdown: compile the caller's policy into a Bleve
+	// base query so the facet engine only ever scans rows the caller may
+	// read. A nil provider leaves baseQuery nil, which AggregateWithQuery
+	// treats as MatchAll — identical to the legacy unrestricted path.
+	var baseQuery query.Query
+	if h.rowPolicyProvider != nil {
+		policyQ, perr := h.rowPolicyProvider.PolicyQuery(ctx, objectType)
+		if perr != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("RowPolicyEvaluationFailed", map[string]string{
+				"reason": perr.Error(),
+			}))
+			return
+		}
+		baseQuery = policyQ
+	}
+
+	result, err := h.aggEngine.AggregateWithQuery(idx, baseQuery, &req)
 	if err != nil {
 		apierror.WriteJSON(w, apierror.NewInternal("AggregationFailed", map[string]string{
 			"reason": err.Error(),
