@@ -182,6 +182,45 @@ func TestBDD_LoadObjects_MarkingSubset_WithSelect(t *testing.T) {
 	}
 }
 
+// TestBDD_LoadObjectsAsOf_MarkingSubsetFilter closes the time-travel
+// marking-bypass: the ?asOf= read path must apply the same subset filter as
+// the live path, else a caller could read marking-restricted rows via
+// ?asOf=<now>.
+func TestBDD_LoadObjectsAsOf_MarkingSubsetFilter(t *testing.T) {
+	handler, _ := setupMarkingHandlerTest(t)
+	handler.SetMarkingFilterProvider(&staticMarkingFilter{enabled: true, user: []string{"A"}})
+	snapProvider := newFakeSnapshotProvider()
+	snapProvider.asOfData["2020-01-01T00:00:00Z"] = []objectset.ObjectSnapshot{
+		{PrimaryKey: "e1", Properties: map[string]interface{}{"id": "e1", "name": "alice", "_markings": []interface{}{"A"}}},
+		{PrimaryKey: "e2", Properties: map[string]interface{}{"id": "e2", "name": "bob", "_markings": []interface{}{"A", "B"}}},
+	}
+	handler.SetHistorySnapshotProvider(snapProvider)
+
+	r := chi.NewRouter()
+	r.Post("/api/v2/ontologies/{ontologyApiName}/objectSets/loadObjects", handler.LoadObjects)
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v2/ontologies/myOntology/objectSets/loadObjects?asOf=2020-01-01T00:00:00Z",
+		strings.NewReader(`{"objectSet":{"type":"base","objectType":"employee"},"select":["id","name"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v (body=%s)", err, rec.Body.String())
+	}
+	if len(resp.Data) != 1 || resp.Data[0]["__primaryKey"] != "e1" {
+		t.Fatalf("asOf load filtered = %v, want only e1 (e2 {A,B} not subset of {A})", resp.Data)
+	}
+	if _, leaked := resp.Data[0]["_markings"]; leaked {
+		t.Errorf("_markings leaked into asOf response: %v", resp.Data[0])
+	}
+}
+
 // TestLoadObjects_NoMarkingProvider_AllVisible guards back-compat: without a
 // provider every row is returned regardless of markings.
 func TestLoadObjects_NoMarkingProvider_AllVisible(t *testing.T) {

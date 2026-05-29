@@ -140,8 +140,11 @@ Last updated: round 158 (after PR #57 merge).
   caller's `select` omits it) for the subset check, then strips it from the
   response. Wired via a narrow `MarkingFilterProvider`
   (`cmd/server` `markingFilterAdapter`); nil-safe (no-op when unwired or the
-  ObjectType is not markings-enabled). See
-  `marking_subset_test.go::TestBDD_LoadObjects_MarkingSubsetFilter`.
+  ObjectType is not markings-enabled). The same subset filter also gates the
+  `?asOf=` time-travel read path, closing a marking-bypass where a caller could
+  otherwise read marking-restricted rows via `?asOf=<now>`. See
+  `marking_subset_test.go::TestBDD_LoadObjects_MarkingSubsetFilter` /
+  `TestBDD_LoadObjectsAsOf_MarkingSubsetFilter`.
 * Row-level policy is now pushed down on the direct
   `/objects/{objectType}/aggregate` endpoint too: `handlers_aggregate.go`
   previously hit Bleve with `MatchAll`, so `count`/`sum`/`avg` leaked the

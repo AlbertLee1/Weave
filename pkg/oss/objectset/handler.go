@@ -709,6 +709,22 @@ func (h *Handler) loadObjectsAsOf(w http.ResponseWriter, r *http.Request, ctx co
 	}
 	pageSnaps := snapshots[start:end]
 
+	// Mandatory-marking subset filtering must also gate the time-travel read
+	// path, else a caller could bypass markings via ?asOf=<now>. Mirror the
+	// live LoadObjects handling: preserve _markings through select-filtering
+	// (snapshot Properties already carry it) so the subset check sees it, then
+	// strip it from the response.
+	asOfMarkingFieldAdded := h.markingFilter != nil && len(req.Select) > 0 &&
+		h.markingFilter.MarkingsEnabled(ctx, req.ObjectSet.ObjectType)
+	if asOfMarkingFieldAdded {
+		for _, f := range req.Select {
+			if f == markingField {
+				asOfMarkingFieldAdded = false
+				break
+			}
+		}
+	}
+
 	data := make([]*oss.WireObject, 0, len(pageSnaps))
 	for _, snap := range pageSnaps {
 		props := snap.Properties
@@ -719,9 +735,25 @@ func (h *Handler) loadObjectsAsOf(w http.ResponseWriter, r *http.Request, ctx co
 					filtered[f] = v
 				}
 			}
+			if asOfMarkingFieldAdded {
+				if v, ok := props[markingField]; ok {
+					filtered[markingField] = v
+				}
+			}
 			props = filtered
 		}
 		data = append(data, oss.FormatObject(req.ObjectSet.ObjectType, snap.PrimaryKey, props))
+	}
+
+	if h.markingFilter != nil {
+		data = h.markingFilter.FilterByMarkings(ctx, req.ObjectSet.ObjectType, data)
+		if asOfMarkingFieldAdded {
+			for _, obj := range data {
+				if obj != nil && obj.Properties != nil {
+					delete(obj.Properties, markingField)
+				}
+			}
+		}
 	}
 
 	data, err = h.applyPropertyVisibility(ctx, req.ObjectSet.ObjectType, data)
