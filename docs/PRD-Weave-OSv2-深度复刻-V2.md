@@ -802,7 +802,7 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 ### 8.3 度量如何采集
 
 - Parity 套件通过率：CI 报告 + `test/foundry_parity/report.json`
-- 模块完成度：每 Phase 退出重新跑本 PRD §2.1 的自评分 → 归档到 `docs/status/phase-N.md`
+- 模块完成度：每 Phase 退出重新跑本 PRD §2.1 的自评分 → 当前形态是 inline-in-PRD（§2.1 矩阵 + §6 实施状态总览 round-stamped），未来如需正式归档可拆出 `docs/status/phase-N.md`，当前不必需
 - 测试覆盖率：`go test -cover`、`vitest --coverage`、`pytest --cov`
 - 性能：`make bench` 写入 `bench/history/`
 - Funnel lag：Prometheus metric `weave_funnel_lag_seconds`
@@ -820,16 +820,17 @@ Weave 是一个**单机开源的 Palantir OSv2 服务与上层体验复刻**，�
 
 ### 9.2 文档同步
 
-- 每个 Phase 退出更新：
-  - `README.md` 功能表
-  - `docs/单机复刻 Palantir OSv2 本体层 — 完整技术架构.md` 架构图
-  - `docs/api/` OpenAPI spec
-  - `docs/CHANGES-v2.md` 变更日志
-- 新增文档：
-  - `docs/security/policy-model.md`
-  - `docs/functions/goja-runtime.md`
-  - `docs/subscriptions/sse.md`
-  - `docs/branches/ontology-versioning.md`
+- 每个 Phase 退出更新（**状态：round 173**）：
+  - ✅ `README.md` — v1 baseline + v2 Deep Parity features 双段
+  - ✅ `docs/单机复刻 Palantir OSv2 本体层 — 完整技术架构.md` — Appendix A 列 Phase 6-8 落地状态
+  - ✅ `docs/api/` OpenAPI spec — 随 `make sync-openapi` 同步
+  - ✅ `docs/CHANGES-v2.md` — v2 release notes（Highlights / Changes by area / Breaking changes / Upgrade notes / References）
+- 新增文档（**状态：round 173**）：
+  - ✅ `docs/security/policy-model.md` — Engine Implementation Details (CEL + decision_cache + marking-write-guard + auto-marking + bench)
+  - ✅ `docs/subscriptions/sse.md` + `docs/subscriptions/ws.md`（WS 端点 round 167 加 standalone doc）
+  - ✅ Goja runtime 文档化 — 不独立成文，分布在 `docs/CHANGES-v2.md` § Highlights + `docs/单机复刻 Palantir OSv2...md` § 2.4 Appendix A + Gap-A5 节
+  - ✅ Ontology branching + RID `@vN` 文档化 — 同上分布在 `docs/CHANGES-v2.md` + 技术架构 Appendix A + Gap-T4 节，无独立成文需求
+- 周期内补齐的额外 docs alignment（17 个文档全栈对齐 — 详见 round 173 PR #57 description）：`docs/mcp.md` (Completion) / `docs/python-sdk.md` (v2 APIs) / `docs/cli.md` (action/aggregate/objectset 章节) / `docs/cookbook/07-builders.md` (Builders + typed errors) / `docs/authentication.md` (Session Management) / `sdk/python/README.md` (PyPI 包描述) / `examples/README.md` (Next steps 导航) / `web/README.md` (Pages 表) / `AGENTS.md` (v2 packages pointer) / `CLAUDE.md` (Backend Layers tree 30+ packages)。
 
 ### 9.3 Breaking changes（v2 相对 v1）
 
