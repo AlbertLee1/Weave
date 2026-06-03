@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   listProperties,
+  listSharedPropertyTypes,
   createProperty,
   updateProperty,
   deleteProperty,
@@ -16,6 +17,19 @@ export function useProperties(
     queryKey: ['properties', ontologyApiName, objectTypeRid],
     queryFn: () => listProperties(ontologyApiName, objectTypeRid),
     enabled: !!ontologyApiName && !!objectTypeRid,
+  });
+}
+
+// useSharedPropertyTypes lists the ontology's reusable SharedPropertyType
+// definitions, used by the Add-property form to offer an optional SPT
+// binding. Failures degrade gracefully (the selector hides) — no retry so
+// a missing endpoint surfaces immediately rather than spinning.
+export function useSharedPropertyTypes(ontologyApiName: string) {
+  return useQuery({
+    queryKey: ['sharedPropertyTypes', ontologyApiName],
+    queryFn: () => listSharedPropertyTypes(ontologyApiName),
+    enabled: !!ontologyApiName,
+    retry: false,
   });
 }
 
