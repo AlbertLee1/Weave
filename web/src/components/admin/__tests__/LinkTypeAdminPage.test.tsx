@@ -562,6 +562,136 @@ describe('LinkTypeAdminPage', () => {
     });
   });
 
+  it('US-209 create form sends inverseLinkRid when an inverse link is selected', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /\+ New Link Type/i }));
+    await user.type(screen.getByLabelText(/Display Name \*/i), 'Routed Via');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /^Cardinality$/i }),
+      'MANY_TO_MANY',
+    );
+    const inverseSelect = screen.getByRole('combobox', {
+      name: /^Inverse link$/i,
+    }) as HTMLSelectElement;
+    // The "(none)" placeholder maps to an empty value.
+    expect(inverseSelect.value).toBe('');
+    await user.selectOptions(inverseSelect, 'ri.ontology.main.link-type.l2');
+    await user.click(screen.getByRole('button', { name: /^Create$/i }));
+
+    await waitFor(() => {
+      expect(state.createCalls.length).toBe(1);
+    });
+    expect(state.createCalls[0].body).toMatchObject({
+      inverseLinkRid: 'ri.ontology.main.link-type.l2',
+    });
+  });
+
+  it('US-209 create form omits inverseLinkRid when "(none)" is selected', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /\+ New Link Type/i }));
+    await user.type(screen.getByLabelText(/Display Name \*/i), 'No Inverse');
+    await user.click(screen.getByRole('button', { name: /^Create$/i }));
+
+    await waitFor(() => {
+      expect(state.createCalls.length).toBe(1);
+    });
+    const body = state.createCalls[0].body as Record<string, unknown>;
+    expect(body.inverseLinkRid).toBeUndefined();
+  });
+
+  it('US-209 edit form sets inverseLinkRid via PUT when an inverse is chosen', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    const editButtons = screen.getAllByRole('button', { name: /^Edit$/i });
+    // Rows sorted asc: index 1 = Employee → Department (rid l1)
+    await user.click(editButtons[1]);
+
+    const inverseSelect = (await screen.findByRole('combobox', {
+      name: /^Inverse link$/i,
+    })) as HTMLSelectElement;
+    expect(inverseSelect.value).toBe('');
+    await user.selectOptions(inverseSelect, 'ri.ontology.main.link-type.l2');
+    await user.click(screen.getByRole('button', { name: /Save changes/i }));
+
+    await waitFor(() => {
+      expect(state.updateCalls.length).toBe(1);
+    });
+    expect(state.updateCalls[0]).toMatchObject({
+      rid: 'ri.ontology.main.link-type.l1',
+      body: expect.objectContaining({
+        inverseLinkRid: 'ri.ontology.main.link-type.l2',
+      }),
+    });
+  });
+
+  it('US-209 edit form preloads and clears an existing inverseLinkRid', async () => {
+    const user = userEvent.setup();
+    state.linkTypes[0] = {
+      ...state.linkTypes[0],
+      inverseLinkRid: 'ri.ontology.main.link-type.l2',
+    } as (typeof state.linkTypes)[number];
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    const editButtons = screen.getAllByRole('button', { name: /^Edit$/i });
+    // Rows sorted asc: index 1 = Employee → Department (rid l1)
+    await user.click(editButtons[1]);
+
+    const inverseSelect = (await screen.findByRole('combobox', {
+      name: /^Inverse link$/i,
+    })) as HTMLSelectElement;
+    // Preloaded from the LinkType's current inverseLinkRid.
+    expect(inverseSelect.value).toBe('ri.ontology.main.link-type.l2');
+    // Clear it back to "(none)".
+    await user.selectOptions(inverseSelect, '');
+    await user.click(screen.getByRole('button', { name: /Save changes/i }));
+
+    await waitFor(() => {
+      expect(state.updateCalls.length).toBe(1);
+    });
+    // Clearing sends an empty string (tri-state: '' = clear the pairing).
+    expect(state.updateCalls[0]).toMatchObject({
+      rid: 'ri.ontology.main.link-type.l1',
+      body: expect.objectContaining({
+        inverseLinkRid: '',
+      }),
+    });
+  });
+
+  it('US-209 inverse-link selector excludes the link being edited itself', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    const editButtons = screen.getAllByRole('button', { name: /^Edit$/i });
+    // Rows sorted asc: index 1 = Employee → Department (rid l1)
+    await user.click(editButtons[1]);
+
+    const inverseSelect = (await screen.findByRole('combobox', {
+      name: /^Inverse link$/i,
+    })) as HTMLSelectElement;
+    const optionValues = Array.from(inverseSelect.options).map((o) => o.value);
+    // The edited link (l1) is excluded; other links + the "(none)" empty
+    // option remain.
+    expect(optionValues).not.toContain('ri.ontology.main.link-type.l1');
+    expect(optionValues).toContain('');
+    expect(optionValues).toContain('ri.ontology.main.link-type.l2');
+    expect(optionValues).toContain('ri.ontology.main.link-type.l3');
+  });
+
   it('confirms delete and calls the DELETE endpoint', async () => {
     const user = userEvent.setup();
     renderPage();

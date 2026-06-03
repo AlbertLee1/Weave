@@ -208,6 +208,7 @@ export function LinkTypeAdminPage() {
         <EditLinkTypeModal
           ontologyApiName={ontologyApiName}
           linkType={editing}
+          existing={linkTypes ?? []}
           onClose={() => setEditing(null)}
         />
       )}
@@ -332,6 +333,8 @@ interface CreateFormState {
   cardinality: Cardinality;
   required: boolean;
   propagateMarkings: boolean;
+  // US-209: RID of the inverse LinkType, or '' for "(none)".
+  inverseLinkRid: string;
   foreignKeyConfig: string;
   apiNameDirty: boolean;
   typeClasses: string[];
@@ -358,6 +361,7 @@ function CreateLinkTypeModal({
     cardinality: 'ONE_TO_MANY',
     required: false,
     propagateMarkings: false,
+    inverseLinkRid: '',
     foreignKeyConfig: '',
     apiNameDirty: false,
     typeClasses: [],
@@ -413,6 +417,9 @@ function CreateLinkTypeModal({
       cardinality: form.cardinality,
       required: form.required,
       propagateMarkings: form.propagateMarkings,
+      // US-209: only send the inverse pairing when one was chosen; omit
+      // the field for "(none)".
+      inverseLinkRid: form.inverseLinkRid || undefined,
       foreignKeyConfig:
         needsForeignKey && parsedForeignKey !== undefined
           ? parsedForeignKey
@@ -582,6 +589,12 @@ function CreateLinkTypeModal({
           />
           <span>Propagate markings (inherit source object markings on link)</span>
         </label>
+        <InverseLinkSelect
+          testIdPrefix="link-type-create"
+          options={existing}
+          value={form.inverseLinkRid}
+          onChange={(rid) => setForm((f) => ({ ...f, inverseLinkRid: rid }))}
+        />
         <TypeClassCheckboxes
           testIdPrefix="link-type-create"
           selected={form.typeClasses}
@@ -623,17 +636,30 @@ interface EditFormState {
   displayName: string;
   description: string;
   required: boolean;
+  // US-209: chosen inverse LinkType RID, or '' for "(none)".
+  inverseLinkRid: string;
+  inverseLinkRidDirty: boolean;
   typeClasses: string[];
   typeClassesDirty: boolean;
+}
+
+// The backend serializes `inverseLinkRid` on the LinkType wire format, but
+// the shared LinkType type (api/types.ts) does not declare it. Read it
+// defensively so the edit form can preload the current pairing.
+function linkTypeInverseRid(lt: LinkType): string {
+  const rid = (lt as { inverseLinkRid?: unknown }).inverseLinkRid;
+  return typeof rid === 'string' ? rid : '';
 }
 
 function EditLinkTypeModal({
   ontologyApiName,
   linkType,
+  existing,
   onClose,
 }: {
   ontologyApiName: string;
   linkType: LinkType;
+  existing: LinkType[];
   onClose: () => void;
 }) {
   const update = useUpdateLinkType(ontologyApiName);
@@ -641,6 +667,8 @@ function EditLinkTypeModal({
     displayName: linkType.displayName,
     description: linkType.description ?? '',
     required: linkType.required,
+    inverseLinkRid: linkTypeInverseRid(linkType),
+    inverseLinkRidDirty: false,
     typeClasses: linkType.typeClasses ?? [],
     typeClassesDirty: false,
   });
@@ -653,6 +681,11 @@ function EditLinkTypeModal({
       displayName: form.displayName.trim(),
       description: form.description.trim() || undefined,
       required: form.required,
+      // US-209: tri-state — only send when the user touched the selector.
+      // '' clears the pairing, an rid sets it; omitting preserves it.
+      inverseLinkRid: form.inverseLinkRidDirty
+        ? form.inverseLinkRid
+        : undefined,
       // Only send typeClasses when the user actually toggled a box. Mirrors
       // the backend tri-state: omit = preserve.
       typeClasses: form.typeClassesDirty ? [...form.typeClasses] : undefined,
@@ -739,6 +772,19 @@ function EditLinkTypeModal({
           />
           <span>Required link (non-nullable)</span>
         </label>
+        <InverseLinkSelect
+          testIdPrefix="link-type-edit"
+          options={existing}
+          excludeRid={linkType.rid}
+          value={form.inverseLinkRid}
+          onChange={(rid) =>
+            setForm((f) => ({
+              ...f,
+              inverseLinkRid: rid,
+              inverseLinkRidDirty: true,
+            }))
+          }
+        />
         <TypeClassCheckboxes
           testIdPrefix="link-type-edit"
           selected={form.typeClasses}
@@ -932,6 +978,53 @@ function Field({
         </span>
       )}
     </label>
+  );
+}
+
+// US-209: lets an admin pair the LinkType with its bidirectional inverse.
+// Lists the OTHER LinkTypes in the ontology by displayName (excludeRid drops
+// the link being edited so it can't point at itself). The form value is the
+// chosen LinkType's RID; "(none)" maps to ''.
+function InverseLinkSelect({
+  testIdPrefix,
+  options,
+  value,
+  onChange,
+  excludeRid,
+}: {
+  testIdPrefix: string;
+  options: LinkType[];
+  value: string;
+  onChange: (rid: string) => void;
+  excludeRid?: string;
+}) {
+  const choices = useMemo(
+    () =>
+      options
+        .filter((lt) => lt.rid !== excludeRid)
+        .sort((a, b) => a.displayName.localeCompare(b.displayName)),
+    [options, excludeRid],
+  );
+  return (
+    <Field
+      label="Inverse link"
+      hint="Optional. Pair this LinkType with the LinkType describing the reverse relationship (bidirectional links)."
+    >
+      <select
+        aria-label="Inverse link"
+        data-testid={`${testIdPrefix}-inverse-link`}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={inputClass}
+      >
+        <option value="">(none)</option>
+        {choices.map((lt) => (
+          <option key={lt.rid} value={lt.rid}>
+            {lt.displayName} ({lt.apiName})
+          </option>
+        ))}
+      </select>
+    </Field>
   );
 }
 
