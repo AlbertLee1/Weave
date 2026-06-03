@@ -332,6 +332,116 @@ describe('LinkTypeAdminPage', () => {
     });
   });
 
+  it('create shows join-table editor only for MANY_TO_MANY (mirrors FK editor)', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /\+ New Link Type/i }));
+    // Default cardinality is ONE_TO_MANY → join-table editor hidden, FK shown.
+    expect(
+      await screen.findByLabelText(/Foreign key config/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/Join table config/i),
+    ).not.toBeInTheDocument();
+    const cardinalitySelect = screen.getByRole('combobox', {
+      name: /^Cardinality$/i,
+    }) as HTMLSelectElement;
+    await user.selectOptions(cardinalitySelect, 'MANY_TO_MANY');
+    await waitFor(() => {
+      // FK editor hidden, join-table editor shown.
+      expect(
+        screen.queryByLabelText(/Foreign key config/i),
+      ).not.toBeInTheDocument();
+    });
+    expect(screen.getByLabelText(/Join table config/i)).toBeInTheDocument();
+    expect(
+      screen.getByTestId('link-type-create-join-table'),
+    ).toBeInTheDocument();
+  });
+
+  it('create sends joinTableConfig in the POST body for a MANY_TO_MANY link', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /\+ New Link Type/i }));
+    await user.type(
+      screen.getByLabelText(/Display Name \*/i),
+      'Project Members',
+    );
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /^Cardinality$/i }),
+      'MANY_TO_MANY',
+    );
+    const joinTable = screen.getByLabelText(
+      /Join table config/i,
+    ) as HTMLTextAreaElement;
+    fireEvent.change(joinTable, {
+      target: {
+        value:
+          '{"datasetRid":"ds1","sourceColumn":"empId","targetColumn":"projId"}',
+      },
+    });
+    await user.click(screen.getByRole('button', { name: /^Create$/i }));
+
+    await waitFor(() => {
+      expect(state.createCalls.length).toBe(1);
+    });
+    expect(state.createCalls[0].body).toMatchObject({
+      cardinality: 'MANY_TO_MANY',
+      joinTableConfig: {
+        datasetRid: 'ds1',
+        sourceColumn: 'empId',
+        targetColumn: 'projId',
+      },
+    });
+  });
+
+  it('create omits joinTableConfig when the editor is left empty', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /\+ New Link Type/i }));
+    await user.type(screen.getByLabelText(/Display Name \*/i), 'No Join Config');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /^Cardinality$/i }),
+      'MANY_TO_MANY',
+    );
+    await user.click(screen.getByRole('button', { name: /^Create$/i }));
+
+    await waitFor(() => {
+      expect(state.createCalls.length).toBe(1);
+    });
+    const body = state.createCalls[0].body as Record<string, unknown>;
+    expect(body.joinTableConfig).toBeUndefined();
+  });
+
+  it('create rejects invalid JSON in joinTableConfig', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /\+ New Link Type/i }));
+    await user.type(screen.getByLabelText(/Display Name \*/i), 'With Join');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /^Cardinality$/i }),
+      'MANY_TO_MANY',
+    );
+    const joinTable = screen.getByLabelText(
+      /Join table config/i,
+    ) as HTMLTextAreaElement;
+    fireEvent.change(joinTable, { target: { value: '{not valid' } });
+    expect(screen.getByText(/Invalid JSON/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Create$/i })).toBeDisabled();
+  });
+
   it('create submits the expected payload and closes modal', async () => {
     const user = userEvent.setup();
     renderPage();

@@ -336,6 +336,9 @@ interface CreateFormState {
   // US-209: RID of the inverse LinkType, or '' for "(none)".
   inverseLinkRid: string;
   foreignKeyConfig: string;
+  // joinTableConfig JSON for MANY_TO_MANY links (mirrors foreignKeyConfig for
+  // non-M2M). Shape: {datasetRid, sourceColumn, targetColumn}.
+  joinTableConfig: string;
   apiNameDirty: boolean;
   typeClasses: string[];
 }
@@ -363,6 +366,7 @@ function CreateLinkTypeModal({
     propagateMarkings: false,
     inverseLinkRid: '',
     foreignKeyConfig: '',
+    joinTableConfig: '',
     apiNameDirty: false,
     typeClasses: [],
   });
@@ -396,6 +400,17 @@ function CreateLinkTypeModal({
     }
   }
 
+  // MANY_TO_MANY links configure a join table instead of a foreign key.
+  let parsedJoinTable: unknown | undefined;
+  let joinTableError: string | null = null;
+  if (!needsForeignKey && form.joinTableConfig.trim()) {
+    try {
+      parsedJoinTable = JSON.parse(form.joinTableConfig);
+    } catch (err) {
+      joinTableError = `Invalid JSON: ${(err as Error).message}`;
+    }
+  }
+
   const canSubmit =
     !!form.displayName.trim() &&
     !!form.apiName.trim() &&
@@ -403,6 +418,7 @@ function CreateLinkTypeModal({
     !!form.target &&
     !duplicateApiName &&
     !foreignKeyError &&
+    !joinTableError &&
     !create.isPending;
 
   async function onSubmit(e: React.FormEvent) {
@@ -423,6 +439,11 @@ function CreateLinkTypeModal({
       foreignKeyConfig:
         needsForeignKey && parsedForeignKey !== undefined
           ? parsedForeignKey
+          : undefined,
+      // Send joinTableConfig only for M2M links with a non-empty editor.
+      joinTableConfig:
+        !needsForeignKey && parsedJoinTable !== undefined
+          ? parsedJoinTable
           : undefined,
       typeClasses:
         form.typeClasses.length > 0 ? [...form.typeClasses] : undefined,
@@ -564,6 +585,25 @@ function CreateLinkTypeModal({
               rows={3}
               className={inputClass + ' font-mono text-xs'}
               placeholder='{"sourceProperty":"...","targetProperty":"..."}'
+            />
+          </Field>
+        )}
+        {!needsForeignKey && (
+          <Field
+            label="Join Table Config (JSON)"
+            hint='Optional. Example: {"datasetRid": "ds1", "sourceColumn": "empId", "targetColumn": "projId"}'
+            error={joinTableError ?? undefined}
+          >
+            <textarea
+              aria-label="Join table config"
+              data-testid="link-type-create-join-table"
+              value={form.joinTableConfig}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, joinTableConfig: e.target.value }))
+              }
+              rows={3}
+              className={inputClass + ' font-mono text-xs'}
+              placeholder='{"datasetRid":"...","sourceColumn":"...","targetColumn":"..."}'
             />
           </Field>
         )}
