@@ -208,9 +208,26 @@ export interface AggregationRequest {
 }
 
 export interface AggregationMetric {
-  type: 'min' | 'max' | 'sum' | 'avg' | 'count';
+  type:
+    | 'count'
+    | 'min'
+    | 'max'
+    | 'sum'
+    | 'avg'
+    | 'approximateDistinct'
+    | 'exactDistinct'
+    | 'standardDeviation'
+    | 'variance'
+    | 'approximatePercentile'
+    | 'collectList';
   field?: string;
   name?: string;
+  // approximatePercentile (0-100); wire key `percentile`.
+  percentile?: number;
+  // collectList max values to collect; wire key `maxItems`.
+  maxItems?: number;
+  // approximateDistinct HyperLogLog precision (4-18); wire key `precision`.
+  precision?: number;
   // direction orders the groupBy result rows by THIS metric's value
   // ("按聚合值排序"). The backend attaches ordering to a single metric — when
   // several carry one the first wins — so the UI keeps at most one set.
@@ -219,7 +236,15 @@ export interface AggregationMetric {
 
 export interface GroupByClause {
   field: string;
-  type: 'exact' | 'ranges' | 'fixedWidth';
+  type: 'exact' | 'fixedWidth' | 'ranges' | 'duration' | 'topValues' | 'geohash';
+  // exact / topValues cap; wire key `maxGroupCount`.
+  maxGroupCount?: number;
+  // ranges buckets (Palantir V2 startValue/endValue); wire key `ranges`.
+  ranges?: Array<{ name?: string; startValue?: number; endValue?: number }>;
+  // duration period, ISO 8601 (P1D/P1W/P1M/P3M/P1Y/PT1H); wire key `duration`.
+  duration?: string;
+  // geohash character precision (1-12); wire key `precision`.
+  precision?: number;
   // fixedWidth is the numeric bucket width, required when type === 'fixedWidth'
   // (the backend rejects a width-less fixedWidth groupBy). Wire key matches the
   // server's GroupBySpec.Width json tag.

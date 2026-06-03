@@ -58,14 +58,17 @@ export function AggregationPage() {
     return keys[0] ?? '';
   }, [aggResult, metrics]);
 
-  // A fixedWidth groupBy without a positive width always errors server-side, so
-  // block Execute until every fixedWidth clause carries a valid width.
+  // Block Execute on groupBy clauses the backend would reject outright:
+  //  - a `ranges` clause with zero rows sends an empty ranges array → zero
+  //    buckets (silent wrong result);
+  //  - a `fixedWidth` clause without a positive width always errors server-side.
   const hasInvalidGroupBy = useMemo(
     () =>
       groupBy.some(
         (g) =>
-          g.type === 'fixedWidth' &&
-          !(typeof g.fixedWidth === 'number' && g.fixedWidth > 0),
+          (g.type === 'ranges' && (g.ranges?.length ?? 0) === 0) ||
+          (g.type === 'fixedWidth' &&
+            !(typeof g.fixedWidth === 'number' && g.fixedWidth > 0)),
       ),
     [groupBy],
   );
