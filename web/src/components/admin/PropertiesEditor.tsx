@@ -8,12 +8,14 @@ import type {
 import { CLASSIFICATION_VALUES } from '../../api/types';
 import type {
   CreatePropertyRequest,
+  SharedPropertyType,
   UpdatePropertyRequest,
 } from '../../api/ontologies';
 import {
   useCreateProperty,
   useDeleteProperty,
   useProperties,
+  useSharedPropertyTypes,
   useUpdateProperty,
 } from '../../hooks/useProperties';
 import { useUpdateObjectType } from '../../hooks/useObjectTypes';
@@ -344,6 +346,10 @@ interface AddFormState {
   isSortable: boolean;
   structFields: StructField[];
   classification: '' | Classification;
+  // Round 55: api-name of the bound SharedPropertyType, or '' for none.
+  // When set, baseType + isArray are forced to the SPT's values and
+  // locked so the backend's exact-match validation can never 400.
+  sharedPropertyTypeApiName: string;
 }
 
 function AddPropertyForm({
@@ -358,6 +364,12 @@ function AddPropertyForm({
   onClose: () => void;
 }) {
   const create = useCreateProperty(ontologyApiName, objectType.rid);
+  // Round 55: offer an optional SharedPropertyType binding. The query
+  // degrades gracefully (retry:false) — on failure we simply hide the
+  // selector and let the admin define baseType/isArray by hand.
+  const sptQuery = useSharedPropertyTypes(ontologyApiName);
+  const sharedPropertyTypes: SharedPropertyType[] = sptQuery.data ?? [];
+  const sptSelectorVisible = !sptQuery.isError && sharedPropertyTypes.length > 0;
   const [form, setForm] = useState<AddFormState>({
     apiName: '',
     displayName: '',
@@ -369,8 +381,33 @@ function AddPropertyForm({
     isSortable: false,
     structFields: [],
     classification: '',
+    sharedPropertyTypeApiName: '',
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const sptLocked = form.sharedPropertyTypeApiName !== '';
+
+  // Snap baseType + isArray to the chosen SPT and lock them; clearing back
+  // to "(none)" re-enables both. struct-specific state is reset because an
+  // SPT-bound property can't be edited through the struct-fields editor.
+  function selectSharedPropertyType(apiName: string) {
+    if (apiName === '') {
+      setForm((f) => ({ ...f, sharedPropertyTypeApiName: '' }));
+      return;
+    }
+    const spt = sharedPropertyTypes.find((s) => s.apiName === apiName);
+    if (!spt) return;
+    const baseType = (BASE_TYPES as readonly string[]).includes(spt.baseType)
+      ? (spt.baseType as BaseType)
+      : 'string';
+    setForm((f) => ({
+      ...f,
+      sharedPropertyTypeApiName: apiName,
+      baseType,
+      isArray: spt.isArray,
+      structFields: baseType === 'struct' ? f.structFields : [],
+    }));
+  }
 
   const taken = useMemo(
     () => new Set(existing.map((p) => p.apiName)),
@@ -398,6 +435,9 @@ function AddPropertyForm({
     };
     if (form.baseType === 'struct') {
       body.typeConfig = { fields: serializeStructFields(form.structFields) };
+    }
+    if (form.sharedPropertyTypeApiName) {
+      body.sharedPropertyTypeApiName = form.sharedPropertyTypeApiName;
     }
     try {
       await create.mutateAsync(body);
@@ -466,11 +506,38 @@ function AddPropertyForm({
           className={inputClass}
         />
       </LabeledField>
+      {sptSelectorVisible && (
+        <LabeledField label="Shared property type">
+          <select
+            aria-label="Shared property type"
+            value={form.sharedPropertyTypeApiName}
+            onChange={(e) => selectSharedPropertyType(e.target.value)}
+            className={inputClass}
+          >
+            <option value="">(none)</option>
+            {sharedPropertyTypes.map((s) => (
+              <option key={s.apiName} value={s.apiName}>
+                {s.displayName
+                  ? `${s.displayName} (${s.apiName})`
+                  : s.apiName}{' '}
+                — {s.baseType}
+                {s.isArray ? '[]' : ''}
+              </option>
+            ))}
+          </select>
+        </LabeledField>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <LabeledField label="Base Type" required>
           <select
             value={form.baseType}
             aria-label="Base Type"
+            disabled={sptLocked}
+            title={
+              sptLocked
+                ? 'Base type is fixed by the selected shared property type'
+                : undefined
+            }
             onChange={(e) =>
               setForm((f) => ({
                 ...f,
@@ -479,7 +546,10 @@ function AddPropertyForm({
                   e.target.value === 'struct' ? f.structFields : [],
               }))
             }
-            className={inputClass}
+            className={
+              inputClass +
+              (sptLocked ? ' opacity-60 cursor-not-allowed' : '')
+            }
           >
             {BASE_TYPES.map((t) => (
               <option key={t} value={t}>
@@ -492,6 +562,12 @@ function AddPropertyForm({
           <Toggle
             label="Array"
             checked={form.isArray}
+            disabled={sptLocked}
+            title={
+              sptLocked
+                ? 'Array is fixed by the selected shared property type'
+                : undefined
+            }
             onChange={(v) => setForm((f) => ({ ...f, isArray: v }))}
           />
           <Toggle
@@ -1037,16 +1113,25 @@ function Toggle({
   label,
   checked,
   onChange,
+  disabled,
+  title,
 }: {
   label: string;
   checked: boolean;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
+  title?: string;
 }) {
   return (
-    <label className="flex items-center gap-2 text-xs text-text-secondary">
+    <label
+      className="flex items-center gap-2 text-xs text-text-secondary"
+      title={title}
+    >
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
+        aria-label={label}
         onChange={(e) => onChange(e.target.checked)}
       />
       <span>{label}</span>
