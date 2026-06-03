@@ -16,6 +16,7 @@ import {
 } from '../../hooks/useActionTypes';
 import { useObjectTypes } from '../../hooks/useObjectTypes';
 import { useLinkTypes } from '../../hooks/useLinkTypes';
+import { useOntologyInterfaceMethods } from '../../hooks/useInterfaceMethods';
 import { toApiName } from '../../utils/naming';
 import { Modal } from '../common/Modal';
 import { Badge } from '../common/Badge';
@@ -351,6 +352,9 @@ interface BuilderState {
   // compensateActionRid points at another ActionType in the same ontology
   // (US-239). Empty means no compensation pairing.
   compensateActionRid: string;
+  // implementsMethodRid points at an interface method this ActionType
+  // implements (US-214). Empty means the action implements no method.
+  implementsMethodRid: string;
 }
 
 // Parse a comma/newline-separated approver list into a trimmed, de-duped
@@ -409,6 +413,7 @@ function initialStateFromAction(
       submissionCriteria: '',
       parameterSchema: '',
       compensateActionRid: '',
+      implementsMethodRid: '',
     };
   }
   const parameters: ActionTypeParamDef[] = Object.entries(
@@ -459,6 +464,10 @@ function initialStateFromAction(
     submissionCriteria: jsonToEditorText(at.submissionCriteria),
     parameterSchema: jsonToEditorText(at.parameterSchema),
     compensateActionRid: at.compensateActionRid ?? '',
+    // implementsMethodRid is not on the typed read model yet; read it
+    // defensively off the wire object so an existing binding pre-loads.
+    implementsMethodRid:
+      (at as { implementsMethodRid?: string }).implementsMethodRid ?? '',
   };
 }
 
@@ -524,6 +533,11 @@ function ActionTypeBuilderModal({
   const isEdit = !!editing;
   const create = useCreateActionType(ontologyApiName);
   const update = useUpdateActionType(ontologyApiName);
+  // Interface methods available across the ontology, used to populate the
+  // optional "Implements interface method" selector (US-214). Resilient: an
+  // empty/failed list leaves the selector at just "(none)".
+  const { options: interfaceMethodOptions } =
+    useOntologyInterfaceMethods(ontologyApiName);
   const [form, setForm] = useState<BuilderState>(() =>
     initialStateFromAction(editing),
   );
@@ -649,6 +663,7 @@ function ActionTypeBuilderModal({
 
     const approvers = parseApprovers(form.approvers);
     const compensateActionRid = form.compensateActionRid.trim();
+    const implementsMethodRid = form.implementsMethodRid.trim();
 
     try {
       if (editing) {
@@ -664,6 +679,10 @@ function ActionTypeBuilderModal({
           // parameterSchema is tri-state on the server: an explicit `null`
           // clears the stored schema, so emptying the editor removes it.
           parameterSchema: parameterSchema === undefined ? null : parameterSchema,
+          // Always send implementsMethodRid on edit (like compensateActionRid):
+          // the server treats "" as "clear the binding", so omitting it would
+          // make clearing an existing binding impossible.
+          implementsMethodRid,
           ...(submissionCriteria !== undefined ? { submissionCriteria } : {}),
         };
         await update.mutateAsync({ rid: editing.rid, body });
@@ -680,6 +699,7 @@ function ActionTypeBuilderModal({
           ...(compensateActionRid ? { compensateActionRid } : {}),
           ...(submissionCriteria !== undefined ? { submissionCriteria } : {}),
           ...(parameterSchema !== undefined ? { parameterSchema } : {}),
+          ...(implementsMethodRid ? { implementsMethodRid } : {}),
         };
         await create.mutateAsync(body);
       }
@@ -903,6 +923,46 @@ function ActionTypeBuilderModal({
               {compensateOptions.map((at) => (
                 <option key={at.rid} value={at.rid}>
                   {at.displayName} ({at.apiName})
+                </option>
+              ))}
+            </select>
+          </Field>
+        </Section>
+
+        <Section
+          title="Interface Method"
+          testId="action-type-implements-method-section"
+        >
+          <Field
+            label="Implements interface method"
+            hint="Binds this ActionType to an interface method it implements (US-214). The method is resolved when the interface is invoked on a conforming object."
+          >
+            <select
+              aria-label="Implements interface method"
+              data-testid="action-type-implements-method-select"
+              value={form.implementsMethodRid}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  implementsMethodRid: e.target.value,
+                }))
+              }
+              className={inputClass + ' text-xs'}
+            >
+              <option value="">(none)</option>
+              {/* Keep the current binding selectable even if its method is no
+                  longer in the fetched list (e.g. interface removed). */}
+              {form.implementsMethodRid &&
+                !interfaceMethodOptions.some(
+                  (m) => m.rid === form.implementsMethodRid,
+                ) && (
+                  <option value={form.implementsMethodRid}>
+                    {form.implementsMethodRid}
+                  </option>
+                )}
+              {interfaceMethodOptions.map((m) => (
+                <option key={m.rid} value={m.rid}>
+                  {m.label}
                 </option>
               ))}
             </select>

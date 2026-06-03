@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import {
   createInterfaceMethod,
   deleteInterfaceMethod,
@@ -11,6 +16,7 @@ import {
   type InvokeInterfaceMethodResponse,
   type UpdateInterfaceMethodRequest,
 } from '../api/interfaceMethods';
+import { listInterfaceTypes } from '../api/ontologies';
 
 // US-047 (PC-A04): React Query hooks for the Interface Methods Console.
 // US-498: extended with admin CRUD hooks (create/update/delete) used by the
@@ -31,6 +37,57 @@ export function useInterfaceMethods(
     queryFn: () => listInterfaceMethods(ontologyApiName, interfaceRid ?? ''),
     enabled: !!ontologyApiName && !!interfaceRid,
   });
+}
+
+// US-214: a flattened, ontology-wide view of every interface method, used by
+// the ActionType builder's "Implements interface method" selector. Each option
+// is labelled "{interfaceDisplayName}.{methodName}" with the method RID as the
+// value.
+//
+// The reads are deliberately resilient: an empty/failed interface list or any
+// failing per-interface method fetch simply contributes no options, so the
+// caller can keep the field optional and fall back to "(none)".
+export interface OntologyInterfaceMethodOption {
+  rid: string;
+  label: string;
+}
+
+export function useOntologyInterfaceMethods(ontologyApiName: string) {
+  const interfacesQuery = useQuery({
+    queryKey: ['interfaceTypes', ontologyApiName],
+    queryFn: () => listInterfaceTypes(ontologyApiName),
+    enabled: !!ontologyApiName,
+  });
+
+  const interfaces = interfacesQuery.data ?? [];
+
+  const methodQueries = useQueries({
+    queries: interfaces.map((iface) => ({
+      queryKey: ['interface-methods', ontologyApiName, iface.rid],
+      queryFn: () => listInterfaceMethods(ontologyApiName, iface.rid),
+      enabled: !!ontologyApiName && !!iface.rid,
+    })),
+  });
+
+  const options: OntologyInterfaceMethodOption[] = [];
+  interfaces.forEach((iface, idx) => {
+    const methods = methodQueries[idx]?.data?.data ?? [];
+    const ifaceLabel = iface.displayName || iface.apiName || iface.rid;
+    for (const method of methods) {
+      if (!method.rid) continue;
+      options.push({
+        rid: method.rid,
+        label: `${ifaceLabel}.${method.name || method.rid}`,
+      });
+    }
+  });
+  options.sort((a, b) => a.label.localeCompare(b.label));
+
+  return {
+    options,
+    isLoading:
+      interfacesQuery.isLoading || methodQueries.some((q) => q.isLoading),
+  };
 }
 
 export function useInvokeInterfaceMethod(ontologyApiName: string) {
