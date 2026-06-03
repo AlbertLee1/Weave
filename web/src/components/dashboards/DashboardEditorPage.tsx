@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createDashboard,
+  duplicateDashboard,
   getDashboard,
   listDashboards,
   updateDashboard,
@@ -173,6 +174,9 @@ export function DashboardEditorPage({
     'idle' | 'saving' | 'saved' | 'error'
   >('idle');
   const [shareStatus, setShareStatus] = useState<'idle' | 'copied'>('idle');
+  const [duplicateStatus, setDuplicateStatus] = useState<
+    'idle' | 'duplicating' | 'error'
+  >('idle');
 
   // Load on mount when an id was passed in (the SPA's /dashboards/:id
   // route wrapper supplies it). Failures fall back to the empty editor
@@ -262,6 +266,20 @@ export function DashboardEditorPage({
       // visible to the user as the share button's href.
     }
   }, [savedId]);
+
+  const handleDuplicate = useCallback(async () => {
+    if (!savedId) return;
+    setDuplicateStatus('duplicating');
+    try {
+      const dup = await duplicateDashboard(savedId);
+      // Load the copy by navigating to its id — the same path the Load
+      // picker and Save-new flow use to swap the editor's mounted row.
+      onSaved?.(dup.id);
+      setDuplicateStatus('idle');
+    } catch {
+      setDuplicateStatus('error');
+    }
+  }, [savedId, onSaved]);
 
   const shareUrl = savedId
     ? `${window.location.origin}/dashboards/${savedId}`
@@ -482,6 +500,28 @@ export function DashboardEditorPage({
             className="text-xs font-mono text-text-secondary truncate"
           >
             {shareUrl}
+          </span>
+        )}
+        {savedId && (
+          <button
+            type="button"
+            data-testid="dashboard-duplicate"
+            onClick={() => {
+              void handleDuplicate();
+            }}
+            disabled={duplicateStatus === 'duplicating'}
+            title="Create a copy of this dashboard"
+            className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-text-primary hover:border-accent-primary disabled:opacity-60"
+          >
+            {duplicateStatus === 'duplicating' ? 'Duplicating…' : 'Duplicate'}
+          </button>
+        )}
+        {duplicateStatus === 'error' && (
+          <span
+            data-testid="dashboard-duplicate-status"
+            className="text-xs font-mono text-accent-error"
+          >
+            Duplicate failed
           </span>
         )}
         {savedDashboards.length > 0 && (

@@ -68,3 +68,13 @@ export function deleteDashboard(id: string): Promise<void> {
     `/api/v2/dashboards/${encodeURIComponent(id)}`,
   );
 }
+
+// duplicateDashboard clones a saved dashboard server-side (Foundry
+// "Duplicate"); the backend assigns a fresh id and an auto "(copy)" /
+// "(copy N)" name suffix and returns the new row.
+export function duplicateDashboard(id: string): Promise<Dashboard> {
+  return request<Dashboard>(
+    'POST',
+    `/api/v2/dashboards/${encodeURIComponent(id)}/duplicate`,
+  );
+}
