@@ -30,6 +30,7 @@ const STATIC_PAGES: PageItem[] = [
   { id: 'page:dashboard', label: 'Dashboard', to: '/' },
   { id: 'page:threads', label: 'AIP Threads', to: '/threads' },
   { id: 'page:logic-flows', label: 'AIP Logic', to: '/logic-flows' },
+  { id: 'page:aip-tools', label: 'AIP Tools', to: '/aip-tools' },
   { id: 'page:pipelines', label: 'Pipelines', to: '/pipelines' },
   { id: 'page:marketplace', label: 'Marketplace', to: '/marketplace' },
   { id: 'page:playground', label: 'API Playground', to: '/developer/playground' },
