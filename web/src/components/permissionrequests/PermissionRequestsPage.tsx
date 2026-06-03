@@ -6,6 +6,7 @@ import type {
 } from '../../api/permissionRequests';
 import {
   useApprovePermissionRequest,
+  useCancelPermissionRequest,
   useCreatePermissionRequest,
   usePermissionRequests,
   useRejectPermissionRequest,
@@ -20,6 +21,7 @@ const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: 'PENDING', label: 'Pending' },
   { value: 'APPROVED', label: 'Approved' },
   { value: 'REJECTED', label: 'Rejected' },
+  { value: 'CANCELLED', label: 'Cancelled' },
   { value: 'ALL', label: 'All' },
 ];
 
@@ -27,6 +29,7 @@ const STATUS_BADGE_STYLE: Record<PermissionRequestStatus, string> = {
   PENDING: 'bg-amber-500/10 text-amber-400 border border-amber-500/30',
   APPROVED: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30',
   REJECTED: 'bg-rose-500/10 text-rose-400 border border-rose-500/30',
+  CANCELLED: 'bg-slate-500/10 text-slate-400 border border-slate-500/30',
 };
 
 // PermissionRequestsPage renders the share-link permission inbox
@@ -54,6 +57,7 @@ export function PermissionRequestsPage() {
   const createMutation = useCreatePermissionRequest();
   const approveMutation = useApprovePermissionRequest();
   const rejectMutation = useRejectPermissionRequest();
+  const cancelMutation = useCancelPermissionRequest();
 
   const requests = useMemo(
     () => listQuery.data?.requests ?? [],
@@ -230,6 +234,14 @@ export function PermissionRequestsPage() {
               request={req}
               onApprove={() => openReview(req, 'APPROVE')}
               onReject={() => openReview(req, 'REJECT')}
+              // Withdraw is the requester's prerogative; only the backend's
+              // original requester may cancel. Surface it only in the
+              // scoped "my requests" view so approvers browsing every row
+              // don't see a button that would 403.
+              onWithdraw={
+                mineOnly ? () => cancelMutation.mutate({ id: req.id }) : undefined
+              }
+              withdrawPending={cancelMutation.isPending}
             />
           ))}
         </ul>
@@ -389,12 +401,16 @@ interface PermissionRequestCardProps {
   request: PermissionRequest;
   onApprove: () => void;
   onReject: () => void;
+  onWithdraw?: () => void;
+  withdrawPending?: boolean;
 }
 
 function PermissionRequestCard({
   request,
   onApprove,
   onReject,
+  onWithdraw,
+  withdrawPending,
 }: PermissionRequestCardProps) {
   const isPending = request.status === 'PENDING';
   return (
@@ -444,22 +460,36 @@ function PermissionRequestCard({
         </div>
         {isPending && (
           <div className="flex shrink-0 gap-2">
-            <button
-              type="button"
-              onClick={onApprove}
-              data-testid="permission-request-approve-btn"
-              className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
-            >
-              Approve
-            </button>
-            <button
-              type="button"
-              onClick={onReject}
-              data-testid="permission-request-reject-btn"
-              className="rounded-md border border-rose-500/50 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:bg-rose-500/10"
-            >
-              Reject
-            </button>
+            {onWithdraw ? (
+              <button
+                type="button"
+                onClick={onWithdraw}
+                disabled={withdrawPending}
+                data-testid="permission-request-withdraw-btn"
+                className="rounded-md border border-border/60 px-3 py-1.5 text-xs font-semibold text-text-secondary hover:bg-bg-tertiary disabled:opacity-60"
+              >
+                {withdrawPending ? 'Withdrawing…' : 'Withdraw'}
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={onApprove}
+                  data-testid="permission-request-approve-btn"
+                  className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  onClick={onReject}
+                  data-testid="permission-request-reject-btn"
+                  className="rounded-md border border-rose-500/50 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:bg-rose-500/10"
+                >
+                  Reject
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
