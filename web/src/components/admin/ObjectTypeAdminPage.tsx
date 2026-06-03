@@ -728,7 +728,9 @@ function EditObjectTypeModal({
       titleProperty: form.titleProperty.trim() || undefined,
       status: form.status,
       visibility: form.visibility,
-      iconName: form.iconName.trim() || undefined,
+      // Backend reads the icon under the `icon` JSON key (IconName
+      // `json:"icon"`); sending `iconName` was silently dropped server-side.
+      icon: form.iconName.trim() || undefined,
       color: form.color.trim() || undefined,
       // US-262: always send the current form value so the tri-state
       // ("" = clear, known label = assign) lands on the backend. Omitting

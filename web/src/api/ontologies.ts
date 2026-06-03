@@ -285,7 +285,10 @@ export interface UpdateObjectTypeRequest {
   titleProperty?: string;
   status: 'ACTIVE' | 'ENDORSED' | 'EXPERIMENTAL' | 'DEPRECATED';
   visibility: 'PROMINENT' | 'NORMAL' | 'HIDDEN';
-  iconName?: string;
+  // Serializes to the backend's `icon` wire key (UpdateObjectTypeRequest
+  // IconName `json:"icon"`); the read model also returns it as `icon`. The
+  // previous `iconName` key was silently dropped by the backend.
+  icon?: string;
   color?: string;
   deprecatedReason?: string;
   deprecatedDeadline?: string | null;
