@@ -346,6 +346,11 @@ export interface CreatePropertyRequest {
   isSortable?: boolean;
   editOnly?: boolean;
   classification?: string;
+  // Round 55: bind this Property to a reusable SharedPropertyType. The
+  // backend resolves the api-name → RID and validates that the
+  // property's baseType and isArray match the SharedPropertyType
+  // exactly (mismatch → 400). Sent only when an SPT is selected.
+  sharedPropertyTypeApiName?: string;
 }
 
 export interface UpdatePropertyRequest {
@@ -370,6 +375,34 @@ export async function listProperties(
     `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/objectTypes/byRid/${encodeURIComponent(objectTypeRid)}/properties`,
   );
   return resp.data;
+}
+
+// SharedPropertyType (round 55): a reusable property definition that
+// Properties can bind to. Mirrors pkg/oms.SharedProperty — displayName,
+// description and typeConfig are omitempty on the wire so keep them
+// optional here. types.ts has no equivalent, so the shape lives locally.
+export interface SharedPropertyType {
+  rid?: string;
+  apiName: string;
+  displayName?: string;
+  description?: string;
+  baseType: string;
+  isArray: boolean;
+  typeConfig?: unknown;
+}
+
+// listSharedPropertyTypes fetches the ontology's reusable property
+// definitions. Backend: GET /api/v2/ontologies/{o}/sharedPropertyTypes
+// returns {"data":[...]} (envelope mirrors listLinkTypes / listProperties);
+// the list serializes as [] (never null) on an empty ontology.
+export async function listSharedPropertyTypes(
+  ontologyApiName: string,
+): Promise<SharedPropertyType[]> {
+  const resp = await request<{ data: SharedPropertyType[] }>(
+    'GET',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/sharedPropertyTypes`,
+  );
+  return resp.data ?? [];
 }
 
 export function createProperty(
