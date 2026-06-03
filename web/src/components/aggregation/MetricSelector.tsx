@@ -6,7 +6,24 @@ interface MetricSelectorProps {
   availableFields: string[];
 }
 
-const metricTypes: AggregationMetric['type'][] = ['count', 'sum', 'avg', 'min', 'max'];
+const metricTypes: AggregationMetric['type'][] = [
+  'count',
+  'min',
+  'max',
+  'sum',
+  'avg',
+  'approximateDistinct',
+  'exactDistinct',
+  'standardDeviation',
+  'variance',
+  'approximatePercentile',
+  'collectList',
+];
+
+// Metric types that operate on a field (all except count).
+function needsField(type: AggregationMetric['type']): boolean {
+  return type !== 'count';
+}
 
 export function MetricSelector({ metrics, onChange, availableFields }: MetricSelectorProps) {
   function addMetric() {
@@ -21,6 +38,19 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
     onChange(
       metrics.map((m, i) => (i === index ? { ...m, ...updates } : m)),
     );
+  }
+
+  // Switching metric type strips type-specific fields so the request body
+  // never carries stale keys (e.g. a leftover `percentile` after switching
+  // from approximatePercentile to collectList). `count` also drops `field`.
+  function changeType(index: number, type: AggregationMetric['type']) {
+    const current = metrics[index];
+    const next: AggregationMetric = { type };
+    if (needsField(type)) next.field = current.field;
+    if (current.name) next.name = current.name;
+    if (type === 'approximatePercentile') next.percentile = current.percentile;
+    if (type === 'collectList') next.maxItems = current.maxItems;
+    onChange(metrics.map((m, i) => (i === index ? next : m)));
   }
 
   const inputClass =
@@ -56,7 +86,7 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
         >
           <select
             value={metric.type}
-            onChange={(e) => updateMetric(index, { type: e.target.value as AggregationMetric['type'] })}
+            onChange={(e) => changeType(index, e.target.value as AggregationMetric['type'])}
             data-testid={`metric-${index}-type`}
             className={`${inputClass} flex-shrink-0`}
           >
@@ -67,7 +97,7 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
             ))}
           </select>
 
-          {metric.type !== 'count' && (
+          {needsField(metric.type) && (
             <select
               value={metric.field ?? ''}
               onChange={(e) => updateMetric(index, { field: e.target.value || undefined })}
@@ -81,6 +111,43 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
                 </option>
               ))}
             </select>
+          )}
+
+          {metric.type === 'approximatePercentile' && (
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={metric.percentile ?? ''}
+              onChange={(e) =>
+                updateMetric(index, {
+                  percentile: e.target.value === '' ? undefined : Number(e.target.value),
+                })
+              }
+              placeholder="pct"
+              aria-label="percentile"
+              title="percentile (0-100)"
+              data-testid={`metric-${index}-percentile`}
+              className={`${inputClass} w-20`}
+            />
+          )}
+
+          {metric.type === 'collectList' && (
+            <input
+              type="number"
+              min={1}
+              value={metric.maxItems ?? ''}
+              onChange={(e) =>
+                updateMetric(index, {
+                  maxItems: e.target.value === '' ? undefined : Number(e.target.value),
+                })
+              }
+              placeholder="maxItems"
+              aria-label="maxItems"
+              title="max items to collect"
+              data-testid={`metric-${index}-maxItems`}
+              className={`${inputClass} w-24`}
+            />
           )}
 
           <input

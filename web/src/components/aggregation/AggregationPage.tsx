@@ -58,6 +58,17 @@ export function AggregationPage() {
     return keys[0] ?? '';
   }, [aggResult, metrics]);
 
+  // A `ranges` groupBy with zero rows sends an empty ranges array, which the
+  // backend turns into zero buckets — a silent wrong result. Disable Execute
+  // until every ranges clause has at least one row.
+  const hasInvalidGroupBy = useMemo(
+    () =>
+      groupBy.some(
+        (g) => g.type === 'ranges' && (g.ranges?.length ?? 0) === 0,
+      ),
+    [groupBy],
+  );
+
   function handleExecute() {
     const where = buildWhereClause(filters);
     setAggRequest({
@@ -118,7 +129,7 @@ export function AggregationPage() {
           </div>
           <button
             onClick={handleExecute}
-            disabled={metrics.length === 0}
+            disabled={metrics.length === 0 || hasInvalidGroupBy}
             data-testid="aggregation-execute"
             className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50"
           >
