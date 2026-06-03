@@ -48,6 +48,7 @@ function walk(
     case 'searchAround':
     case 'withProperties':
     case 'nearestNeighbors':
+    case 'sample':
       walk(def.objectSet, out);
       return;
     default:
@@ -67,6 +68,7 @@ function resolveType(def: ObjectSetDefinition): string {
     case 'filter':
     case 'withProperties':
     case 'nearestNeighbors':
+    case 'sample':
     case 'asBaseObjectTypes':
       return resolveType(def.objectSet);
     case 'union':

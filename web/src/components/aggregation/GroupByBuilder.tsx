@@ -180,6 +180,28 @@ export function GroupByBuilder({ groupBy, onChange, availableFields }: GroupByBu
                 />
               )}
 
+              {clause.type === 'fixedWidth' && (
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={clause.fixedWidth ?? ''}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const n = Number(raw);
+                    updateGroupBy(index, {
+                      fixedWidth:
+                        raw.trim() !== '' && Number.isFinite(n) ? n : undefined,
+                    });
+                  }}
+                  placeholder="width"
+                  aria-label="Bucket width"
+                  title="Numeric bucket width (required for fixedWidth grouping)"
+                  data-testid={`groupby-${index}-fixedWidth`}
+                  className={`${inputClass} w-24`}
+                />
+              )}
+
               <button
                 type="button"
                 onClick={() => removeGroupBy(index)}

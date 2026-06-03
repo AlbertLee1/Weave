@@ -190,6 +190,9 @@ func (d *Definition) Validate() error {
 			if d.Link != "" {
 				return fmt.Errorf("searchAround objectSet cannot set both link and path")
 			}
+			if len(d.Path) > MaxSearchAroundHops {
+				return fmt.Errorf("searchAround path has %d hops, exceeds the %d-hop limit for chained searchAround", len(d.Path), MaxSearchAroundHops)
+			}
 			for i, step := range d.Path {
 				if step.Link == "" {
 					return fmt.Errorf("searchAround path[%d] requires link", i)
@@ -219,6 +222,12 @@ func (d *Definition) Validate() error {
 			// accepted
 		default:
 			return fmt.Errorf("nearestNeighbors: unknown fusionStrategy %q (allowed: \"\" / \"min\" / \"rrf\")", d.FusionStrategy)
+		}
+		if d.NumNeighbors != nil && *d.NumNeighbors > MaxNearestNeighbors {
+			return fmt.Errorf("nearestNeighbors: numNeighbors %d exceeds the %d-neighbor limit", *d.NumNeighbors, MaxNearestNeighbors)
+		}
+		if d.Query != nil && d.Query.Vector != nil && len(d.Query.Vector.Value) > MaxVectorDimension {
+			return fmt.Errorf("nearestNeighbors: query vector has %d dimensions, exceeds the %d-dimension limit", len(d.Query.Vector.Value), MaxVectorDimension)
 		}
 	case "withProperties":
 		if d.ObjectSet == nil {

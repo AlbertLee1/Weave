@@ -263,6 +263,12 @@ describe('nodeToDefinition / definitionToNode round-trip', () => {
         numNeighbors: 5,
         query: { text: { value: 'similar employees' } },
       },
+      sample: {
+        type: 'sample',
+        objectSet: { type: 'base', objectType: 'Employee' },
+        size: 10,
+        seed: 42,
+      },
       asType: {
         type: 'asType',
         objectType: 'Employee',
@@ -410,6 +416,80 @@ describe('validateNode', () => {
       query: { text: { value: 'find similar employees' } },
     });
     expect(errs).toEqual([]);
+  });
+
+  it('accepts a multi-column nearestNeighbors node via propertyIdentifiers', () => {
+    const errs = validateNode({
+      id: '1',
+      type: 'nearestNeighbors',
+      objectSet: emptyBase('Employee'),
+      propertyIdentifiers: [
+        { property: { apiName: 'title_vec' } },
+        { property: { apiName: 'body_vec' } },
+      ],
+      fusionStrategy: 'rrf',
+      numNeighbors: 5,
+      query: { vector: { value: [0.1, 0.2] } },
+    });
+    expect(errs).toEqual([]);
+  });
+
+  it('flags a multi-column nearestNeighbors node with a blank column', () => {
+    const errs = validateNode({
+      id: '1',
+      type: 'nearestNeighbors',
+      objectSet: emptyBase('Employee'),
+      propertyIdentifiers: [
+        { property: { apiName: 'title_vec' } },
+        { property: { apiName: '' } },
+      ],
+      numNeighbors: 5,
+      query: { text: { value: 'q' } },
+    });
+    expect(errs).toContain('nearestNeighbors node requires an embedding property');
+  });
+
+  it('accepts a sample node with size and round-trips through definition', () => {
+    const node: ObjectSetNode = {
+      id: '1',
+      type: 'sample',
+      objectSet: emptyBase('Employee'),
+      size: 25,
+      seed: 7,
+    };
+    expect(validateNode(node)).toEqual([]);
+    const def = nodeToDefinition(node);
+    expect(def).toEqual({
+      type: 'sample',
+      objectSet: { type: 'base', objectType: 'Employee' },
+      size: 25,
+      seed: 7,
+    });
+  });
+
+  it('omits seed from the sample definition when unset', () => {
+    const def = nodeToDefinition({
+      id: '1',
+      type: 'sample',
+      objectSet: emptyBase('Employee'),
+      size: 5,
+    });
+    expect(def).toEqual({
+      type: 'sample',
+      objectSet: { type: 'base', objectType: 'Employee' },
+      size: 5,
+    });
+    expect('seed' in def).toBe(false);
+  });
+
+  it('flags a sample node with size <= 0', () => {
+    const errs = validateNode({
+      id: '1',
+      type: 'sample',
+      objectSet: emptyBase('Employee'),
+      size: 0,
+    });
+    expect(errs).toContain('sample node requires size > 0');
   });
 
   it('accepts a static node with object type and primary keys', () => {

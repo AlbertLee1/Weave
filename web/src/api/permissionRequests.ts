@@ -3,7 +3,11 @@ import { request } from './client';
 // Status mirrors pkg/permissionrequests const Status* — keep the
 // canonical capitalisation from the wire so SDK callers can switch
 // without re-uppercasing.
-export type PermissionRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+export type PermissionRequestStatus =
+  | 'PENDING'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED';
 
 // PermissionRequest mirrors pkg/permissionrequests.Request. DecidedAt /
 // DecidedBy / DecisionNote are absent until the row transitions to a
@@ -88,5 +92,16 @@ export function rejectPermissionRequest(
     'POST',
     `/api/v2/permission-requests/${encodeURIComponent(id)}/reject`,
     note ? { note } : {},
+  );
+}
+
+// cancelPermissionRequest withdraws the caller's own PENDING request — the
+// backend soft-cancels it to terminal CANCELLED state (only the original
+// requester may cancel; DELETE returns 204). See pkg/permissionrequests
+// handler Cancel.
+export function cancelPermissionRequest(id: string): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `/api/v2/permission-requests/${encodeURIComponent(id)}`,
   );
 }

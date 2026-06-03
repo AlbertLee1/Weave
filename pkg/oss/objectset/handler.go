@@ -98,7 +98,33 @@ type Handler struct {
 	branchScopes       BranchScopeProvider
 	persistedSnapshots PersistedSnapshotStore
 	dataAccessAuditor  DataAccessAuditor
+	markingFilter      MarkingFilterProvider
 }
+
+// MarkingFilterProvider enforces Foundry-style mandatory marking access
+// control (subset / AND semantics) on the objectSets/loadObjects path. The
+// executor's row-policy pushdown already applies the loose marking-OVERLAP
+// clause via PolicyQueryProvider, correct for single-valued marking fields;
+// this provider adds the strict per-row subset refinement that multi-valued
+// markings need (an object marked {A,B} is hidden from a caller holding only
+// {A}). Kept narrow so pkg/oss/objectset does not import pkg/security; cmd/
+// server wires a thin adapter.
+type MarkingFilterProvider interface {
+	// MarkingsEnabled reports whether objectType opts into marking filtering,
+	// so the handler knows it must fetch the reserved _markings field even
+	// when the caller's select list omits it (otherwise the subset check
+	// would fail open).
+	MarkingsEnabled(ctx context.Context, objectType string) bool
+	// FilterByMarkings drops every object whose _markings set is NOT a subset
+	// of the caller's markings. A no-op (returns input) when markings are not
+	// enabled for objectType or the slice is empty.
+	FilterByMarkings(ctx context.Context, objectType string, objs []*oss.WireObject) []*oss.WireObject
+}
+
+// markingField is the reserved Bleve keyword field the Funnel consumer writes
+// each object's marking set into. Mirrors pkg/security.MarkingField; kept
+// local so pkg/oss/objectset does not import pkg/security.
+const markingField = "_markings"
 
 // NewHandler creates a new ObjectSet handler.
 func NewHandler(executor *Executor, indexMgr *index.Manager, store *Store) *Handler {
@@ -118,6 +144,15 @@ func NewHandler(executor *Executor, indexMgr *index.Manager, store *Store) *Hand
 // boot; the Handler re-reads the field on every request.
 func (h *Handler) SetPropertyFilterProvider(p PropertyFilterProvider) {
 	h.propertyFilter = p
+}
+
+// SetMarkingFilterProvider wires the optional mandatory-marking subset gate.
+// When attached, LoadObjects fetches the reserved _markings field and drops
+// rows whose markings are not a subset of the caller's before serialization.
+// Passing nil detaches the hook (back-compat: markings then rely solely on the
+// executor's overlap-query pushdown).
+func (h *Handler) SetMarkingFilterProvider(p MarkingFilterProvider) {
+	h.markingFilter = p
 }
 
 // SetDataAccessAuditor wires the optional US-264 loadObjectSet audit sink.
@@ -340,6 +375,25 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 		fields = req.Select
 	}
 
+	// Mandatory-marking subset filtering needs each object's _markings set. A
+	// caller-supplied select list may omit it; append it (so the subset check
+	// can't fail open) and remember to strip it from the response afterward.
+	// The default ["*"] path already carries _markings, so no addition needed.
+	markingFieldAdded := false
+	if h.markingFilter != nil && len(req.Select) > 0 && h.markingFilter.MarkingsEnabled(ctx, result.ObjectType) {
+		hasMarkings := false
+		for _, f := range fields {
+			if f == markingField {
+				hasMarkings = true
+				break
+			}
+		}
+		if !hasMarkings {
+			fields = append(append([]string{}, fields...), markingField)
+			markingFieldAdded = true
+		}
+	}
+
 	for _, pk := range pagePKs {
 		searchReq := bleve.NewSearchRequest(bleve.NewDocIDQuery([]string{pk}))
 		searchReq.Fields = fields
@@ -356,6 +410,13 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 			for _, f := range req.Select {
 				if v, ok := props[f]; ok {
 					filtered[f] = v
+				}
+			}
+			// Preserve _markings through select-filtering when it was added
+			// solely for the subset check; stripped after FilterByMarkings.
+			if markingFieldAdded {
+				if v, ok := props[markingField]; ok {
+					filtered[markingField] = v
 				}
 			}
 			props = filtered
@@ -382,6 +443,21 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 		}
 
 		data = append(data, oss.FormatObject(result.ObjectType, pk, props))
+	}
+
+	// Mandatory-marking subset filter: drop rows whose markings are not a
+	// subset of the caller's (multi-valued AND semantics) before any
+	// column-level visibility pass. No-op when no provider is wired or the
+	// ObjectType is not markings-enabled.
+	if h.markingFilter != nil {
+		data = h.markingFilter.FilterByMarkings(ctx, result.ObjectType, data)
+		if markingFieldAdded {
+			for _, obj := range data {
+				if obj != nil && obj.Properties != nil {
+					delete(obj.Properties, markingField)
+				}
+			}
+		}
 	}
 
 	// US-048: drop property fields the caller is not permitted to see. No-op
@@ -633,6 +709,22 @@ func (h *Handler) loadObjectsAsOf(w http.ResponseWriter, r *http.Request, ctx co
 	}
 	pageSnaps := snapshots[start:end]
 
+	// Mandatory-marking subset filtering must also gate the time-travel read
+	// path, else a caller could bypass markings via ?asOf=<now>. Mirror the
+	// live LoadObjects handling: preserve _markings through select-filtering
+	// (snapshot Properties already carry it) so the subset check sees it, then
+	// strip it from the response.
+	asOfMarkingFieldAdded := h.markingFilter != nil && len(req.Select) > 0 &&
+		h.markingFilter.MarkingsEnabled(ctx, req.ObjectSet.ObjectType)
+	if asOfMarkingFieldAdded {
+		for _, f := range req.Select {
+			if f == markingField {
+				asOfMarkingFieldAdded = false
+				break
+			}
+		}
+	}
+
 	data := make([]*oss.WireObject, 0, len(pageSnaps))
 	for _, snap := range pageSnaps {
 		props := snap.Properties
@@ -643,9 +735,25 @@ func (h *Handler) loadObjectsAsOf(w http.ResponseWriter, r *http.Request, ctx co
 					filtered[f] = v
 				}
 			}
+			if asOfMarkingFieldAdded {
+				if v, ok := props[markingField]; ok {
+					filtered[markingField] = v
+				}
+			}
 			props = filtered
 		}
 		data = append(data, oss.FormatObject(req.ObjectSet.ObjectType, snap.PrimaryKey, props))
+	}
+
+	if h.markingFilter != nil {
+		data = h.markingFilter.FilterByMarkings(ctx, req.ObjectSet.ObjectType, data)
+		if asOfMarkingFieldAdded {
+			for _, obj := range data {
+				if obj != nil && obj.Properties != nil {
+					delete(obj.Properties, markingField)
+				}
+			}
+		}
 	}
 
 	data, err = h.applyPropertyVisibility(ctx, req.ObjectSet.ObjectType, data)

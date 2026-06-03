@@ -498,6 +498,34 @@ describe('LinkTypeAdminPage', () => {
     });
   });
 
+  it('US-261 create form sends propagateMarkings when the toggle is checked', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /\+ New Link Type/i }));
+    await user.type(screen.getByLabelText(/Display Name \*/i), 'Owns Asset');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /^Cardinality$/i }),
+      'MANY_TO_MANY',
+    );
+    // Default: propagation off → payload carries propagateMarkings: false.
+    const propagateBox = screen.getByRole('checkbox', {
+      name: /Propagate markings/i,
+    }) as HTMLInputElement;
+    expect(propagateBox.checked).toBe(false);
+    await user.click(propagateBox);
+    await user.click(screen.getByRole('button', { name: /^Create$/i }));
+
+    await waitFor(() => {
+      expect(state.createCalls.length).toBe(1);
+    });
+    expect(state.createCalls[0].body).toMatchObject({
+      propagateMarkings: true,
+    });
+  });
+
   it('VTX-010 edit form preserves existing typeClasses and toggles tags', async () => {
     const user = userEvent.setup();
     state.linkTypes[0] = {

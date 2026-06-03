@@ -268,6 +268,14 @@ type CreateActionTypeRequest struct {
 	// flow evaluates it after the legacy ParameterDef validator and emits
 	// WEAVE_VALIDATION_SCHEMA 422 on violation.
 	ParameterSchema json.RawMessage `json:"parameterSchema,omitempty"`
+	// RequiresApproval (US-242) gates this ActionType behind human approval.
+	// When true the Apply handler enqueues an ActionApproval row instead of
+	// executing rules. Settable from the Ontology Manager builder.
+	RequiresApproval bool `json:"requiresApproval,omitempty"`
+	// Approvers (US-242) lists the role names (or user IDs) allowed to
+	// approve a pending request for this gated action. Empty means nobody
+	// can approve. Sent by the builder as a string slice.
+	Approvers []string `json:"approvers,omitempty"`
 }
 
 // UpdateActionTypeRequest is the request body for updating an action type.
@@ -290,6 +298,13 @@ type UpdateActionTypeRequest struct {
 	// unchanged, an explicit null/empty RawMessage = clear the schema,
 	// non-empty = replace. Stored as JSONB on the action_types row.
 	ParameterSchema *json.RawMessage `json:"parameterSchema,omitempty"`
+	// RequiresApproval (US-242) is a tri-state pointer: nil = leave
+	// unchanged, non-nil = replace the gate flag. The Ontology Manager
+	// builder always sends an explicit value so a toggle round-trips.
+	RequiresApproval *bool `json:"requiresApproval,omitempty"`
+	// Approvers (US-242) is a tri-state pointer: nil = leave unchanged,
+	// non-nil (incl. empty slice) = replace the approver roster.
+	Approvers *[]string `json:"approvers,omitempty"`
 }
 
 // --- Admin handlers ---
@@ -1143,6 +1158,8 @@ func (h *OMSHandler) CreateActionType(w http.ResponseWriter, r *http.Request) {
 		ImplementsMethodRID: req.ImplementsMethodRID,
 		CompensateActionRID: req.CompensateActionRID,
 		ParameterSchema:     req.ParameterSchema,
+		RequiresApproval:    req.RequiresApproval,
+		Approvers:           req.Approvers,
 	}
 
 	// US-214: if the action claims an InterfaceMethod binding, verify the
@@ -1273,6 +1290,14 @@ func (h *OMSHandler) UpdateActionType(w http.ResponseWriter, r *http.Request) {
 		} else {
 			updated.ParameterSchema = nil
 		}
+	}
+	// US-242 tri-state: nil=preserve, non-nil=replace the approval gate so the
+	// Ontology Manager builder can toggle requiresApproval / approvers.
+	if req.RequiresApproval != nil {
+		updated.RequiresApproval = *req.RequiresApproval
+	}
+	if req.Approvers != nil {
+		updated.Approvers = *req.Approvers
 	}
 
 	// Branch overlay

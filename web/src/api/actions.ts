@@ -2,6 +2,7 @@ import { request } from './client';
 import type {
   ActionApplyRequest,
   ActionApplyResponse,
+  ActionBatchApplyOptions,
   ActionBatchApplyRequest,
   BatchApplyActionResponse,
 } from './types';
@@ -52,7 +53,9 @@ export interface AsyncApplyResponse {
 // inheriting any existing wire mismatch.
 export interface AsyncBatchApplyRequest {
   actions: Array<{ parameters: Record<string, unknown> }>;
-  options?: { returnEdits?: 'ALL' | 'NONE' };
+  // Same narrowed batch option set as the sync path — the server rejects
+  // ALL_V2_WITH_DELETIONS on /applyBatch (sync or async) with 400.
+  options?: ActionBatchApplyOptions;
 }
 
 // applyBatchAsync POSTs to /applyBatch?async=true and returns the new job's

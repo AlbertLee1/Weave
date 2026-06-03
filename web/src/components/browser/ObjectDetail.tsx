@@ -8,6 +8,7 @@ import { useActionTypes, useApplyAction } from '../../hooks/useActions';
 import { LinkedObjectsTab } from './LinkedObjectsTab';
 import { TimeSeriesChart } from '../common/TimeSeriesChart';
 import { MediaUploadZone } from './MediaUploadZone';
+import { AttachmentLink } from './AttachmentLink';
 import { ObjectActivityPanel } from './ObjectActivityPanel';
 import { ObjectDiffPanel } from './ObjectDiffPanel';
 import { RelationshipGraph } from './RelationshipGraph';
@@ -259,7 +260,8 @@ export function ObjectDetail({
                       .filter(
                         ([, prop]) =>
                           baseTypeOf(prop.dataType) !== 'timeseries' &&
-                          baseTypeOf(prop.dataType) !== 'media',
+                          baseTypeOf(prop.dataType) !== 'media' &&
+                          baseTypeOf(prop.dataType) !== 'attachment',
                       )
                       .map(([name, prop]) => {
                         const val = object[name];
@@ -351,6 +353,31 @@ export function ObjectDetail({
                       values={coerceMediaValues(object[name])}
                       multiple={isArrayType(prop.dataType)}
                     />
+                  ))}
+
+              {/* Attachment properties: download link to the object-scoped
+                  content endpoint (server resolves the RID from the stored
+                  property value). Only rendered when the property holds a
+                  value. */}
+              {objectType.properties &&
+                Object.entries(objectType.properties)
+                  .filter(
+                    ([name, prop]) =>
+                      baseTypeOf(prop.dataType) === 'attachment' &&
+                      object[name] != null,
+                  )
+                  .map(([name]) => (
+                    <section key={`attachment-${name}`}>
+                      <h3 className="text-xs font-sans font-medium text-text-secondary uppercase tracking-wider mb-2">
+                        {name}
+                      </h3>
+                      <AttachmentLink
+                        ontologyApiName={ontologyApiName}
+                        objectType={objectType.apiName}
+                        primaryKey={String(object.__primaryKey)}
+                        property={name}
+                      />
+                    </section>
                   ))}
 
               {/* Linked objects section */}

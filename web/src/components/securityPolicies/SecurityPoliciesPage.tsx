@@ -465,10 +465,26 @@ function RowPolicyEditor({
   const [objectTypeRid, setObjectTypeRid] = useState(
     existing?.objectTypeRid ?? objectTypes[0]?.rid ?? '',
   );
+  // US-487: a row policy carries EITHER a JSON where-clause predicate OR a
+  // CEL expression (backend pkg/rls.RowPolicy.Validate requires at least one
+  // of the two). Open in CEL mode when editing a policy that already has a
+  // CEL gate but no predicate; otherwise default to the JSON editor.
+  const existingHasCel = !!existing?.celExpression?.trim();
+  const existingHasPredicate =
+    existing?.predicate !== undefined && existing?.predicate !== null;
+  const [mode, setMode] = useState<'json' | 'cel'>(
+    existingHasCel && !existingHasPredicate ? 'cel' : 'json',
+  );
   const [predicateText, setPredicateText] = useState(
     formatPredicate(existing?.predicate),
   );
   const [predicateError, setPredicateError] = useState<string | null>(null);
+  const [celText, setCelText] = useState(existing?.celExpression ?? '');
+  const [celError, setCelError] = useState<string | null>(
+    existing?.celExpression
+      ? lintCellExpression(existing.celExpression)
+      : null,
+  );
   const [rolesText, setRolesText] = useState(
     (existing?.appliesTo.roles ?? []).join(', '),
   );
@@ -512,13 +528,40 @@ function RowPolicyEditor({
     setPredicateError(lint.error);
   };
 
+  // Reuse the shared CellMask lint (US-043) so the CEL row-policy editor and
+  // the cell-mask editor stay structurally consistent. Backend remains the
+  // authority (pkg/rls.validateCELExpression); this is advisory fast-fail.
+  const onCelChange = (text: string) => {
+    setCelText(text);
+    setCelError(lintCellExpression(text));
+  };
+
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const lint = lintPredicate(predicateText);
-    if (lint.error) {
-      setPredicateError(lint.error);
-      return;
+
+    // Validate the active mode's source only. In CEL mode the JSON predicate
+    // is irrelevant (and vice-versa), mirroring the backend's
+    // "at least one of predicate / celExpression" contract.
+    let predicateValue: unknown = null;
+    let celValue = '';
+    if (mode === 'cel') {
+      const trimmedCel = celText.trim();
+      const lintErr = lintCellExpression(trimmedCel);
+      if (lintErr) {
+        setCelError(lintErr);
+        return;
+      }
+      setCelError(null);
+      celValue = trimmedCel;
+    } else {
+      const lint = lintPredicate(predicateText);
+      if (lint.error) {
+        setPredicateError(lint.error);
+        return;
+      }
+      predicateValue = lint.value;
     }
+
     if (!objectTypeRid) {
       setSubmitError('Object Type is required.');
       return;
@@ -535,11 +578,18 @@ function RowPolicyEditor({
       updateMutation.mutate(
         {
           rid: existing.rid,
-          body: {
-            predicate: lint.value,
-            appliesTo,
-            description: trimmedDesc,
-          },
+          body:
+            mode === 'cel'
+              ? {
+                  celExpression: celValue,
+                  appliesTo,
+                  description: trimmedDesc,
+                }
+              : {
+                  predicate: predicateValue,
+                  appliesTo,
+                  description: trimmedDesc,
+                },
         },
         {
           onSuccess: () => {
@@ -558,12 +608,19 @@ function RowPolicyEditor({
       );
     } else {
       createMutation.mutate(
-        {
-          objectTypeRid,
-          predicate: lint.value,
-          appliesTo,
-          description: trimmedDesc,
-        },
+        mode === 'cel'
+          ? {
+              objectTypeRid,
+              celExpression: celValue,
+              appliesTo,
+              description: trimmedDesc,
+            }
+          : {
+              objectTypeRid,
+              predicate: predicateValue,
+              appliesTo,
+              description: trimmedDesc,
+            },
         {
           onSuccess: () => {
             pushToast({
@@ -583,7 +640,8 @@ function RowPolicyEditor({
   };
 
   const submitting = createMutation.isPending || updateMutation.isPending;
-  const canSubmit = !predicateError && (!isEdit ? !!objectTypeRid : true);
+  const activeError = mode === 'cel' ? celError : predicateError;
+  const canSubmit = !activeError && (!isEdit ? !!objectTypeRid : true);
 
   return (
     <div
@@ -604,10 +662,11 @@ function RowPolicyEditor({
             {isEdit ? 'Edit row policy' : 'Create row policy'}
           </h2>
           <p className="text-xs text-text-secondary">
-            Predicates are JSON where-clauses (mirrors{' '}
-            <span className="font-mono">pkg/oss/where.WhereClause</span>).
-            They are AND-combined into reads so denied rows never
-            materialise.
+            A row policy gates reads with either a JSON where-clause (mirrors{' '}
+            <span className="font-mono">pkg/oss/where.WhereClause</span>) or a
+            CEL expression (mirrors{' '}
+            <span className="font-mono">pkg/rls</span> US-487). Pick one mode
+            below; denied rows never materialise.
           </p>
         </header>
 
@@ -631,37 +690,115 @@ function RowPolicyEditor({
           </select>
         </label>
 
-        <label className="block">
-          <span className="flex items-baseline justify-between text-xs font-medium text-text-secondary mb-1">
-            <span>Predicate (JSON where-clause)</span>
-            {predicateError ? (
-              <span
-                data-testid="row-policy-editor-predicate-error"
-                className="text-rose-400"
-              >
-                {predicateError}
-              </span>
-            ) : (
-              <span
-                data-testid="row-policy-editor-predicate-ok"
-                className="text-emerald-400"
-              >
-                ✓ valid
-              </span>
-            )}
-          </span>
-          <textarea
-            data-testid="row-policy-editor-predicate"
-            value={predicateText}
-            onChange={(e) => onPredicateChange(e.target.value)}
-            spellCheck={false}
-            rows={6}
-            className={`block w-full rounded-md border bg-bg-secondary/60 px-3 py-2 font-mono text-xs text-text-primary ${
-              predicateError ? 'border-rose-500/60' : 'border-border/60'
+        <div
+          role="radiogroup"
+          aria-label="Predicate mode"
+          data-testid="row-policy-editor-mode"
+          data-mode={mode}
+          className="inline-flex rounded-md border border-border/60 bg-bg-secondary/40 p-0.5 text-xs"
+        >
+          <button
+            type="button"
+            role="radio"
+            aria-checked={mode === 'json'}
+            data-testid="row-policy-editor-mode-json"
+            data-active={mode === 'json' ? 'true' : 'false'}
+            onClick={() => setMode('json')}
+            className={`rounded px-3 py-1 font-medium transition-colors ${
+              mode === 'json'
+                ? 'bg-amber-600 text-white'
+                : 'text-text-secondary hover:text-text-primary'
             }`}
-            placeholder='{"type":"eq","field":"status","value":"active"}'
-          />
-        </label>
+          >
+            JSON predicate
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={mode === 'cel'}
+            data-testid="row-policy-editor-mode-cel"
+            data-active={mode === 'cel' ? 'true' : 'false'}
+            onClick={() => setMode('cel')}
+            className={`rounded px-3 py-1 font-medium transition-colors ${
+              mode === 'cel'
+                ? 'bg-amber-600 text-white'
+                : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            CEL expression
+          </button>
+        </div>
+
+        {mode === 'json' ? (
+          <label className="block">
+            <span className="flex items-baseline justify-between text-xs font-medium text-text-secondary mb-1">
+              <span>Predicate (JSON where-clause)</span>
+              {predicateError ? (
+                <span
+                  data-testid="row-policy-editor-predicate-error"
+                  className="text-rose-400"
+                >
+                  {predicateError}
+                </span>
+              ) : (
+                <span
+                  data-testid="row-policy-editor-predicate-ok"
+                  className="text-emerald-400"
+                >
+                  ✓ valid
+                </span>
+              )}
+            </span>
+            <textarea
+              data-testid="row-policy-editor-predicate"
+              value={predicateText}
+              onChange={(e) => onPredicateChange(e.target.value)}
+              spellCheck={false}
+              rows={6}
+              className={`block w-full rounded-md border bg-bg-secondary/60 px-3 py-2 font-mono text-xs text-text-primary ${
+                predicateError ? 'border-rose-500/60' : 'border-border/60'
+              }`}
+              placeholder='{"type":"eq","field":"status","value":"active"}'
+            />
+          </label>
+        ) : (
+          <label className="block">
+            <span className="flex items-baseline justify-between text-xs font-medium text-text-secondary mb-1">
+              <span>CEL expression</span>
+              {celError ? (
+                <span
+                  data-testid="row-policy-editor-cel-error"
+                  className="text-rose-400"
+                >
+                  {celError}
+                </span>
+              ) : (
+                <span
+                  data-testid="row-policy-editor-cel-ok"
+                  className="text-emerald-400"
+                >
+                  ✓ valid
+                </span>
+              )}
+            </span>
+            <textarea
+              data-testid="row-policy-editor-cel"
+              value={celText}
+              onChange={(e) => onCelChange(e.target.value)}
+              spellCheck={false}
+              rows={6}
+              className={`block w-full rounded-md border bg-bg-secondary/60 px-3 py-2 font-mono text-xs text-text-primary ${
+                celError ? 'border-rose-500/60' : 'border-border/60'
+              }`}
+              placeholder='user.roles.exists(r, r == "finance")'
+            />
+            <span className="mt-1 block text-[10px] text-text-secondary">
+              Evaluated server-side per row against the{' '}
+              <span className="font-mono">user.*</span> and{' '}
+              <span className="font-mono">object.*</span> bindings (US-487).
+            </span>
+          </label>
+        )}
 
         <fieldset className="grid grid-cols-1 gap-2 rounded-md border border-border/40 bg-bg-tertiary/30 p-3">
           <legend className="px-1 text-xs font-semibold uppercase tracking-wider text-text-secondary">

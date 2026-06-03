@@ -79,6 +79,37 @@ Last updated: round 158 (after PR #57 merge).
   `fusionStrategy: min | rrf` (RRF k = 60) for rank fusion.
 * `composite_cursor.go` makes 3-type Northwind HasOwner interface paging
   stable; `us463_interface_cursor_stability_test.go` locks the wire shape.
+* Aggregation metrics may now name their target via `propertyIdentifier`
+  (`{"property":{"apiName":"x"}}`) as an alternative to a bare `field`
+  (syntax ref L461) — mutually exclusive with `field`, resolved before any
+  metric runs, and applied recursively to subAggregations. See
+  `metric_property.go` + `TestBDD_Aggregate_MetricPropertyIdentifier`.
+* Aggregation result rows can now be ordered by an aggregated value: an
+  `aggregation` metric carrying a `direction` (`ASC`/`DESC`) sorts the groupBy
+  buckets by that metric (Palantir "按聚合值排序", syntax ref L463/L623) — e.g.
+  `{"type":"sum","field":"revenue","name":"total","direction":"DESC"}` returns
+  regions highest-revenue-first. Applied after any `having` filter; an
+  unrecognised direction is a 400. See `orderby.go` +
+  `TestAggregate_MetricDirection_OrdersGroupRows` and the HTTP-level
+  `TestBDD_Aggregate_MetricDirection_OrdersBuckets`.
+* `nearestNeighbors` now enforces the Foundry-documented limits K ≤ 100 and
+  vector dimension ≤ 2048 (syntax ref L115): `numNeighbors` > 100 or a raw
+  query vector longer than 2048 is rejected at `Definition.Validate` with a
+  400 `InvalidObjectSet` instead of being handed to the vector store. See
+  `nn_caps_test.go::TestBDD_NearestNeighbors_OverLimitK_Rejected`.
+* Chained `searchAround` now enforces the Foundry-documented 3-hop ceiling
+  ("最多 3 层链式 SearchAround", syntax ref L97/L226): a `Path` of more than
+  `MaxSearchAroundHops` (3) is rejected at `Definition.Validate` with a 400
+  `InvalidObjectSet` instead of executing the over-deep chain (previously
+  bounded only by the runtime `SearchAroundIntermediateCap`). See
+  `searcharound_hoplimit_test.go::TestBDD_SearchAround_FourHopPath_Rejected`.
+* Aggregation `groupBy` duration now accepts the `P3M` (byQuarter) and `PT1H`
+  (byHours) ISO 8601 shortcuts in addition to `P1D`/`P1W`/`P1M`/`P1Y`,
+  matching the Foundry OntologyAggregation grammar (`.byQuarter()` /
+  `.byHours()`); previously callers had to fall back to the verbose
+  `DurationValue {unit, value}` form. See `parseDuration` +
+  `duration_iso8601_test.go` and the HTTP-level
+  `TestBDD_Aggregate_GroupByDuration_Quarter` / `_Hour`.
 
 ### Actions
 
@@ -101,6 +132,31 @@ Last updated: round 158 (after PR #57 merge).
   marking semantics, fronted by a CEL DSL evaluator and decision / policy
   caches. Wired into `pkg/oss/service_impl.go` so the gates are on the hot
   path, with integration / aggregate / BDD / bench tests.
+* The `objectSets/loadObjects` path now applies the strict marking-subset
+  refinement (Foundry AND semantics) on top of the executor's overlap-query
+  pushdown: an object marked `{A,B}` is hidden from a caller holding only
+  `{A}`, matching `ServiceImpl.applyMarkingFilter` on the Load/Search/Get
+  paths. The handler fetches the reserved `_markings` field (even when the
+  caller's `select` omits it) for the subset check, then strips it from the
+  response. Wired via a narrow `MarkingFilterProvider`
+  (`cmd/server` `markingFilterAdapter`); nil-safe (no-op when unwired or the
+  ObjectType is not markings-enabled). The same subset filter also gates the
+  `?asOf=` time-travel read path, closing a marking-bypass where a caller could
+  otherwise read marking-restricted rows via `?asOf=<now>`. See
+  `marking_subset_test.go::TestBDD_LoadObjects_MarkingSubsetFilter` /
+  `TestBDD_LoadObjectsAsOf_MarkingSubsetFilter`.
+* Row-level policy is now pushed down on the direct
+  `/objects/{objectType}/aggregate` endpoint too: `handlers_aggregate.go`
+  previously hit Bleve with `MatchAll`, so `count`/`sum`/`avg` leaked the
+  existence and values of rows the caller's row policy forbids (only the
+  column-level `PropertyFilterProvider` gate was applied). It now compiles
+  the caller's policy via a `RowPolicyQueryProvider` (the same
+  `policyQueryAdapter` the ObjectSet aggregate path uses) and feeds it to
+  `aggregation.Engine.AggregateWithQuery` as the base query. See
+  `handlers_aggregate_row_policy_test.go::TestBDD_Aggregation_RowPolicyScopesCount`.
+  Strict marking-subset and row-CEL enforcement on the facet path (vs the
+  loose marking-overlap clause already baked into the compiled query) remains
+  a SHOULD-layer follow-up that needs an engine-level doc-ID prefilter.
 * SQL Query sandbox: 30+ forbidden keywords, system-table guard, full
   tokenizer; `pgx.ReadOnly` + 5 s timeout + 10 K row cap with
   `ErrQueryTimeout` typed mapping.

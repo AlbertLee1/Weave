@@ -50,7 +50,32 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
     if (current.name) next.name = current.name;
     if (type === 'approximatePercentile') next.percentile = current.percentile;
     if (type === 'collectList') next.maxItems = current.maxItems;
+    // Ordering direction ("按聚合值排序") is independent of the metric type,
+    // so it survives a type change.
+    if (current.direction) next.direction = current.direction;
     onChange(metrics.map((m, i) => (i === index ? next : m)));
+  }
+
+  // The backend orders groupBy rows by the FIRST direction-bearing metric, so
+  // the UI enforces a single sort key: setting a direction on one metric clears
+  // it on the others; clearing simply drops it from this metric.
+  function setDirection(index: number, direction: AggregationMetric['direction']) {
+    onChange(
+      metrics.map((m, i) => {
+        if (i === index) {
+          const next = { ...m };
+          if (direction) next.direction = direction;
+          else delete next.direction;
+          return next;
+        }
+        if (direction && m.direction) {
+          const cleared = { ...m };
+          delete cleared.direction;
+          return cleared;
+        }
+        return m;
+      }),
+    );
   }
 
   const inputClass =
@@ -158,6 +183,21 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
             data-testid={`metric-${index}-name`}
             className={`${inputClass} w-28`}
           />
+
+          <select
+            value={metric.direction ?? ''}
+            onChange={(e) =>
+              setDirection(index, (e.target.value || undefined) as AggregationMetric['direction'])
+            }
+            data-testid={`metric-${index}-direction`}
+            aria-label="Sort groupBy by this metric"
+            title="Order groupBy result rows by this metric's value"
+            className={`${inputClass} flex-shrink-0 w-28`}
+          >
+            <option value="">No sort</option>
+            <option value="DESC">Sort ↓ DESC</option>
+            <option value="ASC">Sort ↑ ASC</option>
+          </select>
 
           <button
             type="button"

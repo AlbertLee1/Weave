@@ -523,8 +523,17 @@ func (at *ActionType) ToFullMetadataJSON() ([]byte, error) {
 	if at.ImplementsMethodRID != "" {
 		wire["implementsMethodRid"] = at.ImplementsMethodRID
 	}
+	if at.CompensateActionRID != "" {
+		wire["compensateActionRid"] = at.CompensateActionRID
+	}
 	if len(at.ParameterSchema) > 0 && string(at.ParameterSchema) != "null" {
 		wire["parameterSchema"] = json.RawMessage(at.ParameterSchema)
+	}
+	if at.RequiresApproval {
+		wire["requiresApproval"] = at.RequiresApproval
+	}
+	if len(at.Approvers) > 0 {
+		wire["approvers"] = at.Approvers
 	}
 	return json.Marshal(wire)
 }
