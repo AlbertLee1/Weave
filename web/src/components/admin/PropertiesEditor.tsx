@@ -144,7 +144,9 @@ export function PropertiesEditor({
           titleProperty: apiName,
           status: objectType.status,
           visibility: objectType.visibility,
-          iconName: objectType.icon ?? undefined,
+          // Backend reads the icon under the `icon` JSON key; sending
+          // `iconName` was dropped, wiping the icon on this full-replace PUT.
+          icon: objectType.icon ?? undefined,
           color: objectType.color ?? undefined,
         },
       });
