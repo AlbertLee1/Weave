@@ -119,6 +119,7 @@ export function Sidebar() {
     { to: '/apps', label: 'Apps', icon: 'grid' },
     { to: '/threads', label: 'AIP Threads', icon: 'chat' },
     { to: '/logic-flows', label: 'AIP Logic', icon: 'workflow' },
+    { to: '/aip-tools', label: 'AIP Tools', icon: 'zap' },
     { to: '/pipelines', label: 'Pipelines', icon: 'pipeline' },
     { to: '/developer/playground', label: 'API Playground', icon: 'code' },
     { to: '/developer/metrics', label: 'API Metrics', icon: 'bar-chart' },
