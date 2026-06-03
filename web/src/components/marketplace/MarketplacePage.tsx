@@ -5,11 +5,14 @@ import { useToastStore } from '../../stores/toastStore';
 import {
   deleteInstalledPackage,
   installBuiltinPackage,
+  installPackage,
   listBuiltinPackages,
   listInstalledPackages,
   setInstalledPackageEnabled,
+  type BuiltinInstallConflictMode,
   type BuiltinPackageMetadata,
   type InstalledPackage,
+  type PackageInstallRequest,
   type PackageManifest,
 } from '../../api/packages';
 import { ApiRequestError } from '../../api/client';
@@ -129,6 +132,27 @@ export function MarketplacePage() {
     onError: (err, slug) => {
       pushToast({
         message: `Failed to install ${slug}: ${formatError(err)}`,
+        severity: 'error',
+      });
+    },
+  });
+
+  // US-412 (UI surface): install a .weavepkg envelope uploaded through the
+  // Installed tab's file picker. The handler at POST /api/v2/pkg/install
+  // returns the same PackageInstallResponse shape as the built-in path, so
+  // the success toast mirrors installBuiltinMutation.
+  const uploadInstallMutation = useMutation({
+    mutationFn: (body: PackageInstallRequest) => installPackage(body),
+    onSuccess: (resp) => {
+      queryClient.invalidateQueries({ queryKey: PACKAGES_KEY });
+      pushToast({
+        message: `${resp.name} v${resp.version} installed (ontology ${resp.ontology})`,
+        severity: 'success',
+      });
+    },
+    onError: (err, body) => {
+      pushToast({
+        message: `Failed to install ${body.manifest.name ?? 'package'}: ${formatError(err)}`,
         severity: 'error',
       });
     },
@@ -276,6 +300,8 @@ export function MarketplacePage() {
                 : null
             }
             updatingSlug={updatingSlug}
+            onUploadInstall={(body) => uploadInstallMutation.mutate(body)}
+            uploadPending={uploadInstallMutation.isPending}
           />
         )}
 
@@ -368,6 +394,8 @@ interface InstalledSectionProps {
   onShowDetails: (name: string) => void;
   togglingName: string | null;
   updatingSlug: string | null;
+  onUploadInstall: (body: PackageInstallRequest) => void;
+  uploadPending: boolean;
 }
 
 function InstalledSection({
@@ -382,37 +410,59 @@ function InstalledSection({
   onShowDetails,
   togglingName,
   updatingSlug,
+  onUploadInstall,
+  uploadPending,
 }: InstalledSectionProps) {
+  // The upload affordance lives above the loading / error / empty branches so
+  // an operator can install a .weavepkg even before the catalog has loaded
+  // (or while it is empty).
+  const uploadControl = (
+    <UploadInstallControl
+      onInstall={onUploadInstall}
+      installPending={uploadPending}
+    />
+  );
+
   if (isLoading) {
     return (
-      <p
-        className="text-sm text-text-secondary"
-        data-testid="marketplace-loading"
-      >
-        Loading installed packages…
-      </p>
+      <div className="flex flex-col gap-4">
+        {uploadControl}
+        <p
+          className="text-sm text-text-secondary"
+          data-testid="marketplace-loading"
+        >
+          Loading installed packages…
+        </p>
+      </div>
     );
   }
   if (isError) {
     return (
-      <p
-        className="text-sm text-rose-400"
-        data-testid="marketplace-error"
-      >
-        Failed to load installed packages: {formatError(error)}
-      </p>
+      <div className="flex flex-col gap-4">
+        {uploadControl}
+        <p
+          className="text-sm text-rose-400"
+          data-testid="marketplace-error"
+        >
+          Failed to load installed packages: {formatError(error)}
+        </p>
+      </div>
     );
   }
   if (packages.length === 0) {
     return (
-      <EmptyState
-        title="No packages installed"
-        description="Install a .weavepkg archive via the CLI (weave-cli pkg install) or open the Built-in tab for a one-click example."
-      />
+      <div className="flex flex-col gap-4">
+        {uploadControl}
+        <EmptyState
+          title="No packages installed"
+          description="Upload a .weavepkg.json envelope above, install a binary archive via the CLI (weave-cli pkg install), or open the Built-in tab for a one-click example."
+        />
+      </div>
     );
   }
   return (
     <div className="flex flex-col gap-4">
+      {uploadControl}
       {updatingSlug && (
         <InstallProgressBar
           slug={updatingSlug}
@@ -444,6 +494,235 @@ function InstalledSection({
           );
         })}
       </ul>
+    </div>
+  );
+}
+
+// US-412 (UI surface): outcome of parsing a selected file into a
+// PackageInstallRequest. `ok` carries the validated envelope plus the
+// derived display name; `error` carries an operator-facing message.
+type ParsedEnvelope =
+  | { ok: true; request: Omit<PackageInstallRequest, 'onConflict'> }
+  | { ok: false; error: string };
+
+// parseWeavepkgEnvelope validates an uploaded file's text into the install
+// envelope the server expects. A .weavepkg is a binary ZIP that the browser
+// cannot unpack without a heavyweight dependency, so the UI accepts the
+// JSON envelope shape instead — either a `.weavepkg.json` produced by the
+// exporter, or a hand-authored `{manifest, ontology, migrations}` body
+// equivalent to what `weave-cli pkg install` POSTs. Binary archives are
+// detected via the ZIP local-file-header magic and rejected with a hint to
+// use the CLI.
+function parseWeavepkgEnvelope(
+  text: string,
+  filename: string,
+): ParsedEnvelope {
+  // ZIP archives start with the local file header signature "PK\x03\x04".
+  if (text.startsWith('PK')) {
+    return {
+      ok: false,
+      error: `${filename} is a binary .weavepkg archive. Install it with the CLI (weave-cli pkg install) or upload its .weavepkg.json envelope.`,
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      error: `${filename} is not valid JSON. Upload a .weavepkg.json envelope or use the CLI for binary archives.`,
+    };
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    return { ok: false, error: `${filename} is not a package envelope.` };
+  }
+  const obj = parsed as Record<string, unknown>;
+  const manifest = obj.manifest;
+  if (typeof manifest !== 'object' || manifest === null) {
+    return {
+      ok: false,
+      error: `${filename} is missing a "manifest" object.`,
+    };
+  }
+  const m = manifest as Record<string, unknown>;
+  if (typeof m.name !== 'string' || m.name.trim() === '') {
+    return { ok: false, error: 'manifest.name is required.' };
+  }
+  if (typeof m.version !== 'string' || m.version.trim() === '') {
+    return { ok: false, error: 'manifest.version is required.' };
+  }
+  if (obj.ontology === undefined || obj.ontology === null) {
+    return { ok: false, error: 'ontology body is required.' };
+  }
+  let migrations: PackageInstallRequest['migrations'];
+  if (obj.migrations !== undefined) {
+    if (!Array.isArray(obj.migrations)) {
+      return { ok: false, error: 'migrations must be an array when present.' };
+    }
+    migrations = obj.migrations as PackageInstallRequest['migrations'];
+  }
+  return {
+    ok: true,
+    request: {
+      manifest: manifest as PackageManifest,
+      ontology: obj.ontology,
+      ...(migrations ? { migrations } : {}),
+    },
+  };
+}
+
+interface UploadInstallControlProps {
+  onInstall: (body: PackageInstallRequest) => void;
+  installPending: boolean;
+}
+
+// UploadInstallControl is the Installed-tab header affordance that lets an
+// operator install a package straight from the browser instead of dropping
+// to the CLI. It reads the selected file as text, validates it into a
+// PackageInstallRequest, lets the operator pick an onConflict strategy, and
+// POSTs the envelope to /api/v2/pkg/install.
+function UploadInstallControl({
+  onInstall,
+  installPending,
+}: UploadInstallControlProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [filename, setFilename] = useState<string>('');
+  const [parsed, setParsed] = useState<
+    Omit<PackageInstallRequest, 'onConflict'> | null
+  >(null);
+  const [error, setError] = useState<string>('');
+  const [onConflict, setOnConflict] =
+    useState<BuiltinInstallConflictMode>('fail');
+
+  const handleFile = async (file: File | undefined) => {
+    setError('');
+    setParsed(null);
+    if (!file) {
+      setFilename('');
+      return;
+    }
+    setFilename(file.name);
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      setError(`Could not read ${file.name}.`);
+      return;
+    }
+    const result = parseWeavepkgEnvelope(text, file.name);
+    if (result.ok) {
+      setParsed(result.request);
+    } else {
+      setError(result.error);
+    }
+  };
+
+  const reset = () => {
+    setFilename('');
+    setParsed(null);
+    setError('');
+    if (inputRef.current) inputRef.current.value = '';
+  };
+
+  return (
+    <div
+      className="border border-border rounded-lg bg-bg-secondary/50 p-4 flex flex-col gap-3"
+      data-testid="marketplace-upload-control"
+    >
+      <div>
+        <h2 className="text-sm font-sans font-semibold text-text-primary">
+          Install from file
+        </h2>
+        <p className="text-[11px] text-text-secondary mt-0.5">
+          Upload a <span className="font-mono">.weavepkg.json</span> envelope
+          (manifest + ontology). For binary <span className="font-mono">.weavepkg</span>{' '}
+          archives use the CLI: <span className="font-mono">weave-cli pkg install</span>.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-xs text-text-secondary">
+          <span className="sr-only">Choose package file</span>
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".weavepkg,.json,application/json"
+            data-testid="marketplace-upload-input"
+            onChange={(e) => {
+              void handleFile(e.target.files?.[0]);
+            }}
+            className="text-xs file:mr-2 file:px-2.5 file:py-1 file:text-[11px] file:font-medium file:rounded file:border file:border-accent-cyan/40 file:text-accent-cyan file:bg-transparent file:cursor-pointer hover:file:bg-accent-cyan/10 text-text-secondary"
+          />
+        </label>
+
+        <label className="flex items-center gap-1.5 text-[11px] text-text-secondary">
+          <span>On conflict</span>
+          <select
+            value={onConflict}
+            data-testid="marketplace-upload-onconflict"
+            onChange={(e) =>
+              setOnConflict(e.target.value as BuiltinInstallConflictMode)
+            }
+            className="px-2 py-1 text-[11px] bg-bg-tertiary border border-border rounded text-text-primary focus:outline-none focus:border-accent-cyan"
+          >
+            <option value="fail">fail</option>
+            <option value="overwrite">overwrite</option>
+            <option value="skip">skip</option>
+          </select>
+        </label>
+
+        <button
+          type="button"
+          disabled={!parsed || installPending}
+          data-testid="marketplace-upload-install"
+          onClick={() => {
+            if (!parsed) return;
+            onInstall({ ...parsed, onConflict });
+          }}
+          className={[
+            'px-2.5 py-1 text-[11px] font-medium rounded transition-colors border border-accent-cyan/40 text-accent-cyan hover:bg-accent-cyan/10',
+            !parsed || installPending ? 'opacity-60 cursor-not-allowed' : '',
+          ].join(' ')}
+        >
+          {installPending ? 'Installing…' : 'Install'}
+        </button>
+
+        {filename && (
+          <button
+            type="button"
+            onClick={reset}
+            disabled={installPending}
+            data-testid="marketplace-upload-clear"
+            className="px-2 py-1 text-[11px] text-text-secondary border border-border rounded hover:bg-bg-tertiary transition-colors"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      {filename && (
+        <p
+          className="text-[11px] text-text-secondary"
+          data-testid="marketplace-upload-filename"
+        >
+          Selected: <span className="font-mono text-text-primary">{filename}</span>
+          {parsed && (
+            <span className="text-emerald-300">
+              {' · '}
+              {parsed.manifest.name} v{parsed.manifest.version}
+            </span>
+          )}
+        </p>
+      )}
+
+      {error && (
+        <p
+          className="text-[11px] text-rose-400"
+          data-testid="marketplace-upload-error"
+        >
+          {error}
+        </p>
+      )}
     </div>
   );
 }
