@@ -10,6 +10,29 @@ interface ParameterFormProps {
 
 type UploadKind = 'attachment' | 'media';
 
+/**
+ * toRFC3339 normalises an `<input type="datetime-local">` value into the
+ * RFC3339 string the backend's timestamp coercion accepts
+ * (pkg/types/coerce.go -> time.Parse(time.RFC3339, v)).
+ *
+ * The control yields "YYYY-MM-DDTHH:mm" (and "YYYY-MM-DDTHH:mm:ss" when a
+ * `step` exposes seconds). We treat the wall-clock value as a UTC instant —
+ * no local-timezone math — by appending ":00" seconds if absent and a "Z"
+ * suffix. Already-zoned input (ending in "Z" or a numeric offset) passes
+ * through unchanged so re-normalising is idempotent.
+ */
+function toRFC3339(local: string): string {
+  if (!local) return local;
+  if (/(?:Z|[+-]\d{2}:\d{2})$/.test(local)) return local;
+  // The control reports "YYYY-MM-DDTHH:mm", "...:ss", or (in some engines with
+  // step exposing seconds) "...:ss.SSS". Drop any fractional milliseconds so
+  // the wire stays a clean second-granularity RFC3339 instant.
+  const trimmed = local.replace(/\.\d+$/, '');
+  // Append ":00" seconds only when the time has just hours+minutes.
+  const withSeconds = /T\d{2}:\d{2}:\d{2}$/.test(trimmed) ? trimmed : `${trimmed}:00`;
+  return `${withSeconds}Z`;
+}
+
 interface UploadFieldProps {
   fieldKey: string;
   def: ActionParameterV2;
@@ -245,6 +268,114 @@ export function ParameterForm({ parameters }: ParameterFormProps) {
         if (paramType === 'attachment' || paramType === 'media') {
           return (
             <UploadField key={key} fieldKey={key} def={def} kind={paramType} />
+          );
+        }
+
+        if (paramType === 'date') {
+          // Native date picker. The control value and the wire value share the
+          // same canonical form: "YYYY-MM-DD" (Go: time.Parse("2006-01-02")).
+          // We register the field (rather than driving it with setValue) so the
+          // submit-time setValueAs runs even for an untouched default: empty
+          // collapses to '' when required (Zod's min(1) blocks apply) or
+          // undefined when optional (the field is omitted from the wire
+          // payload), exactly mirroring the default string branch.
+          return (
+            <div key={key} className="flex flex-col">
+              <label htmlFor={fieldId} className={labelClass}>
+                {key}
+                {def.required && <span className="text-accent-error ml-1">*</span>}
+              </label>
+              <input
+                id={fieldId}
+                data-testid={fieldId}
+                type="date"
+                aria-invalid={errorMessage ? 'true' : 'false'}
+                aria-describedby={errorMessage ? errorId : undefined}
+                {...register(key, {
+                  setValueAs: (v) => {
+                    if (v === '' || v === null || v === undefined) {
+                      return def.required ? '' : undefined;
+                    }
+                    return String(v);
+                  },
+                })}
+                className={errorMessage ? inputErrorClass : inputClass}
+              />
+              {def.description && (
+                <span className="text-xs text-text-secondary mt-1">{def.description}</span>
+              )}
+              {errorMessage && (
+                <span id={errorId} role="alert" className="text-xs text-accent-error mt-1">
+                  {errorMessage}
+                </span>
+              )}
+            </div>
+          );
+        }
+
+        if (paramType === 'timestamp') {
+          // Native datetime-local picker. The control speaks "YYYY-MM-DDTHH:mm"
+          // (and "...:ss" with step=1), but the backend parses time.RFC3339
+          // ("2006-01-02T15:04:05Z07:00"). We normalise on both sides:
+          //   - render: strip an RFC3339 wire value down to the control's shape
+          //     via a controlled `value` (so a prefilled instant shows up).
+          //   - submit: setValueAs appends seconds (if absent) + a "Z" UTC
+          //     marker so the wire value is always a valid RFC3339 instant,
+          //     and runs for untouched defaults too (optional empty -> omitted).
+          const current = watch(key);
+          const wire = typeof current === 'string' ? current : '';
+          // Strip the zone marker + any fractional seconds to "YYYY-MM-DDTHH:mm[:ss]"
+          // for the control (no timezone math — wall-clock is preserved as-is).
+          const display = wire
+            ? wire.replace(/(Z|[+-]\d{2}:\d{2})$/, '').replace(/\.\d+$/, '')
+            : '';
+          const reg = register(key, {
+            setValueAs: (v) => {
+              if (v === '' || v === null || v === undefined) {
+                return def.required ? '' : undefined;
+              }
+              return toRFC3339(String(v));
+            },
+          });
+          return (
+            <div key={key} className="flex flex-col">
+              <label htmlFor={fieldId} className={labelClass}>
+                {key}
+                {def.required && <span className="text-accent-error ml-1">*</span>}
+              </label>
+              <input
+                id={fieldId}
+                data-testid={fieldId}
+                type="datetime-local"
+                step="1"
+                value={display}
+                aria-invalid={errorMessage ? 'true' : 'false'}
+                aria-describedby={errorMessage ? errorId : undefined}
+                name={reg.name}
+                ref={reg.ref}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setValue(
+                    key,
+                    v === '' ? (def.required ? '' : undefined) : toRFC3339(v),
+                    { shouldValidate: true, shouldDirty: true },
+                  );
+                }}
+                onBlur={(e) => {
+                  void reg.onBlur(e);
+                  setValue(key, watch(key), { shouldValidate: true, shouldTouch: true });
+                }}
+                className={errorMessage ? inputErrorClass : inputClass}
+              />
+              {def.description && (
+                <span className="text-xs text-text-secondary mt-1">{def.description}</span>
+              )}
+              {errorMessage && (
+                <span id={errorId} role="alert" className="text-xs text-accent-error mt-1">
+                  {errorMessage}
+                </span>
+              )}
+            </div>
           );
         }
 
