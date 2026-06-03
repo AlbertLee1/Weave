@@ -18,6 +18,7 @@ export type ObjectSetNode =
   | ReferenceNode
   | WithPropertiesNode
   | NearestNeighborsNode
+  | SampleNode
   | UnsupportedObjectSetNode;
 
 interface NodeBase {
@@ -79,12 +80,21 @@ export interface NearestNeighborsNode extends NodeBase {
   type: 'nearestNeighbors';
   objectSet: ObjectSetNode;
   propertyIdentifier?: { property: { apiName: string } };
+  propertyIdentifiers?: Array<{ property: { apiName: string } }>;
+  fusionStrategy?: '' | 'min' | 'rrf';
   numNeighbors?: number;
   similarityThreshold?: number;
   query?: {
     vector?: { value: number[] };
     text?: { value: string };
   };
+}
+
+export interface SampleNode extends NodeBase {
+  type: 'sample';
+  objectSet: ObjectSetNode;
+  size: number;
+  seed?: number;
 }
 
 export type ObjectSetComposerVariantSupport =
@@ -102,6 +112,7 @@ export const OBJECT_SET_COMPOSER_VARIANT_SUPPORT = {
   reference: 'editable',
   withProperties: 'editable',
   nearestNeighbors: 'editable',
+  sample: 'editable',
   asType: 'readOnlyUnsupported',
   asBaseObjectTypes: 'readOnlyUnsupported',
   interfaceBase: 'readOnlyUnsupported',
@@ -243,10 +254,23 @@ export function nodeToDefinition(node: ObjectSetNode): ObjectSetDefinition {
         type: 'nearestNeighbors',
         objectSet: nodeToDefinition(node.objectSet),
         propertyIdentifier: node.propertyIdentifier,
+        propertyIdentifiers: node.propertyIdentifiers,
+        fusionStrategy: node.fusionStrategy,
         numNeighbors: node.numNeighbors,
         similarityThreshold: node.similarityThreshold,
         query: node.query,
       };
+    case 'sample': {
+      const def: ObjectSetDefinition = {
+        type: 'sample',
+        objectSet: nodeToDefinition(node.objectSet),
+        size: node.size,
+      };
+      if (node.seed !== undefined) {
+        def.seed = node.seed;
+      }
+      return def;
+    }
     case 'unsupported':
       return node.def;
   }
@@ -313,9 +337,19 @@ export function definitionToNode(def: ObjectSetDefinition): ObjectSetNode {
         type: 'nearestNeighbors',
         objectSet: definitionToNode(def.objectSet),
         propertyIdentifier: def.propertyIdentifier,
+        propertyIdentifiers: def.propertyIdentifiers,
+        fusionStrategy: def.fusionStrategy,
         numNeighbors: def.numNeighbors,
         similarityThreshold: def.similarityThreshold,
         query: def.query,
+      };
+    case 'sample':
+      return {
+        id: newId(),
+        type: 'sample',
+        objectSet: definitionToNode(def.objectSet),
+        size: def.size,
+        seed: def.seed,
       };
     case 'asType':
     case 'asBaseObjectTypes':
@@ -469,8 +503,13 @@ function walk(node: ObjectSetNode, errors: string[]): void {
     case 'withProperties':
       walk(node.objectSet, errors);
       break;
-    case 'nearestNeighbors':
-      if (!node.propertyIdentifier?.property.apiName) {
+    case 'nearestNeighbors': {
+      const columns = node.propertyIdentifiers ?? [];
+      const hasSingular = Boolean(node.propertyIdentifier?.property.apiName);
+      const hasPlural =
+        columns.length > 0 &&
+        columns.every((c) => Boolean(c.property.apiName));
+      if (!hasSingular && !hasPlural) {
         errors.push('nearestNeighbors node requires an embedding property');
       }
       if (node.numNeighbors !== undefined && node.numNeighbors <= 0) {
@@ -481,6 +520,13 @@ function walk(node: ObjectSetNode, errors: string[]): void {
         (!node.query?.vector?.value || node.query.vector.value.length === 0)
       ) {
         errors.push('nearestNeighbors node requires query text or vector');
+      }
+      walk(node.objectSet, errors);
+      break;
+    }
+    case 'sample':
+      if (!Number.isFinite(node.size) || node.size <= 0) {
+        errors.push('sample node requires size > 0');
       }
       walk(node.objectSet, errors);
       break;

@@ -26,6 +26,7 @@ function staticRootType(def: ObjectSetDefinition | undefined): string {
     case 'filter':
     case 'withProperties':
     case 'nearestNeighbors':
+    case 'sample':
     case 'asBaseObjectTypes':
       return staticRootType(def.objectSet);
     case 'union':

@@ -418,6 +418,7 @@ export type ObjectSetDefinition =
   | ReferenceObjectSet
   | WithPropertiesObjectSet
   | NearestNeighborsObjectSet
+  | SampleObjectSet
   | AsTypeObjectSet
   | AsBaseObjectTypesObjectSet
   | InterfaceBaseObjectSet
@@ -481,12 +482,28 @@ export interface NearestNeighborsObjectSet {
   type: 'nearestNeighbors';
   objectSet: ObjectSetDefinition;
   propertyIdentifier?: { property: { apiName: string } };
+  // propertyIdentifiers (Gap-Q4) runs KNN against multiple vector columns
+  // in parallel; mutually exclusive with the singular propertyIdentifier.
+  propertyIdentifiers?: Array<{ property: { apiName: string } }>;
+  // fusionStrategy selects how multi-column matches are combined:
+  // '' / 'min' (min distance per PK) or 'rrf' (Reciprocal Rank Fusion).
+  // Ignored on single-column queries.
+  fusionStrategy?: '' | 'min' | 'rrf';
   numNeighbors?: number;
   similarityThreshold?: number;
   query?: {
     vector?: { value: number[] };
     text?: { value: string };
   };
+}
+
+// SampleObjectSet (US-225) draws a reservoir sample of the inner ObjectSet.
+// size must be > 0; seed is an optional deterministic PRNG seed.
+export interface SampleObjectSet {
+  type: 'sample';
+  objectSet: ObjectSetDefinition;
+  size: number;
+  seed?: number;
 }
 
 export interface StaticObjectSet {
