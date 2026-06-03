@@ -3,6 +3,7 @@ import { useFormContext } from 'react-hook-form';
 import type { ActionParameterV2 } from '../../api/types';
 import { uploadAttachment } from '../../api/attachments';
 import { uploadMedia } from '../../api/media';
+import { useMarkings } from '../../hooks/useMarkings';
 
 interface ParameterFormProps {
   parameters: Record<string, ActionParameterV2>;
@@ -176,6 +177,242 @@ function UploadField({ fieldKey, def, kind }: UploadFieldProps) {
   );
 }
 
+interface MarkingSelectFieldProps {
+  fieldKey: string;
+  def: ActionParameterV2;
+  multiple: boolean;
+}
+
+/**
+ * MarkingSelectField renders a `<select>` populated from the marking catalog
+ * (`listMarkings()` via the shared `useMarkings` hook) for `marking`-typed
+ * action parameters.
+ *
+ * Wire-format contract: a marking is identified everywhere on the backend by
+ * its NAME string — the grant API body carries `marking` (the name) and the
+ * policy engine (pkg/security/policy_engine.go RuleTypeMarkingSubset) compares
+ * marking NAME strings against an object's marking set. `marking` has no
+ * dedicated Coerce/Validate case (pkg/types) so it passes through unchanged.
+ * We therefore emit the marking's `name` (scalar) or an array of names
+ * (array-of-marking) — never the human display name.
+ *
+ * The option labels show the human display name (falling back to the name).
+ * Empty selection collapses to '' when required (Zod min(1)/min-length blocks
+ * apply) or `undefined` when optional, mirroring the other scalar branches;
+ * the array variant collapses to [].
+ *
+ * Degraded states: while the catalog is loading, or if it fails to load, or if
+ * it is empty, we fall back to a plain text input keyed by the canonical
+ * `param-<key>` testid so the parameter stays usable (the user can hand-type a
+ * marking name).
+ */
+function MarkingSelectField({ fieldKey, def, multiple }: MarkingSelectFieldProps) {
+  const { setValue, watch, formState, register } = useFormContext();
+  const { data: markings, isLoading, isError } = useMarkings();
+
+  // Registering the SCALAR field lets the submit-time `setValueAs` run even for
+  // an untouched optional default: '' collapses to undefined so the field is
+  // omitted from the wire payload (required '' stays '' so Zod min(1) blocks),
+  // exactly mirroring the date / string branches. We still drive value/onChange
+  // ourselves so the controlled <select> reflects the current form value. The
+  // multi (array) variant must NOT register with this String()-coercing
+  // setValueAs — it would mangle the array value into a string on submit.
+  const scalarReg = register(fieldKey, {
+    setValueAs: (v) => {
+      if (multiple) return v;
+      if (v === '' || v === null || v === undefined) {
+        return def.required ? '' : undefined;
+      }
+      return String(v);
+    },
+  });
+
+  const fieldId = `param-${fieldKey}`;
+  const errorId = `${fieldId}-error`;
+  const fieldError = formState.errors[fieldKey];
+  const errorMessage =
+    typeof fieldError?.message === 'string' ? fieldError.message : undefined;
+
+  const inputClass =
+    'bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none w-full';
+  const inputErrorClass =
+    'bg-bg-tertiary border border-accent-error rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-error focus:outline-none w-full';
+  const labelClass = 'text-xs text-text-secondary font-sans mb-1';
+
+  const label = (
+    <label htmlFor={fieldId} className={labelClass}>
+      {fieldKey}
+      {multiple ? ' (markings)' : ''}
+      {def.required && <span className="text-accent-error ml-1">*</span>}
+    </label>
+  );
+  const footer = (
+    <>
+      {def.description && (
+        <span className="text-xs text-text-secondary mt-1">{def.description}</span>
+      )}
+      {errorMessage && (
+        <span id={errorId} role="alert" className="text-xs text-accent-error mt-1">
+          {errorMessage}
+        </span>
+      )}
+    </>
+  );
+
+  const current = watch(fieldKey);
+
+  // Degraded fallback: a non-transient empty/errored catalog → a text input so
+  // the user can still hand-type a marking name / names. Loading is transient
+  // and handled below by a disabled select shell, so the rendered element type
+  // stays stable (select) once a usable catalog arrives — no input→select flip.
+  const degraded = !isLoading && (isError || (markings?.length ?? 0) === 0);
+  if (degraded) {
+    if (multiple) {
+      const display = Array.isArray(current) ? (current as string[]).join(', ') : '';
+      return (
+        <div className="flex flex-col">
+          {label}
+          <input
+            id={fieldId}
+            data-testid={fieldId}
+            type="text"
+            value={display}
+            aria-invalid={errorMessage ? 'true' : 'false'}
+            aria-describedby={errorMessage ? errorId : undefined}
+            onChange={(e) => {
+              const v = e.target.value;
+              setValue(fieldKey, v ? v.split(',').map((s) => s.trim()) : [], {
+                shouldValidate: true,
+                shouldDirty: true,
+              });
+            }}
+            onBlur={() =>
+              setValue(fieldKey, watch(fieldKey), {
+                shouldValidate: true,
+                shouldTouch: true,
+              })
+            }
+            className={errorMessage ? inputErrorClass : inputClass}
+            placeholder={isLoading ? 'Loading markings…' : 'marking1, marking2'}
+          />
+          {footer}
+        </div>
+      );
+    }
+    return (
+      <div className="flex flex-col">
+        {label}
+        <input
+          {...scalarReg}
+          id={fieldId}
+          data-testid={fieldId}
+          type="text"
+          value={typeof current === 'string' ? current : ''}
+          aria-invalid={errorMessage ? 'true' : 'false'}
+          aria-describedby={errorMessage ? errorId : undefined}
+          onChange={(e) => {
+            const v = e.target.value;
+            setValue(fieldKey, v === '' ? (def.required ? '' : undefined) : v, {
+              shouldValidate: true,
+              shouldDirty: true,
+            });
+          }}
+          onBlur={(e) => {
+            void scalarReg.onBlur(e);
+            setValue(fieldKey, watch(fieldKey), {
+              shouldValidate: true,
+              shouldTouch: true,
+            });
+          }}
+          className={errorMessage ? inputErrorClass : inputClass}
+          placeholder={isLoading ? 'Loading markings…' : 'marking name'}
+        />
+        {footer}
+      </div>
+    );
+  }
+
+  const options = markings ?? [];
+
+  if (multiple) {
+    const selected = Array.isArray(current) ? (current as string[]) : [];
+    return (
+      <div className="flex flex-col">
+        {label}
+        <select
+          id={fieldId}
+          data-testid={fieldId}
+          multiple
+          disabled={isLoading}
+          aria-invalid={errorMessage ? 'true' : 'false'}
+          aria-describedby={errorMessage ? errorId : undefined}
+          onChange={(e) => {
+            const names = Array.from(e.target.selectedOptions).map((o) => o.value);
+            setValue(fieldKey, names, { shouldValidate: true, shouldDirty: true });
+          }}
+          onBlur={() =>
+            setValue(fieldKey, watch(fieldKey), {
+              shouldValidate: true,
+              shouldTouch: true,
+            })
+          }
+          className={`${errorMessage ? inputErrorClass : inputClass} min-h-[6rem]`}
+        >
+          {options.map((m) => (
+            <option key={m.name} value={m.name} selected={selected.includes(m.name)}>
+              {m.displayName || m.name}
+            </option>
+          ))}
+        </select>
+        {footer}
+      </div>
+    );
+  }
+
+  const scalar = typeof current === 'string' ? current : '';
+  return (
+    <div className="flex flex-col">
+      {label}
+      <select
+        // Spreading the register() result wires RHF's ref/name so the
+        // submit-time `setValueAs` runs (collapsing an untouched optional ''
+        // to undefined). The controlled value/onChange/onBlur below override
+        // the spread so the <select> still reflects the live form value.
+        {...scalarReg}
+        id={fieldId}
+        data-testid={fieldId}
+        disabled={isLoading}
+        value={scalar}
+        aria-invalid={errorMessage ? 'true' : 'false'}
+        aria-describedby={errorMessage ? errorId : undefined}
+        onChange={(e) => {
+          const v = e.target.value;
+          setValue(fieldKey, v === '' ? (def.required ? '' : undefined) : v, {
+            shouldValidate: true,
+            shouldDirty: true,
+          });
+        }}
+        onBlur={(e) => {
+          void scalarReg.onBlur(e);
+          setValue(fieldKey, watch(fieldKey), {
+            shouldValidate: true,
+            shouldTouch: true,
+          });
+        }}
+        className={errorMessage ? inputErrorClass : inputClass}
+      >
+        <option value="">{isLoading ? 'Loading markings…' : 'Select a marking…'}</option>
+        {options.map((m) => (
+          <option key={m.name} value={m.name}>
+            {m.displayName || m.name}
+          </option>
+        ))}
+      </select>
+      {footer}
+    </div>
+  );
+}
+
 export function ParameterForm({ parameters }: ParameterFormProps) {
   const entries = Object.entries(parameters ?? {});
   const { register, formState, setValue, watch } = useFormContext();
@@ -268,6 +505,20 @@ export function ParameterForm({ parameters }: ParameterFormProps) {
         if (paramType === 'attachment' || paramType === 'media') {
           return (
             <UploadField key={key} fieldKey={key} def={def} kind={paramType} />
+          );
+        }
+
+        if (paramType === 'marking') {
+          return (
+            <MarkingSelectField key={key} fieldKey={key} def={def} multiple={false} />
+          );
+        }
+
+        // Array of marking → a multi-select picker. Detected before the generic
+        // array branch so the element type drives the renderer.
+        if (paramType === 'array' && def.dataType?.itemType?.type === 'marking') {
+          return (
+            <MarkingSelectField key={key} fieldKey={key} def={def} multiple={true} />
           );
         }
 
