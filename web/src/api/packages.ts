@@ -119,3 +119,41 @@ export function installBuiltinPackage(
     body,
   );
 }
+
+// US-412 (UI surface): one migration file shipped inside a package
+// envelope. Mirrors `oms.PackageMigrationEntry` over the wire — `content`
+// is the migration body. The server's `encoding/json` decodes a
+// base64-encoded string into the Go `[]byte`, so a `.weavepkg.json`
+// produced by the exporter ships its SQL bodies base64-encoded and the UI
+// forwards them verbatim.
+export interface PackageMigrationEntry {
+  filename: string;
+  content: string;
+}
+
+// US-412 (UI surface): request body of POST /api/v2/pkg/install. The Go
+// handler (`oms.PackageInstallRequest`) requires `manifest.name`,
+// `manifest.version` and a non-empty `ontology` body; `migrations` and
+// `onConflict` are optional. `ontology` is the opaque OntologyExport
+// envelope written into a .weavepkg archive — forwarded verbatim so the
+// server-side importer owns its schema.
+export interface PackageInstallRequest {
+  manifest: PackageManifest;
+  ontology: unknown;
+  migrations?: PackageMigrationEntry[];
+  onConflict?: BuiltinInstallConflictMode;
+}
+
+// installPackage POSTs a parsed .weavepkg envelope to
+// POST /api/v2/pkg/install. Reuses InstallBuiltinPackageResponse because
+// the handler returns the identical PackageInstallResponse wire shape for
+// both the built-in catalog and the upload path.
+export function installPackage(
+  body: PackageInstallRequest,
+): Promise<InstallBuiltinPackageResponse> {
+  return request<InstallBuiltinPackageResponse>(
+    'POST',
+    '/api/v2/pkg/install',
+    body,
+  );
+}
