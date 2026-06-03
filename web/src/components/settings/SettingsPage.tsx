@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { getBuildFeatures, getBuildInfo } from '../../api/buildInfo';
 import {
   changeLocale,
   isSupportedLocale,
@@ -38,6 +40,24 @@ export function SettingsPage() {
 
   const { data: prefs, isLoading, unavailable } = useUserPreferences();
   const update = useUpdateUserPreferences();
+
+  // Build info / feature flags are read-only server diagnostics (US: parity
+  // with /api/v2/build-info). A degraded deployment may 404; we render the
+  // section only when the build info resolves so the page never crashes.
+  const buildInfoQuery = useQuery({
+    queryKey: ['build-info'],
+    queryFn: getBuildInfo,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const featuresQuery = useQuery({
+    queryKey: ['build-info', 'features'],
+    queryFn: getBuildFeatures,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const buildInfo = buildInfoQuery.data;
+  const features = featuresQuery.data?.features ?? [];
 
   // Working copies seeded from the persisted row when it loads. Local
   // edits flow through `apply()` so the optimistic UI stays in sync
@@ -337,6 +357,71 @@ export function SettingsPage() {
           ))}
         </ul>
       </section>
+
+      {buildInfo && (
+        <section
+          data-testid="settings-section-system"
+          aria-labelledby="settings-system-heading"
+          className="rounded border border-border bg-bg-secondary p-4"
+        >
+          <h2
+            id="settings-system-heading"
+            className="text-sm font-semibold text-text-primary mb-3"
+          >
+            System
+          </h2>
+          <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-sm">
+            {(
+              [
+                ['Version', buildInfo.version],
+                ['Commit', buildInfo.commit],
+                ['Go version', buildInfo.goVersion],
+                ['Build time', buildInfo.buildTime],
+              ] as const
+            ).map(([label, value]) =>
+              value ? (
+                <div key={label} className="contents">
+                  <dt className="text-text-secondary">{label}</dt>
+                  <dd className="font-mono text-xs text-text-primary break-all">
+                    {value}
+                  </dd>
+                </div>
+              ) : null,
+            )}
+          </dl>
+
+          {features.length > 0 && (
+            <div className="mt-4">
+              <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-2">
+                Feature flags
+              </h3>
+              <ul className="flex flex-wrap gap-2">
+                {features.map((f) => (
+                  <li
+                    key={f.name}
+                    data-testid={`settings-feature-${f.name}`}
+                    data-enabled={f.enabled}
+                    title={f.reason || f.description || undefined}
+                    className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-mono ${
+                      f.enabled
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                        : 'border-border bg-bg-tertiary text-text-secondary'
+                    }`}
+                  >
+                    <span
+                      aria-hidden
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        f.enabled ? 'bg-emerald-400' : 'bg-text-secondary/50'
+                      }`}
+                    />
+                    {f.name}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }
