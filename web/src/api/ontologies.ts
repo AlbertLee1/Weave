@@ -210,6 +210,10 @@ export interface UpdateLinkTypeRequest {
   // clears it, an rid sets/replaces it. Mirrors the backend tri-state
   // pointer (InverseLinkRID *string).
   inverseLinkRid?: string;
+  // US-261: tri-state — undefined leaves marking inheritance untouched,
+  // true/false set it. Mirrors the backend tri-state pointer
+  // (PropagateMarkings *bool).
+  propagateMarkings?: boolean;
   // VTX-010: tri-state — undefined leaves tags untouched, [] clears them,
   // a non-empty array replaces them. Mirrors the backend tri-state pointer.
   typeClasses?: string[];

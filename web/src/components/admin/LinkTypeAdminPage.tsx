@@ -676,6 +676,9 @@ interface EditFormState {
   displayName: string;
   description: string;
   required: boolean;
+  // US-261: whether the LinkType inherits the source object's markings on
+  // every LINK_CREATE.
+  propagateMarkings: boolean;
   // US-209: chosen inverse LinkType RID, or '' for "(none)".
   inverseLinkRid: string;
   inverseLinkRidDirty: boolean;
@@ -689,6 +692,13 @@ interface EditFormState {
 function linkTypeInverseRid(lt: LinkType): string {
   const rid = (lt as { inverseLinkRid?: unknown }).inverseLinkRid;
   return typeof rid === 'string' ? rid : '';
+}
+
+// US-261: the backend serializes `propagateMarkings` on the LinkType wire
+// format, but the shared LinkType type (api/types.ts) does not declare it.
+// Read it defensively so the edit form can preload the current setting.
+function linkTypePropagateMarkings(lt: LinkType): boolean {
+  return (lt as { propagateMarkings?: unknown }).propagateMarkings === true;
 }
 
 function EditLinkTypeModal({
@@ -707,6 +717,7 @@ function EditLinkTypeModal({
     displayName: linkType.displayName,
     description: linkType.description ?? '',
     required: linkType.required,
+    propagateMarkings: linkTypePropagateMarkings(linkType),
     inverseLinkRid: linkTypeInverseRid(linkType),
     inverseLinkRidDirty: false,
     typeClasses: linkType.typeClasses ?? [],
@@ -721,6 +732,9 @@ function EditLinkTypeModal({
       displayName: form.displayName.trim(),
       description: form.description.trim() || undefined,
       required: form.required,
+      // US-261: send the current toggle so admins can turn marking
+      // inheritance on/off for an existing LinkType (mirrors `required`).
+      propagateMarkings: form.propagateMarkings,
       // US-209: tri-state — only send when the user touched the selector.
       // '' clears the pairing, an rid sets it; omitting preserves it.
       inverseLinkRid: form.inverseLinkRidDirty
@@ -811,6 +825,17 @@ function EditLinkTypeModal({
             }
           />
           <span>Required link (non-nullable)</span>
+        </label>
+        <label className="flex items-center gap-2 text-xs text-text-secondary">
+          <input
+            type="checkbox"
+            data-testid="link-type-edit-propagate-markings"
+            checked={form.propagateMarkings}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, propagateMarkings: e.target.checked }))
+            }
+          />
+          <span>Propagate markings (inherit source object markings on link)</span>
         </label>
         <InverseLinkSelect
           testIdPrefix="link-type-edit"

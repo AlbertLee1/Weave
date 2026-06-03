@@ -636,6 +636,69 @@ describe('LinkTypeAdminPage', () => {
     });
   });
 
+  it('US-261 edit form sends propagateMarkings via PUT when the toggle is checked', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    const editButtons = screen.getAllByRole('button', { name: /^Edit$/i });
+    // Rows sorted asc: index 1 = Employee → Department (rid l1)
+    await user.click(editButtons[1]);
+
+    const propagateBox = (await screen.findByTestId(
+      'link-type-edit-propagate-markings',
+    )) as HTMLInputElement;
+    // Defaults off when the LinkType has no propagateMarkings value.
+    expect(propagateBox.checked).toBe(false);
+    await user.click(propagateBox);
+    await user.click(screen.getByRole('button', { name: /Save changes/i }));
+
+    await waitFor(() => {
+      expect(state.updateCalls.length).toBe(1);
+    });
+    expect(state.updateCalls[0]).toMatchObject({
+      rid: 'ri.ontology.main.link-type.l1',
+      body: expect.objectContaining({
+        propagateMarkings: true,
+      }),
+    });
+  });
+
+  it('US-261 edit form preloads propagateMarkings from the existing LinkType', async () => {
+    const user = userEvent.setup();
+    state.linkTypes[0] = {
+      ...state.linkTypes[0],
+      propagateMarkings: true,
+    } as (typeof state.linkTypes)[number];
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText('Employee → Department')).toBeInTheDocument();
+    });
+    const editButtons = screen.getAllByRole('button', { name: /^Edit$/i });
+    // Rows sorted asc: index 1 = Employee → Department (rid l1)
+    await user.click(editButtons[1]);
+
+    const propagateBox = (await screen.findByTestId(
+      'link-type-edit-propagate-markings',
+    )) as HTMLInputElement;
+    // Preloaded from the LinkType's current propagateMarkings value.
+    expect(propagateBox.checked).toBe(true);
+    // Toggle it off and save — sends propagateMarkings: false.
+    await user.click(propagateBox);
+    await user.click(screen.getByRole('button', { name: /Save changes/i }));
+
+    await waitFor(() => {
+      expect(state.updateCalls.length).toBe(1);
+    });
+    expect(state.updateCalls[0]).toMatchObject({
+      rid: 'ri.ontology.main.link-type.l1',
+      body: expect.objectContaining({
+        propagateMarkings: false,
+      }),
+    });
+  });
+
   it('VTX-010 edit form preserves existing typeClasses and toggles tags', async () => {
     const user = userEvent.setup();
     state.linkTypes[0] = {
