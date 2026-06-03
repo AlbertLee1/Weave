@@ -188,6 +188,9 @@ export interface CreateLinkTypeRequest {
   foreignKeyConfig?: unknown;
   joinTableConfig?: unknown;
   required?: boolean;
+  // US-261: opt the LinkType into automatic marking inheritance — every
+  // LINK_CREATE copies the source object's `_markings` set onto the target.
+  propagateMarkings?: boolean;
   // VTX-010: Vertex graph rendering tags. Omit or pass [] when no tags.
   typeClasses?: string[];
 }
