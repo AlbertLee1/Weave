@@ -8,7 +8,11 @@ import {
   useRevertActionLog,
 } from '../../hooks/useActions';
 import { useObjectVersion } from '../../hooks/useObjectVersion';
-import type { ActionType, ActionApplyResponse } from '../../api/types';
+import type {
+  ActionType,
+  ActionApplyResponse,
+  ActionApplyOptions,
+} from '../../api/types';
 import { ApiRequestError } from '../../api/client';
 import { ParameterForm } from './ParameterForm';
 import { ActionResult } from './ActionResult';
@@ -42,6 +46,13 @@ export function ActionConsolePage() {
   const [result, setResult] = useState<ActionApplyResponse | null>(null);
   const [targetObjectType, setTargetObjectType] = useState('');
   const [targetPrimaryKey, setTargetPrimaryKey] = useState('');
+  // Foundry OSv2 single-apply options. Defaults match the server: the apply
+  // runs (VALIDATE_AND_EXECUTE) and returns the full edit summary (ALL).
+  // ALL_V2_WITH_DELETIONS is single-apply only — the batch path rejects it.
+  const [applyMode, setApplyMode] =
+    useState<NonNullable<ActionApplyOptions['mode']>>('VALIDATE_AND_EXECUTE');
+  const [returnEdits, setReturnEdits] =
+    useState<NonNullable<ActionApplyOptions['returnEdits']>>('ALL');
   const [staleConflict, setStaleConflict] = useState<null | {
     currentVersion?: string;
   }>(null);
@@ -95,13 +106,17 @@ export function ActionConsolePage() {
     for (const [k, v] of Object.entries(paramValues)) {
       if (v !== undefined) cleanedParams[k] = v;
     }
+    // Assemble apply options. Only send fields that diverge from the server
+    // defaults so the wire stays minimal (and so omitted == server default).
+    const options: ActionApplyOptions = {};
+    if (applyMode !== 'VALIDATE_AND_EXECUTE') options.mode = applyMode;
+    if (returnEdits !== 'ALL') options.returnEdits = returnEdits;
+    if (expectedVersion !== undefined) options.expectedVersion = expectedVersion;
     applyMutation.mutate(
       {
         action: selectedAction.apiName,
         parameters: cleanedParams,
-        ...(expectedVersion !== undefined
-          ? { options: { expectedVersion } }
-          : {}),
+        ...(Object.keys(options).length > 0 ? { options } : {}),
       },
       {
         onSuccess: (data) => {
@@ -342,6 +357,60 @@ export function ActionConsolePage() {
                   </button>
                 </div>
               )}
+
+              {/* Apply options — validation mode + edit summary verbosity */}
+              <div>
+                <h3 className="text-xs font-medium text-text-primary mb-3">Apply Options</h3>
+                <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
+                  <div className="flex flex-col flex-1">
+                    <label
+                      htmlFor="apply-mode-select"
+                      className="text-xs text-text-secondary font-sans mb-1"
+                    >
+                      Validation mode
+                    </label>
+                    <select
+                      id="apply-mode-select"
+                      data-testid="apply-mode-select"
+                      value={applyMode}
+                      onChange={(e) =>
+                        setApplyMode(
+                          e.target.value as NonNullable<ActionApplyOptions['mode']>,
+                        )
+                      }
+                      className="bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none w-full"
+                    >
+                      <option value="VALIDATE_AND_EXECUTE">Validate and execute</option>
+                      <option value="VALIDATE_ONLY">Validate only</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col flex-1">
+                    <label
+                      htmlFor="apply-return-edits-select"
+                      className="text-xs text-text-secondary font-sans mb-1"
+                    >
+                      Return edits
+                    </label>
+                    <select
+                      id="apply-return-edits-select"
+                      data-testid="apply-return-edits-select"
+                      value={returnEdits}
+                      onChange={(e) =>
+                        setReturnEdits(
+                          e.target.value as NonNullable<
+                            ActionApplyOptions['returnEdits']
+                          >,
+                        )
+                      }
+                      className="bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none w-full"
+                    >
+                      <option value="ALL">All</option>
+                      <option value="ALL_V2_WITH_DELETIONS">All (with deletions)</option>
+                      <option value="NONE">None</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
 
               {/* Execute button */}
               <div>

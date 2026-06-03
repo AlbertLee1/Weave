@@ -57,6 +57,15 @@ type Handler struct {
 	// metric.field reference properties outside the caller's allow list.
 	// Wired via SetPropertyFilterProvider from main.go. Nil => no gate.
 	propertyFilter PropertyFilterProvider
+	// rowPolicyProvider is the optional row-level policy gate that
+	// AggregateObjects pushes down as the Bleve base query so count/sum/avg
+	// only ever see rows the caller is allowed to read. Without it the
+	// direct /objects/{type}/aggregate path would aggregate over the whole
+	// index (MatchAll), leaking the existence and values of policy-hidden
+	// rows — the ObjectSet aggregate path already enforces this via the
+	// executor's PolicyQueryProvider. Wired via SetRowPolicyQueryProvider
+	// from main.go. Nil => no row filter (back-compat).
+	rowPolicyProvider RowPolicyQueryProvider
 	// activityStore backs the object-path activity-timeline endpoint
 	// (/objects/{type}/{pk}/activity). When nil, the route returns
 	// ActivityStoreNotConfigured. Wired via SetActivityStore from main.go

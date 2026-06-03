@@ -297,6 +297,11 @@ export function AutomationRulesPage() {
   };
 
   const togglePause = (rule: AutomationRule) => {
+    // A `disabled` rule has no honest active/paused toggle: the backend
+    // resume handler does not distinguish disabled from paused and would
+    // silently re-activate it. The toggle button is rendered disabled for
+    // this state, but guard here too so no programmatic path can resume it.
+    if (rule.status === 'disabled') return;
     setPendingRuleId(rule.id);
     const onSettled = () => setPendingRuleId(null);
     if (rule.status === 'active') {
@@ -446,13 +451,26 @@ export function AutomationRulesPage() {
                   <button
                     type="button"
                     onClick={() => togglePause(rule)}
-                    disabled={pendingRuleId === rule.id}
+                    disabled={
+                      rule.status === 'disabled' || pendingRuleId === rule.id
+                    }
+                    title={
+                      rule.status === 'disabled'
+                        ? 'Disabled — this rule cannot be paused or resumed here.'
+                        : rule.status === 'active'
+                          ? 'Pause this rule'
+                          : 'Resume this rule'
+                    }
                     data-testid="automation-rule-toggle-btn"
                     data-rule-id={rule.id}
                     data-current-status={rule.status}
-                    className="rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-bg-tertiary disabled:opacity-60"
+                    className="rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {rule.status === 'active' ? 'Pause' : 'Resume'}
+                    {rule.status === 'disabled'
+                      ? 'Disabled'
+                      : rule.status === 'active'
+                        ? 'Pause'
+                        : 'Resume'}
                   </button>
                   <button
                     type="button"

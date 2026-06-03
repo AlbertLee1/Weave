@@ -58,6 +58,21 @@ export function AggregationPage() {
     return keys[0] ?? '';
   }, [aggResult, metrics]);
 
+  // Block Execute on groupBy clauses the backend would reject outright:
+  //  - a `ranges` clause with zero rows sends an empty ranges array → zero
+  //    buckets (silent wrong result);
+  //  - a `fixedWidth` clause without a positive width always errors server-side.
+  const hasInvalidGroupBy = useMemo(
+    () =>
+      groupBy.some(
+        (g) =>
+          (g.type === 'ranges' && (g.ranges?.length ?? 0) === 0) ||
+          (g.type === 'fixedWidth' &&
+            !(typeof g.fixedWidth === 'number' && g.fixedWidth > 0)),
+      ),
+    [groupBy],
+  );
+
   function handleExecute() {
     const where = buildWhereClause(filters);
     setAggRequest({
@@ -118,7 +133,7 @@ export function AggregationPage() {
           </div>
           <button
             onClick={handleExecute}
-            disabled={metrics.length === 0}
+            disabled={metrics.length === 0 || hasInvalidGroupBy}
             data-testid="aggregation-execute"
             className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50"
           >

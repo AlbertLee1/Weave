@@ -23,7 +23,12 @@ export interface AppliesTo {
 export interface RowPolicy {
   rid: string;
   objectTypeRid: string;
-  predicate: unknown;
+  predicate?: unknown;
+  // US-487: CEL expression alternative to the JSON `predicate`. The backend
+  // (pkg/rls.RowPolicy.Validate) requires at least one of `predicate` or
+  // `celExpression`; both populated is allowed (CEL is then a strict
+  // additional filter on top of the where-clause).
+  celExpression?: string;
   appliesTo: AppliesTo;
   description?: string;
   createdBy?: string;
@@ -37,13 +42,18 @@ export interface ListRowPoliciesResponse {
 
 export interface CreateRowPolicyRequest {
   objectTypeRid: string;
-  predicate: unknown;
+  // Exactly one of `predicate` (legacy JSON where-clause) or `celExpression`
+  // (US-487 CEL gate) is sent by the UI; the backend accepts either and
+  // rejects a request carrying neither (pkg/rls.RowPolicy.Validate).
+  predicate?: unknown;
+  celExpression?: string;
   appliesTo: AppliesTo;
   description?: string;
 }
 
 export interface UpdateRowPolicyRequest {
   predicate?: unknown;
+  celExpression?: string;
   appliesTo?: AppliesTo;
   description?: string;
 }

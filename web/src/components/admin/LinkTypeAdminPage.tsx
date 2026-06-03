@@ -331,6 +331,7 @@ interface CreateFormState {
   target: string;
   cardinality: Cardinality;
   required: boolean;
+  propagateMarkings: boolean;
   foreignKeyConfig: string;
   apiNameDirty: boolean;
   typeClasses: string[];
@@ -356,6 +357,7 @@ function CreateLinkTypeModal({
     target: objectTypes[0]?.apiName ?? '',
     cardinality: 'ONE_TO_MANY',
     required: false,
+    propagateMarkings: false,
     foreignKeyConfig: '',
     apiNameDirty: false,
     typeClasses: [],
@@ -410,6 +412,7 @@ function CreateLinkTypeModal({
       linkedObjectTypeApiName: form.target,
       cardinality: form.cardinality,
       required: form.required,
+      propagateMarkings: form.propagateMarkings,
       foreignKeyConfig:
         needsForeignKey && parsedForeignKey !== undefined
           ? parsedForeignKey
@@ -567,6 +570,17 @@ function CreateLinkTypeModal({
             }
           />
           <span>Required link (non-nullable)</span>
+        </label>
+        <label className="flex items-center gap-2 text-xs text-text-secondary">
+          <input
+            type="checkbox"
+            data-testid="link-type-create-propagate-markings"
+            checked={form.propagateMarkings}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, propagateMarkings: e.target.checked }))
+            }
+          />
+          <span>Propagate markings (inherit source object markings on link)</span>
         </label>
         <TypeClassCheckboxes
           testIdPrefix="link-type-create"

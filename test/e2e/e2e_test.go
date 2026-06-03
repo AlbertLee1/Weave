@@ -1293,6 +1293,229 @@ func TestE2E_Aggregate_GroupBy(t *testing.T) {
 	}
 }
 
+// TestBDD_Aggregate_MetricDirection_OrdersBuckets is the HTTP contract for the
+// Palantir "按聚合值排序" aggregation feature: a metric carrying a "direction"
+// orders the groupBy result buckets by that metric's value.
+//
+//	Given employees grouped by department with per-dept age sums
+//	  (marketing=32, engineering=55, sales=63)
+//	When the client aggregates sum(age) by department with direction "ASC"
+//	Then the returned buckets are ordered marketing → engineering → sales,
+//	  i.e. ascending by the metric — not the engine's default facet order.
+func TestBDD_Aggregate_MetricDirection_OrdersBuckets(t *testing.T) {
+	env := setupTestServer(t)
+	ontRid, _ := seedOntology(t, env)
+	indexEmployees(t, env)
+
+	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/objects/Employee/aggregate", map[string]interface{}{
+		"aggregation": []map[string]interface{}{
+			{"type": "sum", "field": "age", "name": "totalAge", "direction": "ASC"},
+		},
+		"groupBy": []map[string]interface{}{
+			{"type": "exact", "field": "department"},
+		},
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var body map[string]interface{}
+	decodeJSON(t, resp, &body)
+	data := body["data"].([]interface{})
+	if len(data) != 3 {
+		t.Fatalf("expected 3 dept buckets, got %d", len(data))
+	}
+
+	got := make([]float64, len(data))
+	for i, row := range data {
+		metrics := row.(map[string]interface{})["metrics"].([]interface{})
+		got[i] = findE2EMetric(t, metrics, "totalAge").(float64)
+	}
+	want := []float64{32, 55, 63} // marketing, engineering, sales — ascending
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ASC bucket order by totalAge = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestBDD_Aggregate_MetricPropertyIdentifier is the HTTP contract for naming
+// an aggregation metric's target via propertyIdentifier instead of a bare
+// field (syntax ref L461).
+//
+//	Given employees with ages summing to 150
+//	When the client aggregates sum via propertyIdentifier{apiName:"age"}
+//	     grouped by department
+//	Then the metric resolves to the age field and the per-bucket sums total
+//	     150 — identical to using field:"age".
+func TestBDD_Aggregate_MetricPropertyIdentifier(t *testing.T) {
+	env := setupTestServer(t)
+	ontRid, _ := seedOntology(t, env)
+	indexEmployees(t, env)
+
+	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/objects/Employee/aggregate", map[string]interface{}{
+		"aggregation": []map[string]interface{}{
+			{"type": "sum", "name": "totalAge",
+				"propertyIdentifier": map[string]interface{}{"property": map[string]interface{}{"apiName": "age"}}},
+		},
+		"groupBy": []map[string]interface{}{
+			{"type": "exact", "field": "department"},
+		},
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var body map[string]interface{}
+	decodeJSON(t, resp, &body)
+	data := body["data"].([]interface{})
+	total := 0.0
+	for _, row := range data {
+		metrics := row.(map[string]interface{})["metrics"].([]interface{})
+		total += findE2EMetric(t, metrics, "totalAge").(float64)
+	}
+	if total != 150 {
+		t.Fatalf("sum(age) via propertyIdentifier across buckets = %v, want 150", total)
+	}
+}
+
+// seedEventOntology creates an ontology + "Event" ObjectType whose startDate
+// property is a numeric (epoch-seconds) field, then ensures its Bleve index.
+// Returns the ontology RID. Used by the duration-bucketing BDD scenarios.
+func seedEventOntology(t *testing.T, env *testEnv) string {
+	t.Helper()
+	ctx := context.Background()
+
+	ont := &oms.Ontology{
+		RID:         "ri.ontology.main.ontology.duration-bdd",
+		APIName:     "durationBddOntology",
+		DisplayName: "Duration BDD Ontology",
+	}
+	if err := env.repo.CreateOntology(ctx, ont); err != nil {
+		t.Fatalf("seed ontology: %v", err)
+	}
+
+	ot := &oms.ObjectType{
+		RID:         "ri.ontology.main.object-type.event",
+		OntologyRID: ont.RID,
+		APIName:     "Event",
+		DisplayName: "Event",
+		PrimaryKey:  "eventId",
+		Status:      "ACTIVE",
+		Visibility:  "NORMAL",
+	}
+	if err := env.repo.CreateObjectType(ctx, ot); err != nil {
+		t.Fatalf("seed object type: %v", err)
+	}
+
+	props := []oms.Property{
+		{RID: "ri.ontology.main.property.eventId", ObjectTypeRID: ot.RID, APIName: "eventId", BaseType: "string", IsSearchable: true},
+		{RID: "ri.ontology.main.property.startDate", ObjectTypeRID: ot.RID, APIName: "startDate", BaseType: "long", IsSearchable: true},
+	}
+	for i := range props {
+		if err := env.repo.CreateProperty(ctx, &props[i]); err != nil {
+			t.Fatalf("seed property %s: %v", props[i].APIName, err)
+		}
+	}
+
+	indexProps := make([]index.Property, len(props))
+	for i, p := range props {
+		indexProps[i] = index.Property{APIName: p.APIName, BaseType: p.BaseType, IsSearchable: p.IsSearchable}
+	}
+	if _, err := env.indexMgr.EnsureIndex("Event", indexProps); err != nil {
+		t.Fatalf("ensure Event index: %v", err)
+	}
+	return ont.RID
+}
+
+const dayEpoch = float64(86400)
+
+// TestBDD_Aggregate_GroupByDuration_Quarter is the BDD contract for the P3M
+// (byQuarter) ISO 8601 groupBy shortcut, exercised through the chi HTTP router.
+//
+//	Given an Event ObjectType with startDate epochs spanning two 90-day windows
+//	When the client POSTs an aggregate with groupBy duration "P3M"
+//	Then the endpoint returns 200 with one quarter bucket per 90-day window.
+func TestBDD_Aggregate_GroupByDuration_Quarter(t *testing.T) {
+	env := setupTestServer(t)
+	ontRid := seedEventOntology(t, env)
+
+	// day 0 + day 45 share the [0,90d) quarter; day 120 falls in [90d,180d).
+	events := map[string]float64{"e1": 0, "e2": 45 * dayEpoch, "e3": 120 * dayEpoch}
+	for id, epoch := range events {
+		doc := map[string]interface{}{"eventId": id, "startDate": epoch}
+		if err := env.indexMgr.IndexDocument("Event", id, doc); err != nil {
+			t.Fatalf("index event %s: %v", id, err)
+		}
+	}
+
+	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/objects/Event/aggregate", map[string]interface{}{
+		"aggregation": []map[string]interface{}{
+			{"type": "count", "name": "count"},
+		},
+		"groupBy": []map[string]interface{}{
+			{"type": "duration", "field": "startDate", "duration": "P3M"},
+		},
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 for P3M groupBy, got %d", resp.StatusCode)
+	}
+	var body map[string]interface{}
+	decodeJSON(t, resp, &body)
+	data := body["data"].([]interface{})
+	if len(data) != 2 {
+		t.Fatalf("expected 2 quarter buckets, got %d (data=%v)", len(data), data)
+	}
+	total := 0.0
+	for _, row := range data {
+		metrics := row.(map[string]interface{})["metrics"].([]interface{})
+		total += findE2EMetric(t, metrics, "count").(float64)
+	}
+	if total != 3 {
+		t.Errorf("total count across quarter buckets = %v, want 3", total)
+	}
+}
+
+// TestBDD_Aggregate_GroupByDuration_Hour is the BDD contract for the PT1H
+// (byHours) ISO 8601 groupBy shortcut, exercised through the chi HTTP router.
+func TestBDD_Aggregate_GroupByDuration_Hour(t *testing.T) {
+	env := setupTestServer(t)
+	ontRid := seedEventOntology(t, env)
+
+	// epoch 0 + 1800 share the [0,3600) hour; epoch 7200 falls in [7200,10800).
+	events := map[string]float64{"h1": 0, "h2": 1800, "h3": 7200}
+	for id, epoch := range events {
+		doc := map[string]interface{}{"eventId": id, "startDate": epoch}
+		if err := env.indexMgr.IndexDocument("Event", id, doc); err != nil {
+			t.Fatalf("index event %s: %v", id, err)
+		}
+	}
+
+	resp := doPost(t, env.server.URL+"/api/v2/ontologies/"+ontRid+"/objects/Event/aggregate", map[string]interface{}{
+		"aggregation": []map[string]interface{}{
+			{"type": "count", "name": "count"},
+		},
+		"groupBy": []map[string]interface{}{
+			{"type": "duration", "field": "startDate", "duration": "PT1H"},
+		},
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 for PT1H groupBy, got %d", resp.StatusCode)
+	}
+	var body map[string]interface{}
+	decodeJSON(t, resp, &body)
+	data := body["data"].([]interface{})
+	if len(data) != 2 {
+		t.Fatalf("expected 2 hour buckets, got %d (data=%v)", len(data), data)
+	}
+}
+
 // 17. ObjectSet base
 func TestE2E_ObjectSet_Base(t *testing.T) {
 	env := setupTestServer(t)

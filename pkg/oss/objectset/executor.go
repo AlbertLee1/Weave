@@ -161,6 +161,15 @@ const BaseExecutionCap = 10000
 // caller should pre-filter the inner ObjectSet.
 const SearchAroundIntermediateCap = 1_000_000
 
+// MaxSearchAroundHops is the Foundry-documented ceiling on a single chained
+// (multi-hop) searchAround Path: "最多 3 层链式 SearchAround" (see
+// docs/Palantir ObjectSet & OntologyAggregation 完整语法参考.md L97 / L226).
+// Definition.Validate rejects a Path longer than this with
+// ErrInvalidObjectSetDefinition so over-deep chains fail at request validation
+// (400) rather than relying solely on the runtime SearchAroundIntermediateCap
+// resource guard. The legacy single-hop Link form is always 1 hop.
+const MaxSearchAroundHops = 3
+
 // ErrQueryTooLarge is returned by a multi-hop searchAround whose intermediate
 // working set exceeds SearchAroundIntermediateCap. The handler layer (see
 // pkg/oss/objectset/handler.go) maps it to APIError code

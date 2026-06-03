@@ -14,12 +14,19 @@ export interface ObjectType {
   pluralDisplayName?: string;
   description?: string;
   primaryKey: string;
+  // US-211: ordered list of property apiNames that together form a composite
+  // primary key. Omitted (or single-element) for the legacy single-key case.
+  primaryKeys?: string[];
   titleProperty?: string;
   status: 'ACTIVE' | 'ENDORSED' | 'EXPERIMENTAL' | 'DEPRECATED';
   visibility: 'PROMINENT' | 'NORMAL' | 'HIDDEN';
   icon?: string;
   color?: string;
   classification?: Classification;
+  // US-212: RID of a parent ObjectType this type inherits from (same ontology).
+  extendsRid?: string;
+  // US-264: opts the ObjectType into per-read data-access audit logging.
+  auditDataAccess?: boolean;
   properties?: Record<string, { dataType: DataType; rid: string }>;
 }
 
@@ -112,6 +119,13 @@ export interface ActionType {
   rules?: unknown;
   submissionCriteria?: unknown;
   sideEffects?: unknown;
+  // US-242 approval gating.
+  requiresApproval?: boolean;
+  approvers?: string[];
+  // US-239 saga compensation pairing.
+  compensateActionRid?: string;
+  // US-245 Draft-07 parameter schema.
+  parameterSchema?: unknown;
 }
 
 export interface ActionLog {
@@ -194,14 +208,47 @@ export interface AggregationRequest {
 }
 
 export interface AggregationMetric {
-  type: 'min' | 'max' | 'sum' | 'avg' | 'count';
+  type:
+    | 'count'
+    | 'min'
+    | 'max'
+    | 'sum'
+    | 'avg'
+    | 'approximateDistinct'
+    | 'exactDistinct'
+    | 'standardDeviation'
+    | 'variance'
+    | 'approximatePercentile'
+    | 'collectList';
   field?: string;
   name?: string;
+  // approximatePercentile (0-100); wire key `percentile`.
+  percentile?: number;
+  // collectList max values to collect; wire key `maxItems`.
+  maxItems?: number;
+  // approximateDistinct HyperLogLog precision (4-18); wire key `precision`.
+  precision?: number;
+  // direction orders the groupBy result rows by THIS metric's value
+  // ("按聚合值排序"). The backend attaches ordering to a single metric — when
+  // several carry one the first wins — so the UI keeps at most one set.
+  direction?: 'ASC' | 'DESC';
 }
 
 export interface GroupByClause {
   field: string;
-  type: 'exact' | 'ranges' | 'fixedWidth';
+  type: 'exact' | 'fixedWidth' | 'ranges' | 'duration' | 'topValues' | 'geohash';
+  // exact / topValues cap; wire key `maxGroupCount`.
+  maxGroupCount?: number;
+  // ranges buckets (Palantir V2 startValue/endValue); wire key `ranges`.
+  ranges?: Array<{ name?: string; startValue?: number; endValue?: number }>;
+  // duration period, ISO 8601 (P1D/P1W/P1M/P3M/P1Y/PT1H); wire key `duration`.
+  duration?: string;
+  // geohash character precision (1-12); wire key `precision`.
+  precision?: number;
+  // fixedWidth is the numeric bucket width, required when type === 'fixedWidth'
+  // (the backend rejects a width-less fixedWidth groupBy). Wire key matches the
+  // server's GroupBySpec.Width json tag.
+  fixedWidth?: number;
 }
 
 export interface WhereClause {
@@ -228,10 +275,20 @@ export interface ActionApplyRequest {
   options?: ActionApplyOptions;
 }
 
+// ActionBatchApplyOptions narrows the single-apply options for the batch
+// path. The server's ApplyBatch handler (pkg/actions/handlers.go) only
+// accepts returnEdits ∈ {ALL, NONE} and 400s on ALL_V2_WITH_DELETIONS — that
+// mode is single-apply only. Deliberately NOT extending ActionApplyOptions so
+// the broader single-apply returnEdits union can never leak onto the batch
+// wire (which would always round-trip a 400).
+export interface ActionBatchApplyOptions {
+  returnEdits?: 'ALL' | 'NONE';
+}
+
 // ActionBatchApplyRequest is the body shape for applyBatch.
 export interface ActionBatchApplyRequest {
   requests: Array<{ parameters: Record<string, unknown> }>;
-  options?: { returnEdits?: 'ALL' | 'NONE' };
+  options?: ActionBatchApplyOptions;
 }
 
 // BatchApplyActionResponse — Foundry OSv2 response envelope for batch apply.
@@ -393,6 +450,7 @@ export type ObjectSetDefinition =
   | ReferenceObjectSet
   | WithPropertiesObjectSet
   | NearestNeighborsObjectSet
+  | SampleObjectSet
   | AsTypeObjectSet
   | AsBaseObjectTypesObjectSet
   | InterfaceBaseObjectSet
@@ -456,12 +514,28 @@ export interface NearestNeighborsObjectSet {
   type: 'nearestNeighbors';
   objectSet: ObjectSetDefinition;
   propertyIdentifier?: { property: { apiName: string } };
+  // propertyIdentifiers (Gap-Q4) runs KNN against multiple vector columns
+  // in parallel; mutually exclusive with the singular propertyIdentifier.
+  propertyIdentifiers?: Array<{ property: { apiName: string } }>;
+  // fusionStrategy selects how multi-column matches are combined:
+  // '' / 'min' (min distance per PK) or 'rrf' (Reciprocal Rank Fusion).
+  // Ignored on single-column queries.
+  fusionStrategy?: '' | 'min' | 'rrf';
   numNeighbors?: number;
   similarityThreshold?: number;
   query?: {
     vector?: { value: number[] };
     text?: { value: string };
   };
+}
+
+// SampleObjectSet (US-225) draws a reservoir sample of the inner ObjectSet.
+// size must be > 0; seed is an optional deterministic PRNG seed.
+export interface SampleObjectSet {
+  type: 'sample';
+  objectSet: ObjectSetDefinition;
+  size: number;
+  seed?: number;
 }
 
 export interface StaticObjectSet {
@@ -599,4 +673,23 @@ export interface MergeConflictBody {
   errorCode: 'MERGE_CONFLICT';
   conflicts: AnnotatedMergeConflict[];
   unresolved: AnnotatedMergeConflict[];
+}
+
+// --- US-113 / US-383 Branch create (mirrors pkg/oms/handlers_branch.go
+// CreateBranchRequest). The handler returns the raw OntologyBranch with
+// HTTP 201. `name` is the only required field; the rest chain/pin the new
+// branch off a parent or a dataset-transaction checkpoint.
+export interface CreateBranchRequest {
+  name: string;
+  createdBy?: string;
+  parentBranchId?: string;
+  baseTx?: string;
+}
+
+// 409 body shape returned by POST /rebase when the branch's pending changes
+// conflict with newer main-trunk state. Mirrors handlers_branch.go
+// RebaseBranch's REBASE_CONFLICT branch.
+export interface RebaseConflictBody {
+  errorCode: 'REBASE_CONFLICT';
+  conflicts: AnnotatedMergeConflict[];
 }

@@ -2,6 +2,7 @@ import type {
   DerivedPropertyDef,
   NearestNeighborsObjectSet,
   ObjectSetDefinition,
+  SampleObjectSet,
   StaticObjectSet,
   WhereClause,
 } from '../../api/types';
@@ -20,6 +21,7 @@ const OBJECT_SET_TYPES = [
   'searchAround',
   'withProperties',
   'nearestNeighbors',
+  'sample',
 ] as const;
 
 type SupportedType = (typeof OBJECT_SET_TYPES)[number];
@@ -98,6 +100,12 @@ function defaultForType(
         propertyIdentifier: { property: { apiName: '' } },
         numNeighbors: 10,
         query: { text: { value: '' } },
+      };
+    case 'sample':
+      return {
+        type: 'sample',
+        objectSet: { type: 'base', objectType: firstType },
+        size: 10,
       };
   }
 }
@@ -397,6 +405,62 @@ function updateNearest(
   return { ...value, ...patch };
 }
 
+// nnColumns normalises the singular propertyIdentifier and the plural
+// propertyIdentifiers into a single list the multi-column editor renders.
+function nnColumns(
+  value: NearestNeighborsObjectSet,
+): Array<{ property: { apiName: string } }> {
+  if (value.propertyIdentifiers && value.propertyIdentifiers.length > 0) {
+    return value.propertyIdentifiers;
+  }
+  if (value.propertyIdentifier) {
+    return [value.propertyIdentifier];
+  }
+  return [{ property: { apiName: '' } }];
+}
+
+// setNNColumns writes the column list back, keeping the singular field and
+// plural list mutually exclusive (the backend rejects setting both). A
+// single column round-trips through propertyIdentifiers so the
+// fusionStrategy control can appear as soon as a second column is added.
+function setNNColumns(
+  value: NearestNeighborsObjectSet,
+  columns: Array<{ property: { apiName: string } }>,
+): NearestNeighborsObjectSet {
+  const next: NearestNeighborsObjectSet = {
+    ...value,
+    propertyIdentifiers: columns,
+  };
+  delete next.propertyIdentifier;
+  if (columns.length < 2) {
+    delete next.fusionStrategy;
+  }
+  return next;
+}
+
+// nnQueryMode reports whether the NN query is in raw-vector or text mode.
+function nnQueryMode(value: NearestNeighborsObjectSet): 'text' | 'vector' {
+  return value.query?.vector ? 'vector' : 'text';
+}
+
+// parseVector turns comma/whitespace-separated floats into a number[],
+// dropping blanks and non-numeric tokens.
+function parseVector(raw: string): number[] {
+  return raw
+    .split(/[\s,]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .map((t) => Number(t))
+    .filter((n) => Number.isFinite(n));
+}
+
+function updateSample(
+  value: SampleObjectSet,
+  patch: Partial<SampleObjectSet>,
+): SampleObjectSet {
+  return { ...value, ...patch };
+}
+
 function parsePrimaryKeys(value: string): string[] {
   return value
     .split(/\r?\n/)
@@ -541,47 +605,130 @@ export function ObjectSetBuilder({
           </>
         )}
 
-        {/* NearestNeighbors: property + K + text query */}
-        {value.type === 'nearestNeighbors' && (
-          <>
-            <input
-              className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary w-32"
-              placeholder="embedding field"
-              value={value.propertyIdentifier?.property.apiName ?? ''}
-              onChange={(e) =>
-                onChange(updateNearest(value, {
-                  propertyIdentifier: {
-                    property: { apiName: e.target.value },
-                  },
-                }))
-              }
-              aria-label="embedding property"
-            />
-            <input
-              className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary w-20"
-              type="number"
-              min={1}
-              value={value.numNeighbors ?? 10}
-              onChange={(e) =>
-                onChange(updateNearest(value, {
-                  numNeighbors: Number(e.target.value),
-                }))
-              }
-              aria-label="neighbors"
-            />
-            <input
-              className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary min-w-48 flex-1"
-              placeholder="query text"
-              value={value.query?.text?.value ?? ''}
-              onChange={(e) =>
-                onChange(updateNearest(value, {
-                  query: { text: { value: e.target.value } },
-                }))
-              }
-              aria-label="query text"
-            />
-          </>
-        )}
+        {/* NearestNeighbors: multi-column + K + fusion + query mode */}
+        {value.type === 'nearestNeighbors' &&
+          (() => {
+            const columns = nnColumns(value);
+            const mode = nnQueryMode(value);
+            return (
+              <>
+                {columns.map((col, i) => (
+                  <input
+                    key={i}
+                    className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary w-32"
+                    placeholder="embedding field"
+                    value={col.property.apiName}
+                    onChange={(e) => {
+                      const updated = columns.map((c, j) =>
+                        j === i
+                          ? { property: { apiName: e.target.value } }
+                          : c,
+                      );
+                      onChange(setNNColumns(value, updated));
+                    }}
+                    aria-label="embedding property"
+                    data-testid="nn-column"
+                  />
+                ))}
+                <button
+                  type="button"
+                  className="text-xs font-mono text-accent-cyan hover:text-accent-cyan/70"
+                  data-testid="nn-add-column"
+                  onClick={() =>
+                    onChange(
+                      setNNColumns(value, [
+                        ...columns,
+                        { property: { apiName: '' } },
+                      ]),
+                    )
+                  }
+                >
+                  + add column
+                </button>
+                {columns.length >= 2 && (
+                  <select
+                    className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary"
+                    value={value.fusionStrategy || 'min'}
+                    onChange={(e) =>
+                      onChange(
+                        updateNearest(value, {
+                          fusionStrategy: e.target.value as 'min' | 'rrf',
+                        }),
+                      )
+                    }
+                    aria-label="fusion strategy"
+                    data-testid="nn-fusion-strategy"
+                  >
+                    <option value="min">min</option>
+                    <option value="rrf">rrf</option>
+                  </select>
+                )}
+                <input
+                  className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary w-20"
+                  type="number"
+                  min={1}
+                  value={value.numNeighbors ?? 10}
+                  onChange={(e) =>
+                    onChange(
+                      updateNearest(value, {
+                        numNeighbors: Number(e.target.value),
+                      }),
+                    )
+                  }
+                  aria-label="neighbors"
+                />
+                <select
+                  className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary"
+                  value={mode}
+                  onChange={(e) =>
+                    onChange(
+                      updateNearest(value, {
+                        query:
+                          e.target.value === 'vector'
+                            ? { vector: { value: [] } }
+                            : { text: { value: '' } },
+                      }),
+                    )
+                  }
+                  aria-label="query mode"
+                  data-testid="nn-query-mode"
+                >
+                  <option value="text">text</option>
+                  <option value="vector">vector</option>
+                </select>
+                {mode === 'text' ? (
+                  <input
+                    className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary min-w-48 flex-1"
+                    placeholder="query text"
+                    value={value.query?.text?.value ?? ''}
+                    onChange={(e) =>
+                      onChange(
+                        updateNearest(value, {
+                          query: { text: { value: e.target.value } },
+                        }),
+                      )
+                    }
+                    aria-label="query text"
+                  />
+                ) : (
+                  <textarea
+                    className="text-xs font-mono bg-bg-tertiary border border-border rounded px-2 py-1 text-text-primary min-w-48 flex-1 min-h-12"
+                    placeholder="comma-separated floats, e.g. 0.1, 0.2, -0.3"
+                    value={(value.query?.vector?.value ?? []).join(', ')}
+                    onChange={(e) =>
+                      onChange(
+                        updateNearest(value, {
+                          query: { vector: { value: parseVector(e.target.value) } },
+                        }),
+                      )
+                    }
+                    aria-label="query vector"
+                    data-testid="nn-query-vector"
+                  />
+                )}
+              </>
+            );
+          })()}
       </div>
 
       {/* Static: explicit primary keys */}
@@ -630,6 +777,51 @@ export function ObjectSetBuilder({
       {/* NearestNeighbors: nested candidate ObjectSet */}
       {value.type === 'nearestNeighbors' && (
         <div className="pl-2 border-l border-border">
+          <ObjectSetBuilder
+            objectTypes={objectTypes}
+            value={value.objectSet}
+            onChange={(nested) => onChange({ ...value, objectSet: nested })}
+            depth={depth + 1}
+          />
+        </div>
+      )}
+
+      {/* Sample: size + optional seed + nested ObjectSet */}
+      {value.type === 'sample' && (
+        <div className="flex flex-col gap-1 pl-2 border-l border-border">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-xs font-mono text-text-secondary flex items-center gap-1">
+              size
+              <input
+                className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary w-20"
+                type="number"
+                min={1}
+                value={value.size}
+                onChange={(e) =>
+                  onChange(updateSample(value, { size: Number(e.target.value) }))
+                }
+                aria-label="sample size"
+              />
+            </label>
+            <label className="text-xs font-mono text-text-secondary flex items-center gap-1">
+              seed
+              <input
+                className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-primary w-24"
+                type="number"
+                placeholder="optional"
+                value={value.seed ?? ''}
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  onChange(
+                    updateSample(value, {
+                      seed: raw === '' ? undefined : Number(raw),
+                    }),
+                  );
+                }}
+                aria-label="sample seed"
+              />
+            </label>
+          </div>
           <ObjectSetBuilder
             objectTypes={objectTypes}
             value={value.objectSet}

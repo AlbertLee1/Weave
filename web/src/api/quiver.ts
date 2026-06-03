@@ -115,3 +115,63 @@ export function batchQuiverSparklines(
     input,
   );
 }
+
+// US-482: windowed + bucketed read surface for a saved dashboard. Where
+// /sparklines returns raw points, /data clips each series to [from, to]
+// and reduces every `step` bucket to its mean — driven by the TopBar
+// time-range + step picker so the chart shows a fixed-resolution window
+// rather than the full unbounded series.
+
+export interface QuiverDataPoint {
+  time: string;
+  value: unknown;
+}
+
+export interface QuiverDataSeries {
+  id: string;
+  label: string;
+  color: string;
+  objectType: string;
+  primaryKey: string;
+  property: string;
+  branch?: string;
+  points: QuiverDataPoint[];
+}
+
+export interface QuiverDataResponse {
+  rid: string;
+  // From / To echo the resolved window the server actually scanned, so
+  // the SPA can detect drift between the picker selection and the data
+  // window the server clipped to.
+  from: string;
+  to: string;
+  step: string;
+  series: QuiverDataSeries[];
+}
+
+export interface GetQuiverDataParams {
+  // from / to accept an RFC3339 timestamp or a unix-millis string; an
+  // empty side means "all time" there. step is a required Go duration
+  // string (e.g. "5m", "1h") — the bucket width.
+  from?: string;
+  to?: string;
+  step: string;
+}
+
+export function getQuiverData(
+  rid: string,
+  params: GetQuiverDataParams,
+): Promise<QuiverDataResponse> {
+  const query = new URLSearchParams();
+  query.set('step', params.step);
+  if (params.from && params.from.trim().length > 0) {
+    query.set('from', params.from.trim());
+  }
+  if (params.to && params.to.trim().length > 0) {
+    query.set('to', params.to.trim());
+  }
+  return request<QuiverDataResponse>(
+    'GET',
+    `/api/v2/quiver/dashboards/${encodeURIComponent(rid)}/data?${query.toString()}`,
+  );
+}

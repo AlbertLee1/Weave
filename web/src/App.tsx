@@ -43,6 +43,7 @@ import { SagaDLQPage } from './components/sagaDLQ/SagaDLQPage';
 import { SagaJobsPage } from './components/sagaJobs/SagaJobsPage';
 import { ThreadsPage } from './components/threads/ThreadsPage';
 import { LogicFlowsPage } from './components/aiplogic/LogicFlowsPage';
+import { AipToolsPage } from './components/aiptools/AipToolsPage';
 import { PipelinesPage } from './components/pipelines/PipelinesPage';
 import { LineagePage } from './components/lineage/LineagePage';
 import { DashboardEditorPage } from './components/dashboards/DashboardEditorPage';
@@ -245,6 +246,7 @@ export default function App() {
               <Route path="aip-threads" element={<Navigate to="/threads" replace />} />
               <Route path="logic-flows" element={<LogicFlowsPage />} />
               <Route path="aip-logic" element={<Navigate to="/logic-flows" replace />} />
+              <Route path="aip-tools" element={<AipToolsPage />} />
               <Route path="pipelines" element={<PipelinesPage />} />
               <Route path="lineage/:rid" element={<LineagePage />} />
               <Route path="dashboards" element={<DashboardEditorRoute />} />

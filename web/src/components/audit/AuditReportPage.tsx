@@ -30,6 +30,7 @@ interface FilterDraft {
   actor: string;
   action: string;
   resourceType: string;
+  resourceRid: string;
   since: string;
   until: string;
 }
@@ -38,6 +39,7 @@ const EMPTY_DRAFT: FilterDraft = {
   actor: '',
   action: '',
   resourceType: '',
+  resourceRid: '',
   since: '',
   until: '',
 };
@@ -137,6 +139,7 @@ export function AuditReportPage() {
       actor: applied.actor.trim() || undefined,
       action: applied.action.trim() || undefined,
       resource_type: applied.resourceType.trim() || undefined,
+      resourceRid: applied.resourceRid.trim() || undefined,
       since: widenInstant(applied.since, 'from'),
       until: widenInstant(applied.until, 'to'),
       pageSize: PAGE_SIZE,
@@ -172,6 +175,18 @@ export function AuditReportPage() {
 
   const toggle = (id: string) =>
     setExpanded((m) => ({ ...m, [id]: !m[id] }));
+
+  // Clicking a Resource RID cell pre-fills the filter and applies it,
+  // mirroring how the backend's resourceRid param (US-493) pulls every
+  // audit row for one resource. Both the draft and the applied filter are
+  // updated so the input reflects the selection and the query fires.
+  const filterByResourceRid = (rid: string) => {
+    if (!rid) return;
+    const next: FilterDraft = { ...EMPTY_DRAFT, resourceRid: rid };
+    setDraft(next);
+    setApplied(next);
+    setLastExport(null);
+  };
 
   const exportFormat = (format: 'csv' | 'json') => {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -293,6 +308,21 @@ export function AuditReportPage() {
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-[10px] uppercase tracking-widest text-text-secondary">
+              Resource RID
+            </span>
+            <input
+              data-testid="audit-report-filter-resource-rid"
+              type="text"
+              placeholder="e.g. ri.ontology.main.object-type.order"
+              value={draft.resourceRid}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, resourceRid: e.target.value }))
+              }
+              className="rounded bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary outline-none border border-transparent focus:border-accent-cyan/40 font-mono"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-widest text-text-secondary">
               Action
             </span>
             <input
@@ -404,6 +434,7 @@ export function AuditReportPage() {
                     event={evt}
                     expanded={!!expanded[evt.id]}
                     onToggle={() => toggle(evt.id)}
+                    onFilterResourceRid={filterByResourceRid}
                   />
                 ))}
               </tbody>
@@ -439,9 +470,15 @@ interface AuditRowProps {
   event: AuditEvent;
   expanded: boolean;
   onToggle: () => void;
+  onFilterResourceRid: (rid: string) => void;
 }
 
-function AuditRow({ event, expanded, onToggle }: AuditRowProps) {
+function AuditRow({
+  event,
+  expanded,
+  onToggle,
+  onFilterResourceRid,
+}: AuditRowProps) {
   return (
     <>
       <tr
@@ -485,10 +522,28 @@ function AuditRow({ event, expanded, onToggle }: AuditRowProps) {
           {event.resource_type}
         </td>
         <td
-          className="px-3 py-2 align-top font-mono text-[11px] text-text-secondary truncate max-w-xs"
-          title={event.resource_rid}
+          data-testid="audit-report-row-resource-rid"
+          data-rid={event.resource_rid}
+          className="px-3 py-2 align-top font-mono text-[11px] max-w-xs"
+          title={
+            event.resource_rid
+              ? `${event.resource_rid} — click to filter by this resource`
+              : undefined
+          }
         >
-          {event.resource_rid}
+          {event.resource_rid ? (
+            <button
+              type="button"
+              data-testid="audit-report-row-resource-rid-filter-btn"
+              onClick={() => onFilterResourceRid(event.resource_rid)}
+              aria-label={`Filter audit events by resource ${event.resource_rid}`}
+              className="block w-full truncate text-left text-text-secondary hover:text-accent-cyan hover:underline"
+            >
+              {event.resource_rid}
+            </button>
+          ) : (
+            <span className="text-text-secondary">—</span>
+          )}
         </td>
       </tr>
       {expanded && (

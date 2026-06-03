@@ -1,38 +1,73 @@
+import { ApiRequestError, request } from './client';
 import { authedFetch } from '../auth/interceptor';
-import { ApiRequestError } from './client';
 import type { ApiError } from './types';
 
-// AttachmentMetadata mirrors pkg/attachment.Attachment (the wire-compatible
-// Foundry AttachmentV2 record) returned by the global upload endpoint.
+// AttachmentMetadata mirrors pkg/attachment store metadata (diskMeta) —
+// the descriptor for a file held by an object's attachment-typed property.
 export interface AttachmentMetadata {
   rid: string;
   filename: string;
-  sizeBytes: number;
   mediaType: string;
+  sizeBytes: number;
+  createdAt?: string;
 }
 
-/**
- * Upload a single file as a new attachment.
- *
- * Unlike media upload (`/api/v2/media`, which is multipart/form-data), the
- * attachment endpoint takes the RAW file bytes as the request body and the
- * filename as a query parameter — mirroring pkg/attachment.Handler.Upload:
- *
- *   POST /api/v2/ontologies/attachments/upload?filename=<name>
- *   body: <raw file bytes>
- *
- * Returns the parsed AttachmentMetadata ({ rid, filename, mediaType,
- * sizeBytes }); the caller typically forwards `rid` as the action parameter
- * value.
- */
+function propertyBase(
+  ontologyApiName: string,
+  objectType: string,
+  primaryKey: string,
+  property: string,
+): string {
+  return (
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}` +
+    `/objects/${encodeURIComponent(objectType)}` +
+    `/${encodeURIComponent(primaryKey)}` +
+    `/attachments/${encodeURIComponent(property)}`
+  );
+}
+
+// getAttachmentPropertyMetadata reads the descriptor (filename / size /
+// media type) of the attachment held by an object's attachment property.
+// The server resolves the attachment RID from the stored property value.
+export function getAttachmentPropertyMetadata(
+  ontologyApiName: string,
+  objectType: string,
+  primaryKey: string,
+  property: string,
+): Promise<AttachmentMetadata> {
+  return request<AttachmentMetadata>(
+    'GET',
+    propertyBase(ontologyApiName, objectType, primaryKey, property),
+  );
+}
+
+// attachmentPropertyContentUrl is the raw download URL for the file held
+// by an object's attachment property (mirrors mediaDownloadUrl — a plain
+// URL usable as an <a href>).
+export function attachmentPropertyContentUrl(
+  ontologyApiName: string,
+  objectType: string,
+  primaryKey: string,
+  property: string,
+): string {
+  return `${propertyBase(ontologyApiName, objectType, primaryKey, property)}/content`;
+}
+
+// uploadAttachment uploads a single file as a new attachment. Unlike media
+// upload (`/api/v2/media`, multipart/form-data), the attachment endpoint
+// takes the RAW file bytes as the request body with the filename as a query
+// param — mirroring pkg/attachment.Handler.Upload:
+//
+//   POST /api/v2/ontologies/attachments/upload?filename=<name>
+//   body: <raw file bytes>
+//
+// Returns the parsed AttachmentMetadata; callers forward `rid` as the action
+// parameter value.
 export async function uploadAttachment(file: File): Promise<AttachmentMetadata> {
   const url = `/api/v2/ontologies/attachments/upload?filename=${encodeURIComponent(
     file.name,
   )}`;
-  const res = await authedFetch(url, {
-    method: 'POST',
-    body: file,
-  });
+  const res = await authedFetch(url, { method: 'POST', body: file });
 
   if (!res.ok) {
     let errorData: Partial<ApiError> = {};
@@ -51,14 +86,4 @@ export async function uploadAttachment(file: File): Promise<AttachmentMetadata> 
   }
 
   return (await res.json()) as AttachmentMetadata;
-}
-
-/** Metadata URL for an uploaded attachment. */
-export function attachmentMetadataUrl(rid: string): string {
-  return `/api/v2/ontologies/attachments/${encodeURIComponent(rid)}`;
-}
-
-/** Content (download) URL for an uploaded attachment. */
-export function attachmentContentUrl(rid: string): string {
-  return `/api/v2/ontologies/attachments/${encodeURIComponent(rid)}/content`;
 }
