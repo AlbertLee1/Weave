@@ -81,4 +81,120 @@ describe('BDD: Browser FilterBuilder exposes backend-supported Where operators (
       value: 'Open',
     });
   });
+
+  it.each([
+    ['containsAllTerms', 'contains all terms'],
+    ['containsAllTermsInOrder', 'phrase (in order)'],
+  ])(
+    'Given %s is selected, When the user enters terms, Then the generated WhereClause carries a string value',
+    (operator, label) => {
+      const onFiltersChange = vi.fn();
+      render(
+        <FilterBuilder
+          properties={properties}
+          filters={[]}
+          onFiltersChange={onFiltersChange}
+        />,
+      );
+
+      expect(screen.getByRole('option', { name: label })).toHaveValue(operator);
+
+      fireEvent.change(screen.getByTestId('filter-op-select'), {
+        target: { value: operator },
+      });
+      fireEvent.change(screen.getByTestId('filter-value-input'), {
+        target: { value: 'machine learning' },
+      });
+      fireEvent.click(screen.getByTestId('filter-add-btn'));
+
+      const nextFilters = onFiltersChange.mock.calls[0][0];
+      expect(nextFilters).toEqual([
+        { field: 'title', op: operator, value: 'machine learning' },
+      ]);
+      expect(buildWhereClause(nextFilters)).toEqual({
+        type: operator,
+        field: 'title',
+        value: 'machine learning',
+      });
+    },
+  );
+
+  it('Given isNull is selected, When the user picks true, Then the WhereClause carries a boolean value (not a string)', () => {
+    const onFiltersChange = vi.fn();
+    render(
+      <FilterBuilder
+        properties={properties}
+        filters={[]}
+        onFiltersChange={onFiltersChange}
+      />,
+    );
+
+    expect(screen.getByRole('option', { name: 'is null' })).toHaveValue('isNull');
+
+    fireEvent.change(screen.getByTestId('filter-op-select'), {
+      target: { value: 'isNull' },
+    });
+
+    // isNull must surface a boolean selector, not a free-text input.
+    const boolSelect = screen.getByTestId('filter-boolean-value-select');
+    expect(screen.queryByTestId('filter-value-input')).not.toBeInTheDocument();
+    fireEvent.change(boolSelect, { target: { value: 'true' } });
+    fireEvent.click(screen.getByTestId('filter-add-btn'));
+
+    const nextFilters = onFiltersChange.mock.calls[0][0];
+    expect(nextFilters).toEqual([{ field: 'title', op: 'isNull', value: true }]);
+    expect(buildWhereClause(nextFilters)).toEqual({
+      type: 'isNull',
+      field: 'title',
+      value: true,
+    });
+  });
+
+  it('Given isNull was selected, When the user switches to a text operator, Then the free-text input is not pre-filled with a stale true/false', () => {
+    render(
+      <FilterBuilder
+        properties={properties}
+        filters={[]}
+        onFiltersChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId('filter-op-select'), {
+      target: { value: 'isNull' },
+    });
+    // The boolean selector is showing 'true'.
+    fireEvent.change(screen.getByTestId('filter-op-select'), {
+      target: { value: 'containsAllTerms' },
+    });
+
+    const input = screen.getByTestId('filter-value-input') as HTMLInputElement;
+    expect(input.value).toBe('');
+  });
+
+  it('Given isNull is selected, When the user picks false, Then the WhereClause carries boolean false', () => {
+    const onFiltersChange = vi.fn();
+    render(
+      <FilterBuilder
+        properties={properties}
+        filters={[]}
+        onFiltersChange={onFiltersChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId('filter-op-select'), {
+      target: { value: 'isNull' },
+    });
+    fireEvent.change(screen.getByTestId('filter-boolean-value-select'), {
+      target: { value: 'false' },
+    });
+    fireEvent.click(screen.getByTestId('filter-add-btn'));
+
+    const nextFilters = onFiltersChange.mock.calls[0][0];
+    expect(nextFilters).toEqual([{ field: 'title', op: 'isNull', value: false }]);
+    expect(buildWhereClause(nextFilters)).toEqual({
+      type: 'isNull',
+      field: 'title',
+      value: false,
+    });
+  });
 });

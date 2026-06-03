@@ -8,8 +8,11 @@ const OPERATORS = [
   { value: 'gte', label: '>=' },
   { value: 'lt', label: '<' },
   { value: 'lte', label: '<=' },
+  { value: 'isNull', label: 'is null' },
   { value: 'contains', label: 'contains' },
   { value: 'containsAnyTerm', label: 'contains any term' },
+  { value: 'containsAllTerms', label: 'contains all terms' },
+  { value: 'containsAllTermsInOrder', label: 'phrase (in order)' },
   { value: 'startsWith', label: 'starts with' },
 ] as const;
 
@@ -36,24 +39,32 @@ export function FilterBuilder({
   const [value, setValue] = useState('');
   const selectedType = properties[selectedField]?.dataType.type.toLowerCase() ?? '';
   const selectedIsNumeric = NUMERIC_DATA_TYPES.has(selectedType);
-  const selectedIsBooleanEquality = BOOLEAN_DATA_TYPES.has(selectedType) && selectedOp === 'eq';
+  // `isNull` always carries a boolean value (the backend convertIsNull rejects
+  // strings); boolean-typed fields under `eq` also need a true/false selector.
+  const selectedNeedsBoolean = needsBooleanValue(selectedField, selectedOp);
 
-  function isBooleanEquality(field: string, op: string): boolean {
+  function needsBooleanValue(field: string, op: string): boolean {
+    if (op === 'isNull') return true;
     const type = properties[field]?.dataType.type.toLowerCase() ?? '';
     return BOOLEAN_DATA_TYPES.has(type) && op === 'eq';
   }
 
   function handleFieldChange(nextField: string) {
     setSelectedField(nextField);
-    if (isBooleanEquality(nextField, selectedOp)) {
+    if (needsBooleanValue(nextField, selectedOp)) {
       setValue(value === 'false' ? 'false' : 'true');
     }
   }
 
   function handleOperatorChange(nextOp: string) {
+    const wasBoolean = needsBooleanValue(selectedField, selectedOp);
     setSelectedOp(nextOp);
-    if (isBooleanEquality(selectedField, nextOp)) {
+    if (needsBooleanValue(selectedField, nextOp)) {
       setValue(value === 'false' ? 'false' : 'true');
+    } else if (wasBoolean) {
+      // Leaving a boolean operator (isNull / boolean eq): clear the synthetic
+      // 'true'/'false' so it doesn't pre-fill the free-text input as a stale value.
+      setValue('');
     }
   }
 
@@ -65,7 +76,7 @@ export function FilterBuilder({
         .filter((t) => t.length > 0)
         .join(' ');
     }
-    if (selectedIsBooleanEquality) {
+    if (selectedNeedsBoolean) {
       return trimmed.toLowerCase() === 'true';
     }
     if (selectedIsNumeric && (selectedOp === 'eq' || NUMERIC_OPERATORS.has(selectedOp))) {
@@ -76,16 +87,18 @@ export function FilterBuilder({
   }
 
   function handleAdd() {
-    if (!selectedField || !value.trim()) return;
+    // Boolean operators (isNull / boolean-typed eq) always resolve to a valid
+    // true/false selection, so they bypass the free-text non-empty guard.
+    if (!selectedField || (!selectedNeedsBoolean && !value.trim())) return;
 
     const newFilter: FilterCondition = {
       field: selectedField,
       op: selectedOp,
-      value: parseValue(value),
+      value: parseValue(selectedNeedsBoolean ? value || 'true' : value),
     };
 
     onFiltersChange([...filters, newFilter]);
-    setValue(selectedIsBooleanEquality ? 'true' : '');
+    setValue(selectedNeedsBoolean ? 'true' : '');
   }
 
   function handleRemove(index: number) {
@@ -152,7 +165,7 @@ export function FilterBuilder({
           ))}
         </select>
 
-        {selectedIsBooleanEquality ? (
+        {selectedNeedsBoolean ? (
           <select
             value={value || 'true'}
             onChange={(e) => setValue(e.target.value)}
@@ -178,7 +191,7 @@ export function FilterBuilder({
 
         <button
           onClick={handleAdd}
-          disabled={!selectedField || !value.trim()}
+          disabled={!selectedField || (!selectedNeedsBoolean && !value.trim())}
           className="px-3 py-1.5 bg-accent-cyan/10 border border-accent-cyan/30 rounded text-xs font-sans text-accent-cyan hover:bg-accent-cyan/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           data-testid="filter-add-btn"
         >
