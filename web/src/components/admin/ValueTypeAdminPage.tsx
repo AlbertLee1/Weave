@@ -372,6 +372,7 @@ interface BuilderState {
   min: string;
   max: string;
   enumText: string;
+  version: string;
 }
 
 function initialBuilderState(vt?: ValueType): BuilderState {
@@ -386,6 +387,7 @@ function initialBuilderState(vt?: ValueType): BuilderState {
       min: '',
       max: '',
       enumText: '',
+      version: '',
     };
   }
   const inputs = constraintToInputs(vt.constraints);
@@ -399,6 +401,7 @@ function initialBuilderState(vt?: ValueType): BuilderState {
     min: inputs.min,
     max: inputs.max,
     enumText: inputs.enumText,
+    version: vt.version > 0 ? String(vt.version) : '',
   };
 }
 
@@ -467,6 +470,16 @@ function ValueTypeBuilderModal({
           baseType: form.baseType.trim(),
           constraints,
         };
+        // The backend only applies version when it is > 0 (`if req.Version > 0`),
+        // so only forward a positive integer the operator actually entered.
+        const parsedVersion = Number(form.version.trim());
+        if (
+          form.version.trim() !== '' &&
+          Number.isInteger(parsedVersion) &&
+          parsedVersion > 0
+        ) {
+          body.version = parsedVersion;
+        }
         await update.mutateAsync({ rid: editing.rid, body });
       } else {
         const body: CreateValueTypeRequest = {
@@ -570,6 +583,27 @@ function ValueTypeBuilderModal({
             </select>
           </Field>
         </div>
+
+        {isEdit && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field
+              label="Version"
+              hint="Optional. Enter a positive integer to bump the stored version; leave unchanged to keep the current value."
+            >
+              <input
+                type="number"
+                min={1}
+                step={1}
+                data-testid="value-type-version"
+                value={form.version}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, version: e.target.value }))
+                }
+                className={inputClass}
+              />
+            </Field>
+          </div>
+        )}
 
         {form.constraintKind === 'pattern' && (
           <Field

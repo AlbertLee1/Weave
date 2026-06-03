@@ -779,6 +779,10 @@ export interface UpdateValueTypeRequest {
   displayName: string;
   baseType: string;
   constraints?: Record<string, unknown>;
+  // Optional: bump the ValueType's version. The backend only applies it when
+  // version > 0 (admin_handlers.go `if req.Version > 0`), so the form omits
+  // this key unless the operator enters a positive integer.
+  version?: number;
 }
 
 export interface ValueTypeUsage {
