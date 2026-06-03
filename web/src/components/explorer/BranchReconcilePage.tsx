@@ -4,10 +4,14 @@ import { useTranslation } from 'react-i18next';
 import {
   useBranchReconcileDiff,
   useMergeBranch,
+  useRebaseBranch,
 } from '../../hooks/useBranches';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
-import { MergeBranchConflictError } from '../../api/ontologies';
+import {
+  MergeBranchConflictError,
+  RebaseBranchConflictError,
+} from '../../api/ontologies';
 import { ApiRequestError } from '../../api/client';
 import type {
   AnnotatedDiffEntry,
@@ -248,6 +252,7 @@ export function BranchReconcilePage() {
     branchId,
   );
   const mergeMutation = useMergeBranch(ontologyApiName, branchId);
+  const rebaseMutation = useRebaseBranch(ontologyApiName, branchId);
 
   const [resolutions, setResolutions] = useState<
     Record<string, ConflictResolutionChoice>
@@ -256,6 +261,8 @@ export function BranchReconcilePage() {
   const [serverConflicts, setServerConflicts] = useState<
     AnnotatedMergeConflict[] | null
   >(null);
+  const [rebaseError, setRebaseError] = useState<string | null>(null);
+  const [rebaseSuccess, setRebaseSuccess] = useState<number | null>(null);
 
   const conflicts = useMemo(
     () => serverConflicts ?? data?.conflicts ?? [],
@@ -345,6 +352,38 @@ export function BranchReconcilePage() {
     );
   };
 
+  const onRebase = () => {
+    if (!window.confirm(t('branchReconcile.rebaseConfirm'))) return;
+    setRebaseError(null);
+    setRebaseSuccess(null);
+    rebaseMutation.mutate(undefined, {
+      onSuccess: (resp) => {
+        setRebaseSuccess(resp.baseVersion);
+      },
+      onError: (err) => {
+        if (err instanceof RebaseBranchConflictError) {
+          setRebaseError(
+            t('branchReconcile.rebaseConflictHint', {
+              count: err.conflicts.length,
+            }),
+          );
+          return;
+        }
+        if (err instanceof ApiRequestError) {
+          setRebaseError(
+            t('branchReconcile.rebaseError', {
+              message: `${err.errorCode}: ${err.errorName}`,
+            }),
+          );
+          return;
+        }
+        setRebaseError(
+          t('branchReconcile.rebaseError', { message: String(err) }),
+        );
+      },
+    });
+  };
+
   const totalCount =
     data.added.length + data.modified.length + data.deleted.length;
 
@@ -386,6 +425,21 @@ export function BranchReconcilePage() {
             >
               {t('branchReconcile.viewLegacyDiff')}
             </Link>
+            <button
+              type="button"
+              onClick={onRebase}
+              disabled={branchClosed || rebaseMutation.isPending}
+              data-testid="branch-reconcile-rebase-button"
+              className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
+                branchClosed || rebaseMutation.isPending
+                  ? 'border-border text-text-muted cursor-not-allowed'
+                  : 'border-accent-cyan/40 text-accent-cyan hover:bg-accent-cyan/10'
+              }`}
+            >
+              {rebaseMutation.isPending
+                ? t('branchReconcile.rebasing')
+                : t('branchReconcile.rebaseButton')}
+            </button>
             <button
               type="button"
               onClick={onSubmit}
@@ -468,6 +522,24 @@ export function BranchReconcilePage() {
               applied: mergeMutation.data?.appliedCount ?? 0,
               skipped: mergeMutation.data?.skippedCount ?? 0,
             })}
+          </div>
+        )}
+
+        {rebaseError && (
+          <div
+            data-testid="reconcile-rebase-error"
+            className="mt-3 px-3 py-2 rounded border border-red-700/40 bg-red-950/30 text-xs text-red-300"
+          >
+            {rebaseError}
+          </div>
+        )}
+
+        {rebaseSuccess !== null && (
+          <div
+            data-testid="reconcile-rebase-success"
+            className="mt-3 px-3 py-2 rounded border border-green-700/40 bg-green-950/30 text-xs text-green-300"
+          >
+            {t('branchReconcile.rebaseSuccess', { version: rebaseSuccess })}
           </div>
         )}
       </div>

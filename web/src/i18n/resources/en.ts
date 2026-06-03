@@ -69,6 +69,17 @@ const en = {
     label: 'Ontology Branch',
     default: 'default',
     loading: 'Loading branches…',
+    createNew: 'New branch…',
+    createTitle: 'Create branch',
+    createNamePlaceholder: 'Branch name',
+    createSubmit: 'Create',
+    creating: 'Creating…',
+    createError: 'Could not create branch: {{message}}',
+    cancel: 'Cancel',
+    deleteLabel: 'Close branch',
+    deleteConfirm: 'Close branch "{{name}}"? This cannot be undone.',
+    deleting: 'Closing…',
+    deleteError: 'Could not close branch: {{message}}',
   },
   branchReconcile: {
     title: 'Branch Reconcile',
@@ -95,6 +106,14 @@ const en = {
     merging: 'Merging…',
     resolveBeforeMerge: 'Resolve {{count}} conflict(s) to merge',
     viewLegacyDiff: 'View raw diff',
+    rebaseButton: 'Rebase onto main',
+    rebasing: 'Rebasing…',
+    rebaseConfirm:
+      'Rebase this branch onto the latest main? Pending changes will be re-based against current main state.',
+    rebaseSuccess: 'Branch rebased onto main (base version {{version}}).',
+    rebaseConflictHint:
+      'Rebase hit {{count}} conflict(s) against main — resolve them during merge.',
+    rebaseError: 'Rebase failed: {{message}}',
     submitConflictHint:
       'The server reported new conflicts — review them and try again.',
     successMessage:

@@ -600,3 +600,22 @@ export interface MergeConflictBody {
   conflicts: AnnotatedMergeConflict[];
   unresolved: AnnotatedMergeConflict[];
 }
+
+// --- US-113 / US-383 Branch create (mirrors pkg/oms/handlers_branch.go
+// CreateBranchRequest). The handler returns the raw OntologyBranch with
+// HTTP 201. `name` is the only required field; the rest chain/pin the new
+// branch off a parent or a dataset-transaction checkpoint.
+export interface CreateBranchRequest {
+  name: string;
+  createdBy?: string;
+  parentBranchId?: string;
+  baseTx?: string;
+}
+
+// 409 body shape returned by POST /rebase when the branch's pending changes
+// conflict with newer main-trunk state. Mirrors handlers_branch.go
+// RebaseBranch's REBASE_CONFLICT branch.
+export interface RebaseConflictBody {
+  errorCode: 'REBASE_CONFLICT';
+  conflicts: AnnotatedMergeConflict[];
+}

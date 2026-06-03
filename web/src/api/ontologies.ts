@@ -15,9 +15,11 @@ import type {
   QueryType,
   BranchDiffEntry,
   BranchDiffPostResponse,
+  CreateBranchRequest,
   MergeBranchRequest,
   MergeBranchResponse,
   MergeConflictBody,
+  RebaseConflictBody,
   OntologyBranch,
   DatasourceBinding,
 } from './types';
@@ -869,6 +871,31 @@ export async function listBranches(
   return resp.data ?? [];
 }
 
+// US-113 / US-383: create a new branch. The handler echoes back the raw
+// OntologyBranch (HTTP 201) — no `{ data }` envelope, unlike listBranches.
+export async function createBranch(
+  ontologyApiName: string,
+  body: CreateBranchRequest,
+): Promise<OntologyBranch> {
+  return request<OntologyBranch>(
+    'POST',
+    `/api/v2/ontologies/${ontologyApiName}/branches`,
+    body,
+  );
+}
+
+// US-116: close (soft-delete) a branch. The handler returns 204 No Content,
+// so there is nothing to parse.
+export async function deleteBranch(
+  ontologyApiName: string,
+  branchId: string,
+): Promise<void> {
+  await request<void>(
+    'DELETE',
+    `/api/v2/ontologies/${ontologyApiName}/branches/${branchId}`,
+  );
+}
+
 export async function getBranchDiff(
   ontologyApiName: string,
   branchId: string,
@@ -935,6 +962,53 @@ export async function mergeBranch(
     });
   }
   return parsed as MergeBranchResponse;
+}
+
+// RebaseBranchConflictError carries the 409 REBASE_CONFLICT body so callers
+// can surface the conflicting entities without a re-fetch. Mirrors
+// MergeBranchConflictError; rebase has no per-conflict resolution input so
+// only the conflict list is exposed.
+export class RebaseBranchConflictError extends Error {
+  conflicts: RebaseConflictBody['conflicts'];
+  constructor(body: RebaseConflictBody) {
+    super('REBASE_CONFLICT');
+    this.name = 'RebaseBranchConflictError';
+    this.conflicts = body.conflicts ?? [];
+  }
+}
+
+// US-383: fast-forward a branch's base_version onto the latest main trunk.
+// On success the handler echoes back the rebased OntologyBranch (HTTP 200).
+// A 409 with errorCode REBASE_CONFLICT means the branch's pending changes
+// clash with newer main state and must be reconciled manually; that shape
+// is non-standard (`{errorCode, conflicts}`) so we branch on status before
+// delegating to the standard ApiRequestError path.
+export async function rebaseBranch(
+  ontologyApiName: string,
+  branchId: string,
+): Promise<OntologyBranch> {
+  const path = withActiveBranch(
+    `/api/v2/ontologies/${ontologyApiName}/branches/${branchId}/rebase`,
+  );
+  const resp = await authedFetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  const text = await resp.text();
+  const parsed = text ? JSON.parse(text) : {};
+  if (resp.status === 409 && parsed?.errorCode === 'REBASE_CONFLICT') {
+    throw new RebaseBranchConflictError(parsed as RebaseConflictBody);
+  }
+  if (!resp.ok) {
+    throw new ApiRequestError({
+      errorCode: parsed.errorCode ?? 'UNKNOWN',
+      errorName: parsed.errorName ?? resp.statusText,
+      errorInstanceId: parsed.errorInstanceId ?? '',
+      parameters: parsed.parameters,
+      statusCode: resp.status,
+    });
+  }
+  return parsed as OntologyBranch;
 }
 
 // --- Query execution ---
