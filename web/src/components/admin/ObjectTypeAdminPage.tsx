@@ -223,6 +223,7 @@ export function ObjectTypeAdminPage() {
         <EditObjectTypeModal
           ontologyApiName={ontologyApiName}
           objectType={editing}
+          existing={objectTypes ?? []}
           onClose={() => setEditing(null)}
         />
       )}
@@ -322,13 +323,32 @@ interface CreateFormState {
   apiName: string;
   pluralDisplayName: string;
   description: string;
+  // Comma- / whitespace-separated PK property apiNames. A single entry maps
+  // to the legacy `primaryKey`; more than one becomes a composite `primaryKeys`.
   primaryKey: string;
   titleProperty: string;
   status: (typeof STATUS_VALUES)[number];
   visibility: (typeof VISIBILITY_VALUES)[number];
   classification: '' | Classification;
+  extendsRid: string;
+  auditDataAccess: boolean;
   apiNameDirty: boolean;
   pluralDirty: boolean;
+}
+
+// US-211: split a free-form primary-key entry ("orderId, lineNumber" or
+// "orderId lineNumber") into an ordered, de-duplicated list of apiNames.
+function parsePrimaryKeys(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const tok of raw.split(/[\s,]+/)) {
+    const t = tok.trim();
+    if (t && !seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  return out;
 }
 
 function CreateObjectTypeModal({
@@ -351,6 +371,8 @@ function CreateObjectTypeModal({
     status: 'ACTIVE',
     visibility: 'NORMAL',
     classification: '',
+    extendsRid: '',
+    auditDataAccess: false,
     apiNameDirty: false,
     pluralDirty: false,
   });
@@ -358,6 +380,17 @@ function CreateObjectTypeModal({
 
   const apiNameTaken = useMemo(
     () => new Set(existing.map((ot) => ot.apiName)),
+    [existing],
+  );
+
+  // US-212: inheritance candidates are every existing ObjectType in the
+  // ontology (a brand-new type can't be its own parent yet, so nothing is
+  // excluded here). Sorted by display name for a stable dropdown.
+  const extendsCandidates = useMemo(
+    () =>
+      [...existing].sort((a, b) =>
+        a.displayName.localeCompare(b.displayName),
+      ),
     [existing],
   );
 
@@ -382,16 +415,24 @@ function CreateObjectTypeModal({
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitError(null);
+    // US-211: a single-element key stays on the legacy `primaryKey`; only a
+    // genuine composite key (>1 field) sends `primaryKeys`. The backend
+    // prefers `primaryKeys` and rewrites `primaryKey` to its first element,
+    // so we keep `primaryKey` populated as the single-key fallback.
+    const pkList = parsePrimaryKeys(form.primaryKey);
     const body: CreateObjectTypeRequest = {
       apiName: form.apiName.trim(),
       displayName: form.displayName.trim(),
       pluralDisplayName: form.pluralDisplayName.trim() || undefined,
       description: form.description.trim() || undefined,
-      primaryKey: form.primaryKey.trim(),
+      primaryKey: pkList[0] ?? form.primaryKey.trim(),
+      ...(pkList.length > 1 ? { primaryKeys: pkList } : {}),
       titleProperty: form.titleProperty.trim() || undefined,
       status: form.status,
       visibility: form.visibility,
       classification: form.classification || undefined,
+      ...(form.extendsRid ? { extendsRid: form.extendsRid } : {}),
+      ...(form.auditDataAccess ? { auditDataAccess: true } : {}),
     };
     try {
       await create.mutateAsync(body);
@@ -462,7 +503,11 @@ function CreateObjectTypeModal({
             className={inputClass}
           />
         </Field>
-        <Field label="Primary Key" required hint="apiName of the PK property.">
+        <Field
+          label="Primary Key"
+          required
+          hint="apiName of the PK property. For a composite key, list multiple apiNames separated by commas."
+        >
           <input
             type="text"
             data-testid="object-type-create-primary-key"
@@ -473,6 +518,27 @@ function CreateObjectTypeModal({
             required
             className={inputClass + ' font-mono'}
           />
+        </Field>
+        <Field
+          label="Extends"
+          hint="Optional — parent ObjectType to inherit properties and links from."
+        >
+          <select
+            aria-label="Extends"
+            data-testid="object-type-create-extends"
+            value={form.extendsRid}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, extendsRid: e.target.value }))
+            }
+            className={inputClass}
+          >
+            <option value="">— None —</option>
+            {extendsCandidates.map((ot) => (
+              <option key={ot.rid} value={ot.rid}>
+                {ot.displayName} ({ot.apiName})
+              </option>
+            ))}
+          </select>
         </Field>
         <Field label="Title Property" hint="Optional — apiName of the property used as a title.">
           <input
@@ -556,6 +622,15 @@ function CreateObjectTypeModal({
             ))}
           </select>
         </Field>
+        <ToggleField
+          label="Audit data access"
+          checked={form.auditDataAccess}
+          onChange={(checked) =>
+            setForm((f) => ({ ...f, auditDataAccess: checked }))
+          }
+          testId="object-type-create-audit-data-access"
+          hint="Emit an audit event for every successful read of objects of this type."
+        />
         {submitError && (
           <p
             role="alert"
@@ -598,15 +673,19 @@ interface EditFormState {
   iconName: string;
   color: string;
   classification: '' | Classification;
+  extendsRid: string;
+  auditDataAccess: boolean;
 }
 
 function EditObjectTypeModal({
   ontologyApiName,
   objectType,
+  existing,
   onClose,
 }: {
   ontologyApiName: string;
   objectType: ObjectType;
+  existing: ObjectType[];
   onClose: () => void;
 }) {
   const update = useUpdateObjectType(ontologyApiName);
@@ -623,8 +702,21 @@ function EditObjectTypeModal({
     iconName: objectType.icon ?? '',
     color: objectType.color ?? '',
     classification: objectType.classification ?? '',
+    extendsRid: objectType.extendsRid ?? '',
+    auditDataAccess: objectType.auditDataAccess ?? false,
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // US-212: a type cannot extend itself, so the current ObjectType is
+  // excluded from the candidate list. (The backend additionally rejects
+  // cycles; this filter just prevents the most obvious self-loop in the UI.)
+  const extendsCandidates = useMemo(
+    () =>
+      existing
+        .filter((ot) => ot.rid !== objectType.rid)
+        .sort((a, b) => a.displayName.localeCompare(b.displayName)),
+    [existing, objectType.rid],
+  );
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -645,6 +737,12 @@ function EditObjectTypeModal({
       // this UI, where any change the admin makes in the form should be
       // the new authoritative value.
       classification: form.classification,
+      // US-212: same rationale as classification — the dropdown's current
+      // value is authoritative. "" clears the parent pointer on the backend.
+      extendsRid: form.extendsRid,
+      // US-264: always send the toggle's current state so the backend
+      // tri-state pointer receives an explicit bool.
+      auditDataAccess: form.auditDataAccess,
     };
     try {
       await update.mutateAsync({ rid: objectType.rid, body });
@@ -889,6 +987,36 @@ function EditObjectTypeModal({
             ))}
           </select>
         </Field>
+        <Field
+          label="Extends"
+          hint="Optional — parent ObjectType to inherit properties and links from."
+        >
+          <select
+            aria-label="Extends"
+            data-testid="object-type-edit-extends"
+            value={form.extendsRid}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, extendsRid: e.target.value }))
+            }
+            className={inputClass}
+          >
+            <option value="">— None —</option>
+            {extendsCandidates.map((ot) => (
+              <option key={ot.rid} value={ot.rid}>
+                {ot.displayName} ({ot.apiName})
+              </option>
+            ))}
+          </select>
+        </Field>
+        <ToggleField
+          label="Audit data access"
+          checked={form.auditDataAccess}
+          onChange={(checked) =>
+            setForm((f) => ({ ...f, auditDataAccess: checked }))
+          }
+          testId="object-type-edit-audit-data-access"
+          hint="Emit an audit event for every successful read of objects of this type."
+        />
         {submitError && (
           <p
             role="alert"
@@ -1075,6 +1203,39 @@ function Field({
           {error}
         </span>
       )}
+    </label>
+  );
+}
+
+// ToggleField renders a labeled checkbox styled to match the admin form. The
+// label text is associated with the input via the wrapping <label> so RTL's
+// getByLabelText resolves the checkbox.
+function ToggleField({
+  label,
+  checked,
+  onChange,
+  hint,
+  testId,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  hint?: string;
+  testId?: string;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs text-text-secondary">
+      <span className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          data-testid={testId}
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="h-3.5 w-3.5 rounded border-transparent bg-bg-tertiary accent-accent-cyan"
+        />
+        <span className="uppercase tracking-widest">{label}</span>
+      </span>
+      {hint && <span className="text-[11px] text-text-muted">{hint}</span>}
     </label>
   );
 }

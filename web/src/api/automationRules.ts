@@ -9,7 +9,10 @@ export interface AutomationRule {
   name: string;
   description?: string;
   // Status drives the pause/resume toggle. Backend persists "active",
-  // "paused", or "disabled"; the UI only swaps between active/paused.
+  // "paused", or "disabled". The toggle only swaps active<->paused; a
+  // "disabled" rule renders the toggle disabled (no honest backend path
+  // distinguishes resume-from-paused from re-enable-from-disabled, which
+  // would silently re-activate it — see AutomationRulesPage togglePause).
   status: 'active' | 'paused' | 'disabled';
   // TriggerType is one of: "schedule", "dataChange", "manual"
   // (CreateAutomationRule validates this allowlist).

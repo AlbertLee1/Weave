@@ -80,6 +80,9 @@ export function buildLineageTree(
         if (dp && dp.length > 0) node.derivedProperties = dp;
         break;
       }
+      case 'sample':
+        node.size = (d as { size?: number }).size;
+        break;
       default:
         break;
     }

@@ -117,6 +117,16 @@ type HavingClause struct {
 	Value  float64 `json:"value"`
 }
 
+// PropertyIdentifier is the Palantir alternative to a bare `field` on an
+// aggregation metric (syntax ref L105/L461): {"property":{"apiName":"x"}}.
+// `field` and `propertyIdentifier` are mutually exclusive; the engine resolves
+// the latter to Field before any metric runs.
+type PropertyIdentifier struct {
+	Property struct {
+		APIName string `json:"apiName"`
+	} `json:"property"`
+}
+
 // AggregationSpec defines what to aggregate.
 type AggregationSpec struct {
 	Type        string    `json:"type"`                  // "count", "min", "max", "sum", "avg", "approximateDistinct", "exactDistinct", "standardDeviation", "variance", "approximatePercentile", "collectList"
@@ -127,6 +137,16 @@ type AggregationSpec struct {
 	MaxItems    *int      `json:"maxItems,omitempty"`    // for collectList: max values to collect (default 100)
 	Precision   *int      `json:"precision,omitempty"`   // for approximateDistinct: HyperLogLog precision, 4..18 (default 14 — ~0.81% standard error). Overrides request-level HLLPrecision.
 	Compression *float64  `json:"compression,omitempty"` // for approximatePercentile: t-digest compression (default 100). Overrides request-level TDigestCompression. Must be positive finite.
+	// Direction optionally orders the groupBy result rows by THIS metric's
+	// value (Palantir aggregation "按聚合值排序", syntax ref L463 / L623).
+	// "ASC" / "DESC" (case-insensitive); "" means no ordering by this metric.
+	// When several metrics carry a direction the first one wins. Ignored when
+	// there is no groupBy (a single result row has nothing to order).
+	Direction string `json:"direction,omitempty"`
+	// PropertyIdentifier is the structured alternative to Field (syntax ref
+	// L461). Mutually exclusive with Field; resolved to Field before metrics
+	// run. nil falls back to the plain Field path.
+	PropertyIdentifier *PropertyIdentifier `json:"propertyIdentifier,omitempty"`
 }
 
 // GroupBySpec defines how to group results.
@@ -136,7 +156,7 @@ type GroupBySpec struct {
 	MaxGroups     *int           `json:"maxGroupCount,omitempty"`
 	Width         *float64       `json:"fixedWidth,omitempty"` // for fixedWidth
 	Ranges        []Range        `json:"ranges,omitempty"`     // for range/ranges
-	Duration      string         `json:"duration,omitempty"`   // ISO 8601: P1D, P1W, P1M, P1Y
+	Duration      string         `json:"duration,omitempty"`   // ISO 8601: P1D, P1W, P1M, P3M, P1Y, PT1H
 	DurationValue *DurationValue `json:"value,omitempty"`      // for duration: {unit: "DAYS", value: 30}
 	Precision     *int           `json:"precision,omitempty"`  // for geohash: character precision 1..12 (default 6 ≈ ±0.61km)
 }
@@ -215,6 +235,12 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 	if err := validateApproxConfig(req); err != nil {
 		return nil, err
 	}
+	if err := resolveMetricPropertyIdentifiers(req); err != nil {
+		return nil, err
+	}
+	if err := validateMetricDirections(req.Aggregations); err != nil {
+		return nil, err
+	}
 
 	// US-382: pre-filter excludedItems BEFORE any metric or facet runs. We
 	// count the actual intersection (caller-requested PKs that resolve in
@@ -258,6 +284,10 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 	if len(req.Having) > 0 {
 		resp.Data = ApplyHaving(resp.Data, req.Having)
 	}
+
+	// Palantir "按聚合值排序": when a metric carries a direction, order the
+	// groupBy result rows by that metric's value (after any Having filter).
+	resp.Data = applyMetricOrdering(resp.Data, req.Aggregations)
 
 	scannedRows := countScannedRows(idx, baseQuery)
 	if exceedsApproximateScanThreshold(scannedRows, req.ApproximateScanThreshold) {
@@ -1164,7 +1194,11 @@ func (e *Engine) groupByRanges(idx bleve.Index, baseQuery query.Query, gb GroupB
 }
 
 // parseDuration converts a simple ISO 8601 duration string to a time.Duration.
-// Supports P1D, P1W, P1M, P1Y (approximate).
+// Supports the period shortcuts Foundry's OntologyAggregation groupBy accepts:
+// P1D, P1W, P1M, P3M (quarter), P1Y and the time-component PT1H (hour).
+// Months/quarters/years are fixed approximations (30 / 90 / 365 days) matching
+// the DurationValue {Unit,Value} form; true calendar alignment is a SHOULD-layer
+// follow-up tracked in the PRD.
 func parseDuration(iso string) (time.Duration, error) {
 	switch iso {
 	case "P1D":
@@ -1173,10 +1207,14 @@ func parseDuration(iso string) (time.Duration, error) {
 		return 7 * 24 * time.Hour, nil
 	case "P1M":
 		return 30 * 24 * time.Hour, nil
+	case "P3M":
+		return 90 * 24 * time.Hour, nil
 	case "P1Y":
 		return 365 * 24 * time.Hour, nil
+	case "PT1H":
+		return time.Hour, nil
 	default:
-		return 0, fmt.Errorf("unsupported duration: %q (supported: P1D, P1W, P1M, P1Y)", iso)
+		return 0, fmt.Errorf("unsupported duration: %q (supported: P1D, P1W, P1M, P3M, P1Y, PT1H)", iso)
 	}
 }
 
@@ -1215,7 +1253,7 @@ func (e *Engine) groupByDuration(idx bleve.Index, baseQuery query.Query, gb Grou
 		}
 		durSec = secs
 	case gb.Duration != "":
-		// ISO 8601 format: P1D, P1W, P1M, P1Y
+		// ISO 8601 format: P1D, P1W, P1M, P3M, P1Y, PT1H
 		dur, err := parseDuration(gb.Duration)
 		if err != nil {
 			return nil, fmt.Errorf("parse duration: %w", err)

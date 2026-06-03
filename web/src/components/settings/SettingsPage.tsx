@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { getBuildFeatures, getBuildInfo } from '../../api/buildInfo';
+import { getServerConnections, getServerInfo } from '../../api/serverInfo';
 import {
   changeLocale,
   isSupportedLocale,
@@ -23,6 +26,20 @@ import { HOTKEYS } from '../../hotkeys/registry';
 
 const THEME_OPTIONS: ThemePreference[] = ['system', 'light', 'dark'];
 
+// formatUptime humanises a seconds count into "Nd HHh MMm" (dropping
+// leading zero units) for the System status row.
+function formatUptime(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return '—';
+  const d = Math.floor(totalSeconds / 86400);
+  const h = Math.floor((totalSeconds % 86400) / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const parts: string[] = [];
+  if (d) parts.push(`${d}d`);
+  if (d || h) parts.push(`${h}h`);
+  parts.push(`${m}m`);
+  return parts.join(' ');
+}
+
 // SettingsPage is the user preference center (US-350). It surfaces four
 // independent sections — theme, language, notifications, hotkeys —
 // and persists every change to the backend `user_preferences` table.
@@ -38,6 +55,42 @@ export function SettingsPage() {
 
   const { data: prefs, isLoading, unavailable } = useUserPreferences();
   const update = useUpdateUserPreferences();
+
+  // Build info / feature flags are read-only server diagnostics (US: parity
+  // with /api/v2/build-info). A degraded deployment may 404; we render the
+  // section only when the build info resolves so the page never crashes.
+  const buildInfoQuery = useQuery({
+    queryKey: ['build-info'],
+    queryFn: getBuildInfo,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const featuresQuery = useQuery({
+    queryKey: ['build-info', 'features'],
+    queryFn: getBuildFeatures,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const buildInfo = buildInfoQuery.data;
+  const features = featuresQuery.data?.features ?? [];
+
+  // Runtime status (uptime / connection pools) — same diagnostic surface
+  // as build-info, refreshed on a short interval so the snapshot stays
+  // roughly live while the page is open.
+  const serverInfoQuery = useQuery({
+    queryKey: ['server-info'],
+    queryFn: getServerInfo,
+    retry: false,
+    refetchInterval: 15_000,
+  });
+  const connectionsQuery = useQuery({
+    queryKey: ['server-info', 'connections'],
+    queryFn: getServerConnections,
+    retry: false,
+    refetchInterval: 15_000,
+  });
+  const serverInfo = serverInfoQuery.data;
+  const connections = connectionsQuery.data;
 
   // Working copies seeded from the persisted row when it loads. Local
   // edits flow through `apply()` so the optimistic UI stays in sync
@@ -337,6 +390,129 @@ export function SettingsPage() {
           ))}
         </ul>
       </section>
+
+      {buildInfo && (
+        <section
+          data-testid="settings-section-system"
+          aria-labelledby="settings-system-heading"
+          className="rounded border border-border bg-bg-secondary p-4"
+        >
+          <h2
+            id="settings-system-heading"
+            className="text-sm font-semibold text-text-primary mb-3"
+          >
+            System
+          </h2>
+          <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-sm">
+            {(
+              [
+                ['Version', buildInfo.version],
+                ['Commit', buildInfo.commit],
+                ['Go version', buildInfo.goVersion],
+                ['Build time', buildInfo.buildTime],
+              ] as const
+            ).map(([label, value]) =>
+              value ? (
+                <div key={label} className="contents">
+                  <dt className="text-text-secondary">{label}</dt>
+                  <dd className="font-mono text-xs text-text-primary break-all">
+                    {value}
+                  </dd>
+                </div>
+              ) : null,
+            )}
+          </dl>
+
+          {(serverInfo || connections) && (
+            <dl className="mt-3 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 border-t border-border/60 pt-3 text-sm">
+              {serverInfo && (
+                <>
+                  <dt className="text-text-secondary">Uptime</dt>
+                  <dd
+                    data-testid="server-uptime"
+                    className="font-mono text-xs text-text-primary"
+                  >
+                    {formatUptime(serverInfo.uptimeSeconds)}
+                  </dd>
+                  <dt className="text-text-secondary">Goroutines</dt>
+                  <dd className="font-mono text-xs text-text-primary">
+                    {serverInfo.goroutineCount}
+                  </dd>
+                </>
+              )}
+              {connections?.nats && (
+                <>
+                  <dt className="text-text-secondary">NATS</dt>
+                  <dd
+                    data-testid="server-nats-status"
+                    data-status={connections.nats.status}
+                    className="flex items-center gap-1.5 font-mono text-xs text-text-primary"
+                  >
+                    <span
+                      aria-hidden
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        connections.nats.status === 'connected'
+                          ? 'bg-emerald-400'
+                          : 'bg-rose-400'
+                      }`}
+                    />
+                    {connections.nats.status}
+                    {connections.nats.serverUrl && (
+                      <span className="text-text-secondary">
+                        · {connections.nats.serverUrl}
+                      </span>
+                    )}
+                  </dd>
+                </>
+              )}
+              {connections?.postgres && (
+                <>
+                  <dt className="text-text-secondary">Postgres pool</dt>
+                  <dd
+                    data-testid="server-pg-pool"
+                    className="font-mono text-xs text-text-primary"
+                  >
+                    {connections.postgres.acquiredConns} in use ·{' '}
+                    {connections.postgres.idleConns} idle ·{' '}
+                    {connections.postgres.totalConns}/{connections.postgres.maxConns} total
+                  </dd>
+                </>
+              )}
+            </dl>
+          )}
+
+          {features.length > 0 && (
+            <div className="mt-4">
+              <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-2">
+                Feature flags
+              </h3>
+              <ul className="flex flex-wrap gap-2">
+                {features.map((f) => (
+                  <li
+                    key={f.name}
+                    data-testid={`settings-feature-${f.name}`}
+                    data-enabled={f.enabled}
+                    title={f.reason || f.description || undefined}
+                    className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-mono ${
+                      f.enabled
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                        : 'border-border bg-bg-tertiary text-text-secondary'
+                    }`}
+                  >
+                    <span
+                      aria-hidden
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        f.enabled ? 'bg-emerald-400' : 'bg-text-secondary/50'
+                      }`}
+                    />
+                    {f.name}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

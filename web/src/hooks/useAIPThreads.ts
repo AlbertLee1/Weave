@@ -2,12 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createThread,
   deleteThread,
+  forkThread,
   getThreadTree,
   listMessages,
   listThreads,
   sendMessage,
   updateThread,
   type CreateThreadRequest,
+  type ForkThreadRequest,
   type SendMessageRequest,
   type UpdateThreadRequest,
 } from '../api/aip';
@@ -67,6 +69,17 @@ export function useDeleteAIPThread() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (threadId: string) => deleteThread(threadId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: aipQueryKeys.threads });
+    },
+  });
+}
+
+export function useForkAIPThread() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { threadId: string; body: ForkThreadRequest }) =>
+      forkThread(vars.threadId, vars.body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: aipQueryKeys.threads });
     },

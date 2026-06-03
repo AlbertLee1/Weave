@@ -79,6 +79,27 @@ export interface SendMessageRequest {
   maxTokens?: number;
 }
 
+// ForkThreadRequest mirrors pkg/aip.forkThreadRequest. messageId names
+// the pivot message in the source thread; the new thread copies every
+// ancestor from the root through (and including) the pivot. The optional
+// overrides (title / model / systemPrompt) relabel the fresh branch at
+// fork time; provider is always inherited from the source thread.
+export interface ForkThreadRequest {
+  messageId: number;
+  newThreadId?: string;
+  title?: string;
+  model?: string;
+  systemPrompt?: string;
+}
+
+// ForkThreadResponse mirrors pkg/aip.forkThreadResponse. The new thread
+// plus its copied ancestor chain are echoed inline so the SPA can render
+// the fresh branch without a second ListMessages round-trip.
+export interface ForkThreadResponse {
+  thread: AIPThread;
+  messages: AIPMessage[];
+}
+
 export interface SendMessageResponse {
   userMessage: AIPMessage;
   assistantMessage: AIPMessage;
@@ -141,6 +162,17 @@ export function sendMessage(
   return request<SendMessageResponse>(
     'POST',
     `/api/v2/aip/threads/${encodeURIComponent(threadId)}/messages`,
+    body,
+  );
+}
+
+export function forkThread(
+  threadId: string,
+  body: ForkThreadRequest,
+): Promise<ForkThreadResponse> {
+  return request<ForkThreadResponse>(
+    'POST',
+    `/api/v2/aip/threads/${encodeURIComponent(threadId)}/fork`,
     body,
   );
 }

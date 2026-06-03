@@ -390,7 +390,7 @@ def duration_group(
 
     Two mutually-exclusive forms:
       - ``duration="P1M"`` — ISO-8601 duration string (P1D / P1W /
-        P1M / P1Y).
+        P1M / P3M (quarter) / P1Y / PT1H (hour)).
       - ``unit="DAYS", value=7`` — explicit ``{unit, value}`` form
         (server ``DurationValue``). ``unit`` is one of DAYS / WEEKS /
         MONTHS / YEARS / HOURS / MINUTES / SECONDS.

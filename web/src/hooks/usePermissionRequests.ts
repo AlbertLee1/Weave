@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   approvePermissionRequest,
+  cancelPermissionRequest,
   createPermissionRequest,
   getPermissionRequest,
   listPermissionRequests,
@@ -80,6 +81,19 @@ export function useRejectPermissionRequest() {
   return useMutation({
     mutationFn: (input: { id: string; note?: string }) =>
       rejectPermissionRequest(input.id, input.note),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['permission-requests'] });
+    },
+  });
+}
+
+// useCancelPermissionRequest withdraws the caller's own pending request
+// (soft-cancel → CANCELLED). Only the original requester is authorized
+// server-side; the UI surfaces it on the requester's own rows.
+export function useCancelPermissionRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string }) => cancelPermissionRequest(input.id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['permission-requests'] });
     },
