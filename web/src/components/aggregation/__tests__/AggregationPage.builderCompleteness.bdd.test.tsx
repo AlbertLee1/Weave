@@ -166,15 +166,16 @@ describe('BDD: Aggregation builder completeness — A2 groupBy types', () => {
     ]);
   });
 
-  it('Given the duration period select, Then it only offers periods the backend parseDuration accepts', async () => {
+  it('Given the duration period select, Then it offers the full set the backend parseDuration accepts', async () => {
     renderPage();
     await screen.findByTestId('aggregation-execute');
     fireEvent.click(screen.getByTestId('groupby-add'));
     fireEvent.change(screen.getByTestId('groupby-0-type'), { target: { value: 'duration' } });
     const periodSelect = screen.getByTestId('groupby-0-duration') as HTMLSelectElement;
     const options = Array.from(periodSelect.options).map((o) => o.value);
-    // P3M / PT1H are unsupported by the backend and must not be offered.
-    expect(options).toEqual(['P1D', 'P1W', 'P1M', 'P1Y']);
+    // Backend parseDuration (engine.go:1202) accepts all six, incl. P3M
+    // (quarter) and PT1H (hour) added in commit 2baa122.
+    expect(options).toEqual(['P1D', 'P1W', 'P1M', 'P3M', 'P1Y', 'PT1H']);
   });
 
   it('Given a duration groupBy with a period, When Execute, Then groupBy carries duration string', async () => {

@@ -18,10 +18,9 @@ const groupByTypes: GroupByClause['type'][] = [
 ];
 
 // ISO 8601 period options for the duration groupBy (wire key `duration`).
-// Limited to the periods the backend `parseDuration` accepts (P1D/P1W/P1M/P1Y);
-// offering an unsupported period like P3M or PT1H would make the aggregate
-// request fail with "unsupported duration".
-const durationPeriods = ['P1D', 'P1W', 'P1M', 'P1Y'];
+// Full set the backend `parseDuration` accepts — P1D/P1W/P1M/P3M/P1Y/PT1H
+// (engine.go:1202; P3M quarter + PT1H hour added in commit 2baa122).
+const durationPeriods = ['P1D', 'P1W', 'P1M', 'P3M', 'P1Y', 'PT1H'];
 
 // Types that accept an optional maxGroupCount (wire key `maxGroupCount`).
 const maxGroupCountTypes: GroupByClause['type'][] = ['exact', 'topValues'];
