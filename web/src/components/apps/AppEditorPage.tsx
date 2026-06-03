@@ -4,7 +4,9 @@ import {
   getApp,
   listAppVersions,
   listApps,
+  publishApp,
   rollbackApp,
+  unpublishApp,
   updateApp,
   type App,
   type AppEvent,
@@ -114,6 +116,23 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
   const [rollbackBusy, setRollbackBusy] = useState<number | null>(null);
   const [rollbackError, setRollbackError] = useState<string | null>(null);
 
+  // App publish lifecycle. `published` mirrors the App's current publish
+  // pin (publishedVersion/publishedAt/publishedBy) and drives the
+  // published-status badge + which control (Publish vs Unpublish) shows.
+  // It's seeded from the loaded App row and updated optimistically off
+  // the publishApp/unpublishApp responses so the badge flips without a
+  // second getApp round-trip. `publishBusy` carries the in-flight verb
+  // for the busy label; `publishError` surfaces a failed call inline.
+  const [published, setPublished] = useState<{
+    version: number;
+    at?: string;
+    by?: string;
+  } | null>(null);
+  const [publishBusy, setPublishBusy] = useState<
+    'publish' | 'unpublish' | null
+  >(null);
+  const [publishError, setPublishError] = useState<string | null>(null);
+
   // US-399: built-in template picker. Auto-shown in new-App mode (no
   // rid prop) so authors land on a "pick a scaffold or start blank"
   // chooser instead of an empty canvas. Once dismissed (via "Start
@@ -135,6 +154,15 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
         const decoded = decodeLayout(row.layoutJson);
         setInstances(decoded.instances);
         setVariables(decoded.variables);
+        setPublished(
+          row.publishedVersion != null
+            ? {
+                version: row.publishedVersion,
+                at: row.publishedAt,
+                by: row.publishedBy,
+              }
+            : null,
+        );
       })
       .catch(() => {
         // Fall through to blank editor — degraded mode (no PG store)
@@ -431,6 +459,49 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
     [savedRid, loadVersions],
   );
 
+  // Publish pins the App's current version as the read-only published
+  // snapshot. Owner-only on the server; a 403 surfaces as an inline
+  // error. The returned PublishedAppView carries the freshly-pinned
+  // version/at/by so the badge updates without a second getApp.
+  const handlePublish = useCallback(async () => {
+    if (!savedRid) return;
+    setPublishBusy('publish');
+    setPublishError(null);
+    try {
+      const view = await publishApp(savedRid);
+      setPublished({
+        version: view.publishedVersion,
+        at: view.publishedAt,
+        by: view.publishedBy,
+      });
+    } catch (err) {
+      setPublishError(
+        err instanceof Error ? err.message : 'Publish failed',
+      );
+    } finally {
+      setPublishBusy(null);
+    }
+  }, [savedRid]);
+
+  // Unpublish clears the publish pin. Owner-only; on success the badge
+  // and the Unpublish control disappear, returning to the publishable
+  // state.
+  const handleUnpublish = useCallback(async () => {
+    if (!savedRid) return;
+    setPublishBusy('unpublish');
+    setPublishError(null);
+    try {
+      await unpublishApp(savedRid);
+      setPublished(null);
+    } catch (err) {
+      setPublishError(
+        err instanceof Error ? err.message : 'Unpublish failed',
+      );
+    } finally {
+      setPublishBusy(null);
+    }
+  }, [savedRid]);
+
   const canAddMore = instances.length < MAX_COLUMNS;
   const isPreview = mode === 'preview';
 
@@ -546,6 +617,54 @@ export function AppEditorPage({ rid, onSaved }: AppEditorPageProps = {}) {
             >
               {versionsOpen ? 'Hide Versions' : 'Versions'}
             </button>
+          )}
+          {savedRid && published === null && (
+            <button
+              type="button"
+              data-testid="app-publish"
+              onClick={() => {
+                void handlePublish();
+              }}
+              disabled={publishBusy !== null}
+              className="px-3 py-1.5 rounded border border-border bg-accent-primary/20 text-sm text-text-primary hover:border-accent-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {publishBusy === 'publish' ? 'Publishing…' : 'Publish'}
+            </button>
+          )}
+          {savedRid && published !== null && (
+            <>
+              <span
+                data-testid="app-published-badge"
+                data-version={String(published.version)}
+                title={
+                  published.by ? `Published by ${published.by}` : undefined
+                }
+                className="inline-flex items-center gap-1 px-2 py-1 rounded border border-accent-success/40 bg-accent-success/15 text-xs font-mono text-accent-success"
+              >
+                <span aria-hidden="true">●</span>
+                Published v{published.version}
+                {published.at ? ` · ${published.at}` : ''}
+              </span>
+              <button
+                type="button"
+                data-testid="app-unpublish"
+                onClick={() => {
+                  void handleUnpublish();
+                }}
+                disabled={publishBusy !== null}
+                className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-text-primary hover:border-accent-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {publishBusy === 'unpublish' ? 'Unpublishing…' : 'Unpublish'}
+              </button>
+            </>
+          )}
+          {publishError && (
+            <span
+              data-testid="app-publish-error"
+              className="text-xs font-mono text-accent-error"
+            >
+              {publishError}
+            </span>
           )}
           {saveStatus !== 'idle' && (
             <span
