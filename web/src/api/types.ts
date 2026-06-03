@@ -23,6 +23,10 @@ export interface ObjectType {
   // Free-form note recording *why* this type was deprecated. Mirrors the
   // backend ObjectType.DeprecatedReason `json:"deprecatedReason,omitempty"`.
   deprecatedReason?: string;
+  // RFC3339 timestamp for *when* a deprecated type should be retired. Mirrors
+  // the backend ObjectType.DeprecatedDeadline *time.Time
+  // `json:"deprecatedDeadline,omitempty"` (serialized as an RFC3339 string).
+  deprecatedDeadline?: string | null;
   icon?: string;
   color?: string;
   classification?: Classification;
