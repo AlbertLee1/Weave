@@ -31,6 +31,7 @@ const PARAMETER_TYPES = [
   'date',
   'timestamp',
   'attachment',
+  'media',
 ] as const;
 
 type ParamType = (typeof PARAMETER_TYPES)[number];
