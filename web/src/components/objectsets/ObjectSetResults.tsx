@@ -60,6 +60,7 @@ function collectDerivedColumns(def: ObjectSetDefinition): string[] {
       case 'filter':
       case 'searchAround':
       case 'nearestNeighbors':
+      case 'sample':
       case 'asType':
       case 'asBaseObjectTypes':
       case 'interfaceLinkSearchAround':
@@ -92,6 +93,7 @@ function resolveRootType(def: ObjectSetDefinition): string {
     case 'filter':
     case 'withProperties':
     case 'nearestNeighbors':
+    case 'sample':
     case 'asBaseObjectTypes':
       return resolveRootType(def.objectSet);
     case 'union':
