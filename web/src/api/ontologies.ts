@@ -558,6 +558,8 @@ export interface CreateActionTypeRequest {
   submissionCriteria?: unknown;
   // US-239 compensating ActionType RID.
   compensateActionRid?: string;
+  // US-214 RID of the interface method this ActionType implements.
+  implementsMethodRid?: string;
   // US-245 Draft-07 parameter schema.
   parameterSchema?: unknown;
 }
@@ -575,6 +577,9 @@ export interface UpdateActionTypeRequest {
   approvers?: string[];
   // US-239 compensating ActionType RID (tri-state on the server).
   compensateActionRid?: string;
+  // US-214 RID of the interface method this ActionType implements
+  // (tri-state on the server: empty string clears the binding).
+  implementsMethodRid?: string;
   // US-245 Draft-07 parameter schema.
   parameterSchema?: unknown;
 }
