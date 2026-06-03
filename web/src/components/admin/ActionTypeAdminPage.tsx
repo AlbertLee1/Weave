@@ -48,6 +48,10 @@ const RULE_TYPES: Array<{ value: ActionTypeRuleType; label: string }> = [
 
 const STATUS_OPTIONS = ['ACTIVE', 'EXPERIMENTAL', 'DEPRECATED'] as const;
 
+// Sentinel returned by the JSON editors when the text fails to parse, so the
+// submit handler can distinguish "invalid" from "intentionally empty".
+const INVALID_JSON = Symbol('invalid-json');
+
 export function ActionTypeAdminPage() {
   const { ontology } = useParams<{ ontology: string }>();
   const ontologyApiName = ontology ?? '';
@@ -336,6 +340,42 @@ interface BuilderState {
   status: string;
   parameters: ActionTypeParamDef[];
   rules: BuilderRule[];
+  // Approval gating (US-242). approvers is the raw comma-separated input;
+  // it is split into a string[] on submit.
+  requiresApproval: boolean;
+  approvers: string;
+  // submissionCriteria / parameterSchema are raw JSON text the author edits
+  // directly; they are parsed (and surfaced as inline errors) on submit.
+  submissionCriteria: string;
+  parameterSchema: string;
+  // compensateActionRid points at another ActionType in the same ontology
+  // (US-239). Empty means no compensation pairing.
+  compensateActionRid: string;
+}
+
+// Parse a comma/newline-separated approver list into a trimmed, de-duped
+// string[]. Empty entries are dropped.
+function parseApprovers(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(/[,\n]/)) {
+    const v = part.trim();
+    if (v && !seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+// Pretty-print a stored JSON value back into editable text for the modal.
+function jsonToEditorText(value: unknown): string {
+  if (value == null) return '';
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return '';
+  }
 }
 
 function emptyRule(): BuilderRule {
@@ -364,6 +404,11 @@ function initialStateFromAction(
       status: 'ACTIVE',
       parameters: [],
       rules: [],
+      requiresApproval: false,
+      approvers: '',
+      submissionCriteria: '',
+      parameterSchema: '',
+      compensateActionRid: '',
     };
   }
   const parameters: ActionTypeParamDef[] = Object.entries(
@@ -409,6 +454,11 @@ function initialStateFromAction(
     status: at.status,
     parameters,
     rules,
+    requiresApproval: !!at.requiresApproval,
+    approvers: (at.approvers ?? []).join(', '),
+    submissionCriteria: jsonToEditorText(at.submissionCriteria),
+    parameterSchema: jsonToEditorText(at.parameterSchema),
+    compensateActionRid: at.compensateActionRid ?? '',
   };
 }
 
@@ -478,6 +528,8 @@ function ActionTypeBuilderModal({
     initialStateFromAction(editing),
   );
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [criteriaError, setCriteriaError] = useState<string | null>(null);
+  const [schemaError, setSchemaError] = useState<string | null>(null);
 
   const apiNameTaken = useMemo(
     () =>
@@ -486,6 +538,17 @@ function ActionTypeBuilderModal({
           .filter((at) => !editing || at.rid !== editing.rid)
           .map((at) => at.apiName),
       ),
+    [existing, editing],
+  );
+
+  // Candidate compensating actions: every other ActionType in this ontology.
+  // An action can't compensate itself, so the action being edited is excluded.
+  const compensateOptions = useMemo(
+    () =>
+      existing
+        .filter((at) => !editing || at.rid !== editing.rid)
+        .slice()
+        .sort((a, b) => a.displayName.localeCompare(b.displayName)),
     [existing, editing],
   );
 
@@ -536,6 +599,28 @@ function ActionTypeBuilderModal({
     !create.isPending &&
     !update.isPending;
 
+  // Parse a raw JSON editor string. Returns the parsed value, or sets the
+  // matching inline error and returns the sentinel `INVALID` so the caller
+  // can abort. An empty/whitespace string means "field omitted".
+  function parseOptionalJson(
+    raw: string,
+    setError: (m: string | null) => void,
+  ): unknown {
+    const trimmed = raw.trim();
+    if (trimmed === '') {
+      setError(null);
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      setError(null);
+      return parsed;
+    } catch (err) {
+      setError(`Invalid JSON: ${(err as Error).message}`);
+      return INVALID_JSON;
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitError(null);
@@ -550,6 +635,21 @@ function ActionTypeBuilderModal({
         ...(p.description ? { description: p.description } : {}),
       }));
 
+    const submissionCriteria = parseOptionalJson(
+      form.submissionCriteria,
+      setCriteriaError,
+    );
+    const parameterSchema = parseOptionalJson(
+      form.parameterSchema,
+      setSchemaError,
+    );
+    if (submissionCriteria === INVALID_JSON || parameterSchema === INVALID_JSON) {
+      return;
+    }
+
+    const approvers = parseApprovers(form.approvers);
+    const compensateActionRid = form.compensateActionRid.trim();
+
     try {
       if (editing) {
         const body: UpdateActionTypeRequest = {
@@ -558,6 +658,13 @@ function ActionTypeBuilderModal({
           status: form.status,
           parameters: parametersArray,
           rules: rulesWire,
+          requiresApproval: form.requiresApproval,
+          approvers,
+          compensateActionRid,
+          // parameterSchema is tri-state on the server: an explicit `null`
+          // clears the stored schema, so emptying the editor removes it.
+          parameterSchema: parameterSchema === undefined ? null : parameterSchema,
+          ...(submissionCriteria !== undefined ? { submissionCriteria } : {}),
         };
         await update.mutateAsync({ rid: editing.rid, body });
       } else {
@@ -568,6 +675,11 @@ function ActionTypeBuilderModal({
           status: form.status,
           parameters: parametersArray,
           rules: rulesWire,
+          ...(form.requiresApproval ? { requiresApproval: true } : {}),
+          ...(approvers.length > 0 ? { approvers } : {}),
+          ...(compensateActionRid ? { compensateActionRid } : {}),
+          ...(submissionCriteria !== undefined ? { submissionCriteria } : {}),
+          ...(parameterSchema !== undefined ? { parameterSchema } : {}),
         };
         await create.mutateAsync(body);
       }
@@ -710,6 +822,124 @@ function ActionTypeBuilderModal({
             onChange={(rules) => setForm((f) => ({ ...f, rules }))}
           />
         </Section>
+
+        <Section title="Approval" testId="action-type-approval-section">
+          <label className="flex items-center gap-2 text-xs text-text-secondary">
+            <input
+              type="checkbox"
+              data-testid="action-type-requires-approval"
+              checked={form.requiresApproval}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, requiresApproval: e.target.checked }))
+              }
+            />
+            <span>
+              Require human approval before edits are committed
+            </span>
+          </label>
+          {form.requiresApproval && (
+            <Field
+              label="Approvers"
+              hint="Comma-separated role names or user IDs allowed to approve. Without any approver, gated actions can never be applied."
+            >
+              <input
+                type="text"
+                data-testid="action-type-approvers"
+                placeholder="role:approver, alice"
+                value={form.approvers}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, approvers: e.target.value }))
+                }
+                className={inputClass + ' font-mono text-xs'}
+              />
+            </Field>
+          )}
+        </Section>
+
+        <Section
+          title="Submission Criteria"
+          testId="action-type-submission-criteria-section"
+        >
+          <Field
+            label="Criteria (JSON)"
+            hint="Optional criteria tree evaluated at apply time (e.g. parameterMatch / and_ / or_ / not_). Validated by the server on save."
+            error={criteriaError ?? undefined}
+          >
+            <textarea
+              data-testid="action-type-submission-criteria"
+              value={form.submissionCriteria}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, submissionCriteria: e.target.value }))
+              }
+              spellCheck={false}
+              rows={6}
+              placeholder={'{\n  "type": "parameterMatch",\n  "value": { "parameter": "status", "operator": "eq", "value": "active" }\n}'}
+              className={inputClass + ' font-mono text-xs'}
+            />
+          </Field>
+        </Section>
+
+        <Section
+          title="Compensating Action"
+          testId="action-type-compensate-section"
+        >
+          <Field
+            label="On saga rollback, run"
+            hint="Another ActionType whose rules compensate (roll back) this one when a saga batch fails downstream."
+          >
+            <select
+              aria-label="Compensating action"
+              data-testid="action-type-compensate-select"
+              value={form.compensateActionRid}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  compensateActionRid: e.target.value,
+                }))
+              }
+              className={inputClass + ' text-xs'}
+            >
+              <option value="">No compensating action</option>
+              {compensateOptions.map((at) => (
+                <option key={at.rid} value={at.rid}>
+                  {at.displayName} ({at.apiName})
+                </option>
+              ))}
+            </select>
+          </Field>
+        </Section>
+
+        <details
+          data-testid="action-type-parameter-schema-section"
+          className="rounded border px-3 py-2"
+          style={{
+            borderColor: 'rgba(31,41,55,0.5)',
+            background: 'rgba(13,17,23,0.4)',
+          }}
+        >
+          <summary className="text-[10px] uppercase tracking-widest text-text-secondary cursor-pointer select-none">
+            Parameter Schema (JSON Schema Draft-07)
+          </summary>
+          <div className="pt-2">
+            <Field
+              label="Schema (JSON)"
+              hint="Optional Draft-07 JSON Schema evaluated after the per-parameter validator. Leave blank for no schema."
+              error={schemaError ?? undefined}
+            >
+              <textarea
+                data-testid="action-type-parameter-schema"
+                value={form.parameterSchema}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, parameterSchema: e.target.value }))
+                }
+                spellCheck={false}
+                rows={6}
+                placeholder={'{\n  "type": "object",\n  "properties": { "amount": { "type": "number", "minimum": 0 } },\n  "required": ["amount"]\n}'}
+                className={inputClass + ' font-mono text-xs'}
+              />
+            </Field>
+          </div>
+        </details>
 
         <Section title="JSON Preview">
           <pre

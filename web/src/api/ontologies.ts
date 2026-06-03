@@ -483,6 +483,15 @@ export interface CreateActionTypeRequest {
   status?: string;
   parameters: ActionTypeParamDef[];
   rules: ActionTypeRule[];
+  // US-242 approval gating (Go: requiresApproval / approvers).
+  requiresApproval?: boolean;
+  approvers?: string[];
+  // Round 135 submission criteria, validated server-side.
+  submissionCriteria?: unknown;
+  // US-239 compensating ActionType RID.
+  compensateActionRid?: string;
+  // US-245 Draft-07 parameter schema.
+  parameterSchema?: unknown;
 }
 
 export interface UpdateActionTypeRequest {
@@ -493,6 +502,13 @@ export interface UpdateActionTypeRequest {
   rules: ActionTypeRule[];
   submissionCriteria?: unknown;
   sideEffects?: unknown;
+  // US-242 approval gating (Go: requiresApproval / approvers).
+  requiresApproval?: boolean;
+  approvers?: string[];
+  // US-239 compensating ActionType RID (tri-state on the server).
+  compensateActionRid?: string;
+  // US-245 Draft-07 parameter schema.
+  parameterSchema?: unknown;
 }
 
 export async function listActionTypesAdmin(

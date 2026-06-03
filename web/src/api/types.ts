@@ -112,6 +112,13 @@ export interface ActionType {
   rules?: unknown;
   submissionCriteria?: unknown;
   sideEffects?: unknown;
+  // US-242 approval gating.
+  requiresApproval?: boolean;
+  approvers?: string[];
+  // US-239 saga compensation pairing.
+  compensateActionRid?: string;
+  // US-245 Draft-07 parameter schema.
+  parameterSchema?: unknown;
 }
 
 export interface ActionLog {
