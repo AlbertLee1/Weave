@@ -190,6 +190,11 @@ export interface CreateLinkTypeRequest {
   foreignKeyConfig?: unknown;
   joinTableConfig?: unknown;
   required?: boolean;
+  // US-209: RID of the LinkType that mirrors this one for bidirectional
+  // links. Omit when there is no inverse. The backend validates the partner
+  // exists, lives in the same ontology, and that its endpoints mirror this
+  // link's (and that it is not self-referential).
+  inverseLinkRid?: string;
   // US-261: opt the LinkType into automatic marking inheritance — every
   // LINK_CREATE copies the source object's `_markings` set onto the target.
   propagateMarkings?: boolean;
@@ -201,6 +206,10 @@ export interface UpdateLinkTypeRequest {
   displayName: string;
   description?: string;
   required?: boolean;
+  // US-209: tri-state — undefined leaves the inverse pairing untouched, ''
+  // clears it, an rid sets/replaces it. Mirrors the backend tri-state
+  // pointer (InverseLinkRID *string).
+  inverseLinkRid?: string;
   // VTX-010: tri-state — undefined leaves tags untouched, [] clears them,
   // a non-empty array replaces them. Mirrors the backend tri-state pointer.
   typeClasses?: string[];
