@@ -20,6 +20,9 @@ export interface ObjectType {
   titleProperty?: string;
   status: 'ACTIVE' | 'ENDORSED' | 'EXPERIMENTAL' | 'DEPRECATED';
   visibility: 'PROMINENT' | 'NORMAL' | 'HIDDEN';
+  // Free-form note recording *why* this type was deprecated. Mirrors the
+  // backend ObjectType.DeprecatedReason `json:"deprecatedReason,omitempty"`.
+  deprecatedReason?: string;
   icon?: string;
   color?: string;
   classification?: Classification;

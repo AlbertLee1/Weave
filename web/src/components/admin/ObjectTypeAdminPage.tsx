@@ -670,6 +670,7 @@ interface EditFormState {
   titleProperty: string;
   status: (typeof STATUS_VALUES)[number];
   visibility: (typeof VISIBILITY_VALUES)[number];
+  deprecatedReason: string;
   iconName: string;
   color: string;
   classification: '' | Classification;
@@ -699,6 +700,7 @@ function EditObjectTypeModal({
     titleProperty: objectType.titleProperty ?? '',
     status: objectType.status,
     visibility: objectType.visibility,
+    deprecatedReason: objectType.deprecatedReason ?? '',
     iconName: objectType.icon ?? '',
     color: objectType.color ?? '',
     classification: objectType.classification ?? '',
@@ -728,6 +730,10 @@ function EditObjectTypeModal({
       titleProperty: form.titleProperty.trim() || undefined,
       status: form.status,
       visibility: form.visibility,
+      // Records *why* a type was deprecated. Backend persists this verbatim
+      // (updated.DeprecatedReason = req.DeprecatedReason); send the trimmed
+      // value, or undefined when blank so the omitempty field is dropped.
+      deprecatedReason: form.deprecatedReason.trim() || undefined,
       // Backend reads the icon under the `icon` JSON key (IconName
       // `json:"icon"`); sending `iconName` was silently dropped server-side.
       icon: form.iconName.trim() || undefined,
@@ -946,6 +952,21 @@ function EditObjectTypeModal({
             </select>
           </Field>
         </div>
+        <Field
+          label="Deprecation reason"
+          hint="Recorded when deprecating a type — explain why and what replaces it."
+        >
+          <textarea
+            aria-label="Deprecation reason"
+            data-testid="object-type-edit-deprecated-reason"
+            value={form.deprecatedReason}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, deprecatedReason: e.target.value }))
+            }
+            rows={2}
+            className={inputClass}
+          />
+        </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Icon" hint="Free-form icon identifier.">
             <input
