@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiRequestError } from '../../api/client';
-import type { AIPMessage, AIPMessageTreeNode, AIPThread } from '../../api/aip';
+import type {
+  AIPMessage,
+  AIPMessageTreeNode,
+  AIPThread,
+  SendMessageRequest,
+} from '../../api/aip';
 import {
   useAIPMessages,
   useAIPThreadTree,
   useAIPThreads,
   useCreateAIPThread,
   useDeleteAIPThread,
+  useForkAIPThread,
   useSendAIPMessage,
 } from '../../hooks/useAIPThreads';
 import { EmptyState } from '../common/EmptyState';
@@ -154,7 +160,10 @@ export function ThreadsPage() {
         onNew={openNewThread}
         onDelete={onDelete}
       />
-      <ThreadConversation thread={activeThread} />
+      <ThreadConversation
+        thread={activeThread}
+        onSelectThread={setActiveThreadId}
+      />
 
       <Modal
         open={newThreadOpen}
@@ -382,9 +391,10 @@ function ThreadList({
 
 interface ThreadConversationProps {
   thread: AIPThread | null;
+  onSelectThread: (id: string) => void;
 }
 
-function ThreadConversation({ thread }: ThreadConversationProps) {
+function ThreadConversation({ thread, onSelectThread }: ThreadConversationProps) {
   if (!thread) {
     return (
       <section className="flex flex-1 items-center justify-center rounded-lg border border-border/50 bg-bg-secondary/40">
@@ -395,10 +405,18 @@ function ThreadConversation({ thread }: ThreadConversationProps) {
       </section>
     );
   }
-  return <ThreadConversationActive thread={thread} />;
+  return (
+    <ThreadConversationActive thread={thread} onSelectThread={onSelectThread} />
+  );
 }
 
-function ThreadConversationActive({ thread }: { thread: AIPThread }) {
+function ThreadConversationActive({
+  thread,
+  onSelectThread,
+}: {
+  thread: AIPThread;
+  onSelectThread: (id: string) => void;
+}) {
   const messagesQuery = useAIPMessages(thread.id);
   const messages = useMemo<AIPMessage[]>(
     () => messagesQuery.data?.messages ?? [],
@@ -461,6 +479,42 @@ function ThreadConversationActive({ thread }: { thread: AIPThread }) {
   const [composerValue, setComposerValue] = useState('');
   const [composerError, setComposerError] = useState<string | null>(null);
 
+  // Advanced composer controls (temperature / maxTokens). Collapsed by
+  // default; the values are passed through to SendMessage only when the
+  // user has explicitly set them (empty string => omit from the body).
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [temperature, setTemperature] = useState('');
+  const [maxTokens, setMaxTokens] = useState('');
+
+  const forkMutation = useForkAIPThread();
+
+  const onForkFromMessage = (messageId: number) => {
+    let title: string | undefined;
+    if (typeof window !== 'undefined') {
+      // eslint-disable-next-line no-alert
+      const entered = window.prompt(
+        'Title for the forked thread (optional):',
+        '',
+      );
+      // A null return means the prompt was cancelled — fork anyway, but
+      // without a title override. A blank string is treated the same way.
+      const trimmed = entered?.trim();
+      if (trimmed) title = trimmed;
+    }
+    forkMutation.mutate(
+      {
+        threadId: thread.id,
+        body: { messageId, ...(title ? { title } : {}) },
+      },
+      {
+        onSuccess: (resp) => {
+          onSelectThread(resp.thread.id);
+        },
+        onError: (err) => setComposerError(describeError(err)),
+      },
+    );
+  };
+
   // Track which assistant message id is currently "streaming" via the
   // typewriter effect, plus how many characters have been revealed.
   // streamingMessageId is set when SendMessage returns; the effect below
@@ -503,8 +557,19 @@ function ThreadConversationActive({ thread }: { thread: AIPThread }) {
       return;
     }
     setComposerError(null);
+    const body: SendMessageRequest = { content: trimmed };
+    const temp = temperature.trim();
+    if (temp !== '') {
+      const parsed = Number(temp);
+      if (Number.isFinite(parsed)) body.temperature = parsed;
+    }
+    const tokens = maxTokens.trim();
+    if (tokens !== '') {
+      const parsed = Number.parseInt(tokens, 10);
+      if (Number.isFinite(parsed)) body.maxTokens = parsed;
+    }
     sendMutation.mutate(
-      { content: trimmed },
+      body,
       {
         onSuccess: (resp) => {
           setComposerValue('');
@@ -604,6 +669,8 @@ function ThreadConversationActive({ thread }: { thread: AIPThread }) {
                     streaming={
                       isStreaming && streamingChars < msg.content.length
                     }
+                    onFork={onForkFromMessage}
+                    forkPending={forkMutation.isPending}
                   />
                 );
               })}
@@ -645,6 +712,78 @@ function ThreadConversationActive({ thread }: { thread: AIPThread }) {
             {sendMutation.isPending ? 'Sending…' : 'Send'}
           </button>
         </div>
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((v) => !v)}
+            data-testid="composer-advanced-toggle"
+            aria-expanded={advancedOpen}
+            className="flex items-center gap-1 text-[11px] text-text-secondary hover:text-text-primary"
+          >
+            <span
+              className={`inline-block transition-transform ${
+                advancedOpen ? 'rotate-90' : ''
+              }`}
+              aria-hidden
+            >
+              ▸
+            </span>
+            Advanced
+          </button>
+          {advancedOpen && (
+            <div
+              data-testid="composer-advanced"
+              className="mt-2 flex flex-wrap items-end gap-4 rounded-md border border-border/40 bg-bg-primary/40 px-3 py-2.5"
+            >
+              <label className="flex flex-1 min-w-[12rem] flex-col gap-1 text-[11px] text-text-secondary">
+                <span className="flex items-center justify-between">
+                  <span>Temperature</span>
+                  <span className="font-mono text-text-primary">
+                    {temperature === '' ? 'default' : temperature}
+                  </span>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  value={temperature === '' ? 1 : temperature}
+                  onChange={(e) => setTemperature(e.target.value)}
+                  data-testid="composer-temperature"
+                  disabled={sendMutation.isPending}
+                  className="accent-amber-500"
+                />
+              </label>
+              <label className="flex w-32 flex-col gap-1 text-[11px] text-text-secondary">
+                Max tokens
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={maxTokens}
+                  onChange={(e) => setMaxTokens(e.target.value)}
+                  placeholder="default"
+                  data-testid="composer-max-tokens"
+                  disabled={sendMutation.isPending}
+                  className="rounded-md border border-border/50 bg-bg-primary px-2 py-1.5 font-mono text-xs text-text-primary outline-none focus:border-amber-500/60 disabled:opacity-60"
+                />
+              </label>
+              {(temperature !== '' || maxTokens !== '') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTemperature('');
+                    setMaxTokens('');
+                  }}
+                  data-testid="composer-advanced-reset"
+                  className="text-[11px] text-text-secondary underline hover:text-text-primary"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </footer>
     </section>
   );
@@ -654,9 +793,17 @@ interface MessageBubbleProps {
   message: AIPMessage;
   rendered: string;
   streaming: boolean;
+  onFork: (messageId: number) => void;
+  forkPending: boolean;
 }
 
-function MessageBubble({ message, rendered, streaming }: MessageBubbleProps) {
+function MessageBubble({
+  message,
+  rendered,
+  streaming,
+  onFork,
+  forkPending,
+}: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isAssistant = message.role === 'assistant';
   return (
@@ -664,7 +811,7 @@ function MessageBubble({ message, rendered, streaming }: MessageBubbleProps) {
       data-testid="thread-message"
       data-role={message.role}
       data-message-id={message.id}
-      className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
+      className={`group flex ${isUser ? 'justify-end' : 'justify-start'}`}
     >
       <div
         className={`max-w-[80%] rounded-lg border px-3 py-2 text-sm ${
@@ -679,6 +826,17 @@ function MessageBubble({ message, rendered, streaming }: MessageBubbleProps) {
           <span className="font-mono">{message.role}</span>
           <span>·</span>
           <span>{formatTimestamp(message.createdAt)}</span>
+          <button
+            type="button"
+            onClick={() => onFork(message.id)}
+            disabled={forkPending}
+            data-testid="message-fork-btn"
+            title="Fork a new thread from this message"
+            aria-label={`Fork from message ${message.id}`}
+            className="ml-auto rounded px-1 text-[10px] font-medium normal-case tracking-normal text-amber-400 opacity-0 transition-opacity hover:text-amber-300 focus:opacity-100 group-hover:opacity-100 disabled:opacity-40"
+          >
+            ⑂ Fork from here
+          </button>
         </div>
         <div className="whitespace-pre-wrap break-words" data-testid="message-content">
           {rendered}
