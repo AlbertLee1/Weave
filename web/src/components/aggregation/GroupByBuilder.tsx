@@ -23,6 +23,26 @@ export function GroupByBuilder({ groupBy, onChange, availableFields }: GroupByBu
     );
   }
 
+  // Switching away from fixedWidth drops the now-irrelevant width so the wire
+  // payload stays clean (the backend only reads fixedWidth for that type).
+  function updateType(index: number, type: GroupByClause['type']) {
+    onChange(
+      groupBy.map((g, i) => {
+        if (i !== index) return g;
+        const next: GroupByClause = { ...g, type };
+        if (type !== 'fixedWidth') delete next.fixedWidth;
+        return next;
+      }),
+    );
+  }
+
+  function updateWidth(index: number, raw: string) {
+    const n = Number(raw);
+    updateGroupBy(index, {
+      fixedWidth: raw.trim() !== '' && Number.isFinite(n) ? n : undefined,
+    });
+  }
+
   const inputClass =
     'bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none';
   const labelClass = 'text-xs text-text-secondary font-sans mb-1';
@@ -67,7 +87,7 @@ export function GroupByBuilder({ groupBy, onChange, availableFields }: GroupByBu
 
           <select
             value={clause.type}
-            onChange={(e) => updateGroupBy(index, { type: e.target.value as GroupByClause['type'] })}
+            onChange={(e) => updateType(index, e.target.value as GroupByClause['type'])}
             data-testid={`groupby-${index}-type`}
             className={`${inputClass} flex-shrink-0`}
           >
@@ -77,6 +97,21 @@ export function GroupByBuilder({ groupBy, onChange, availableFields }: GroupByBu
               </option>
             ))}
           </select>
+
+          {clause.type === 'fixedWidth' && (
+            <input
+              type="number"
+              min="0"
+              step="any"
+              value={clause.fixedWidth ?? ''}
+              onChange={(e) => updateWidth(index, e.target.value)}
+              placeholder="width"
+              data-testid={`groupby-${index}-fixedWidth`}
+              aria-label="Bucket width"
+              title="Numeric bucket width (required for fixedWidth grouping)"
+              className={`${inputClass} w-24 flex-shrink-0`}
+            />
+          )}
 
           <button
             type="button"

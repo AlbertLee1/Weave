@@ -206,6 +206,10 @@ export interface AggregationMetric {
 export interface GroupByClause {
   field: string;
   type: 'exact' | 'ranges' | 'fixedWidth';
+  // fixedWidth is the numeric bucket width, required when type === 'fixedWidth'
+  // (the backend rejects a width-less fixedWidth groupBy). Wire key matches the
+  // server's GroupBySpec.Width json tag.
+  fixedWidth?: number;
 }
 
 export interface WhereClause {

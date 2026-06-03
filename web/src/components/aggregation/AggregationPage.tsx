@@ -58,6 +58,18 @@ export function AggregationPage() {
     return keys[0] ?? '';
   }, [aggResult, metrics]);
 
+  // A fixedWidth groupBy without a positive width always errors server-side, so
+  // block Execute until every fixedWidth clause carries a valid width.
+  const hasInvalidGroupBy = useMemo(
+    () =>
+      groupBy.some(
+        (g) =>
+          g.type === 'fixedWidth' &&
+          !(typeof g.fixedWidth === 'number' && g.fixedWidth > 0),
+      ),
+    [groupBy],
+  );
+
   function handleExecute() {
     const where = buildWhereClause(filters);
     setAggRequest({
@@ -118,7 +130,7 @@ export function AggregationPage() {
           </div>
           <button
             onClick={handleExecute}
-            disabled={metrics.length === 0}
+            disabled={metrics.length === 0 || hasInvalidGroupBy}
             data-testid="aggregation-execute"
             className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50"
           >
