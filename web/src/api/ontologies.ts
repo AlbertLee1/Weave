@@ -250,10 +250,18 @@ export interface CreateObjectTypeRequest {
   pluralDisplayName?: string;
   description?: string;
   primaryKey: string;
+  // US-211: composite primary key. When supplied the backend prefers
+  // primaryKeys over primaryKey; senders pass it only when more than one
+  // field is specified, leaving primaryKey as the single-key fallback.
+  primaryKeys?: string[];
   titleProperty?: string;
   status?: 'ACTIVE' | 'ENDORSED' | 'EXPERIMENTAL' | 'DEPRECATED';
   visibility?: 'PROMINENT' | 'NORMAL' | 'HIDDEN';
   classification?: string;
+  // US-212: RID of a parent ObjectType to inherit from (same ontology).
+  extendsRid?: string;
+  // US-264: opt this ObjectType into per-read data-access audit logging.
+  auditDataAccess?: boolean;
 }
 
 export interface UpdateObjectTypeRequest {
@@ -269,6 +277,12 @@ export interface UpdateObjectTypeRequest {
   deprecatedDeadline?: string | null;
   // US-262 tri-state: omit = preserve, '' = clear, known label = assign.
   classification?: string;
+  // US-212 tri-state: omit = preserve, '' = clear the parent pointer,
+  // non-empty RID = validate + assign a parent ObjectType.
+  extendsRid?: string;
+  // US-264 tri-state: omit = preserve, explicit bool = toggle the per-read
+  // data-access audit flag.
+  auditDataAccess?: boolean;
 }
 
 export function createObjectType(
