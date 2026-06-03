@@ -14,12 +14,19 @@ export interface ObjectType {
   pluralDisplayName?: string;
   description?: string;
   primaryKey: string;
+  // US-211: ordered list of property apiNames that together form a composite
+  // primary key. Omitted (or single-element) for the legacy single-key case.
+  primaryKeys?: string[];
   titleProperty?: string;
   status: 'ACTIVE' | 'ENDORSED' | 'EXPERIMENTAL' | 'DEPRECATED';
   visibility: 'PROMINENT' | 'NORMAL' | 'HIDDEN';
   icon?: string;
   color?: string;
   classification?: Classification;
+  // US-212: RID of a parent ObjectType this type inherits from (same ontology).
+  extendsRid?: string;
+  // US-264: opts the ObjectType into per-read data-access audit logging.
+  auditDataAccess?: boolean;
   properties?: Record<string, { dataType: DataType; rid: string }>;
 }
 
