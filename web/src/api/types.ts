@@ -236,10 +236,20 @@ export interface ActionApplyRequest {
   options?: ActionApplyOptions;
 }
 
+// ActionBatchApplyOptions narrows the single-apply options for the batch
+// path. The server's ApplyBatch handler (pkg/actions/handlers.go) only
+// accepts returnEdits ∈ {ALL, NONE} and 400s on ALL_V2_WITH_DELETIONS — that
+// mode is single-apply only. Deliberately NOT extending ActionApplyOptions so
+// the broader single-apply returnEdits union can never leak onto the batch
+// wire (which would always round-trip a 400).
+export interface ActionBatchApplyOptions {
+  returnEdits?: 'ALL' | 'NONE';
+}
+
 // ActionBatchApplyRequest is the body shape for applyBatch.
 export interface ActionBatchApplyRequest {
   requests: Array<{ parameters: Record<string, unknown> }>;
-  options?: { returnEdits?: 'ALL' | 'NONE' };
+  options?: ActionBatchApplyOptions;
 }
 
 // BatchApplyActionResponse — Foundry OSv2 response envelope for batch apply.
