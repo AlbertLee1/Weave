@@ -197,6 +197,10 @@ export interface AggregationMetric {
   type: 'min' | 'max' | 'sum' | 'avg' | 'count';
   field?: string;
   name?: string;
+  // direction orders the groupBy result rows by THIS metric's value
+  // ("按聚合值排序"). The backend attaches ordering to a single metric — when
+  // several carry one the first wins — so the UI keeps at most one set.
+  direction?: 'ASC' | 'DESC';
 }
 
 export interface GroupByClause {

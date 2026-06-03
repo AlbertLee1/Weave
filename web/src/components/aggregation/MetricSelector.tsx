@@ -23,6 +23,28 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
     );
   }
 
+  // The backend orders groupBy rows by the FIRST direction-bearing metric, so
+  // the UI enforces a single sort key: setting a direction on one metric clears
+  // it on the others; clearing simply drops it from this metric.
+  function setDirection(index: number, direction: AggregationMetric['direction']) {
+    onChange(
+      metrics.map((m, i) => {
+        if (i === index) {
+          const next = { ...m };
+          if (direction) next.direction = direction;
+          else delete next.direction;
+          return next;
+        }
+        if (direction && m.direction) {
+          const cleared = { ...m };
+          delete cleared.direction;
+          return cleared;
+        }
+        return m;
+      }),
+    );
+  }
+
   const inputClass =
     'bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none';
   const labelClass = 'text-xs text-text-secondary font-sans mb-1';
@@ -91,6 +113,21 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
             data-testid={`metric-${index}-name`}
             className={`${inputClass} w-28`}
           />
+
+          <select
+            value={metric.direction ?? ''}
+            onChange={(e) =>
+              setDirection(index, (e.target.value || undefined) as AggregationMetric['direction'])
+            }
+            data-testid={`metric-${index}-direction`}
+            aria-label="Sort groupBy by this metric"
+            title="Order groupBy result rows by this metric's value"
+            className={`${inputClass} flex-shrink-0 w-28`}
+          >
+            <option value="">No sort</option>
+            <option value="DESC">Sort ↓ DESC</option>
+            <option value="ASC">Sort ↑ ASC</option>
+          </select>
 
           <button
             type="button"
