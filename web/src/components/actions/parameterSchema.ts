@@ -1,6 +1,18 @@
 import { z } from 'zod';
 import type { ActionParameterV2 } from '../../api/types';
 
+// Numeric base types, split by whole-number vs fractional. The backend
+// coercion (pkg/types/coerce.go) accepts a JSON number for ALL of them, but
+// e.g. coerceShort has no `case string` — so a string-valued `short` fails
+// ("cannot coerce string to short"). Hence every numeric type must render a
+// number input and emit a JSON number. Integer-family additionally enforces
+// `.int()` (coerce* rejects a float64 with a fractional part).
+export const INTEGER_PARAM_TYPES = ['integer', 'short', 'long', 'byte'];
+export const FLOAT_PARAM_TYPES = ['double', 'float', 'decimal'];
+export function isNumericParamType(type: string): boolean {
+  return INTEGER_PARAM_TYPES.includes(type) || FLOAT_PARAM_TYPES.includes(type);
+}
+
 // buildParameterZodSchema constructs a Zod schema mirroring the action's
 // declared parameters. It powers client-side field validation in
 // ParameterForm/ActionConsolePage and is intentionally permissive about
@@ -24,9 +36,9 @@ function buildFieldSchema(def: ActionParameterV2): z.ZodTypeAny {
     return z.boolean().optional();
   }
 
-  if (type === 'integer' || type === 'double') {
+  if (isNumericParamType(type)) {
     let field: z.ZodTypeAny = z.number({ message: 'Must be a number' });
-    if (type === 'integer') {
+    if (INTEGER_PARAM_TYPES.includes(type)) {
       field = (field as z.ZodNumber).int('Must be an integer');
     }
     return def.required ? field : field.optional();
@@ -64,7 +76,7 @@ export function buildParameterDefaults(
       out[key] = false;
     } else if (type === 'array') {
       out[key] = [];
-    } else if (type === 'integer' || type === 'double') {
+    } else if (isNumericParamType(type)) {
       out[key] = undefined;
     } else {
       out[key] = '';

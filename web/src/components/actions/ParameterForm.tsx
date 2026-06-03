@@ -4,6 +4,7 @@ import type { ActionParameterV2 } from '../../api/types';
 import { uploadAttachment } from '../../api/attachments';
 import { uploadMedia } from '../../api/media';
 import { useMarkings } from '../../hooks/useMarkings';
+import { INTEGER_PARAM_TYPES, isNumericParamType } from './parameterSchema';
 
 interface ParameterFormProps {
   parameters: Record<string, ActionParameterV2>;
@@ -467,7 +468,8 @@ export function ParameterForm({ parameters }: ParameterFormProps) {
           );
         }
 
-        if (paramType === 'integer' || paramType === 'double') {
+        if (isNumericParamType(paramType)) {
+          const isIntegerFamily = INTEGER_PARAM_TYPES.includes(paramType);
           return (
             <div key={key} className="flex flex-col">
               <label htmlFor={fieldId} className={labelClass}>
@@ -476,14 +478,20 @@ export function ParameterForm({ parameters }: ParameterFormProps) {
               </label>
               <input
                 id={fieldId}
+                data-testid={fieldId}
                 type="number"
-                step={paramType === 'double' ? 'any' : '1'}
+                step={isIntegerFamily ? '1' : 'any'}
                 aria-invalid={errorMessage ? 'true' : 'false'}
                 aria-describedby={errorMessage ? errorId : undefined}
                 {...register(key, {
+                  // Always parseFloat — even for the integer family — so a
+                  // fractional entry (e.g. "1.5" for a short) is preserved and
+                  // rejected by the Zod `.int()` check, mirroring the backend
+                  // coerce* "has fractional part" error. parseInt would silently
+                  // truncate it to a valid integer.
                   setValueAs: (v) => {
                     if (v === '' || v === null || v === undefined) return undefined;
-                    const n = paramType === 'integer' ? parseInt(String(v), 10) : parseFloat(String(v));
+                    const n = parseFloat(String(v));
                     return Number.isNaN(n) ? undefined : n;
                   },
                 })}
