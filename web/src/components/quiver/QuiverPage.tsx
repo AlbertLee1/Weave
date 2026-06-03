@@ -7,6 +7,7 @@ import {
   QuiverWorkbenchView,
   type SeriesSpec,
 } from './QuiverWorkbenchView';
+import { QuiverTransformPanel } from './QuiverTransformPanel';
 import {
   getQuiverDashboard,
   listQuiverDashboards,
@@ -450,10 +451,16 @@ export function QuiverPage() {
             description="Add a series above to plot a time-series overlay."
           />
         ) : (
-          <QuiverWorkbenchView
-            seriesList={seriesList}
-            onRemove={handleRemove}
-          />
+          <>
+            <QuiverWorkbenchView
+              seriesList={seriesList}
+              onRemove={handleRemove}
+            />
+            <QuiverTransformPanel
+              ontologyApiName={ontologyApiName}
+              seriesList={seriesList}
+            />
+          </>
         )}
       </div>
     </div>
