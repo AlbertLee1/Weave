@@ -38,12 +38,23 @@ export interface SearchObjectsParams {
   highlight?: { fields?: string[]; style?: string };
   select: string[];
   facets?: string[];
+  // Bleve fuzzy-matching edit distance (Levenshtein). Sent to the backend as
+  // the `?fuzziness=` query param on /search; valid values are 0, 1 or 2
+  // (pkg/oss/where.MaxFuzziness == 2). 0 disables fuzzy matching, matching
+  // the handler's "fuzziness overrides body" convention. Omitted entirely
+  // when undefined so the backend keeps its default exact-match behaviour.
+  fuzziness?: number;
 }
 
 export function searchObjects(params: SearchObjectsParams): Promise<ObjectPage> {
+  const query = new URLSearchParams();
+  if (params.fuzziness !== undefined) {
+    query.set('fuzziness', String(params.fuzziness));
+  }
+  const qs = query.toString();
   return request<ObjectPage>(
     'POST',
-    `/api/v2/ontologies/${params.ontologyApiName}/objects/${params.objectType}/search`,
+    `/api/v2/ontologies/${params.ontologyApiName}/objects/${params.objectType}/search${qs ? `?${qs}` : ''}`,
     {
       where: params.where,
       pageSize: params.pageSize,
