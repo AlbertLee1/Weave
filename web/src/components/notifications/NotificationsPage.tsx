@@ -1,4 +1,10 @@
-import { useMemo, useState } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 import { Link } from 'react-router';
 import {
   useMarkAllNotificationsRead,
@@ -86,6 +92,10 @@ const TABS: TabSpec[] = [
       n.type === 'system' || !TYPED_TABS.includes(n.type as TypeKey),
   },
 ];
+
+// DOM order of the read-status radiogroup; drives both rendering and the
+// WAI-ARIA radio keyboard handler's index math.
+const READ_FILTERS: ReadFilter[] = ['all', 'unread'];
 
 function tabSpec(key: TypeKey): TabSpec {
   return TABS.find((t) => t.key === key) ?? TABS[0];
@@ -190,6 +200,75 @@ export function NotificationsPage() {
     setReadFilter(rf);
     setPage(0);
   };
+
+  // Roving-tabindex refs so keyboard navigation can move DOM focus to the
+  // activated tab / radio (WAI-ARIA tabs + radio patterns).
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const radioRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // Type-filter tablist (WAI-ARIA tabs pattern): ArrowLeft/Right (+Up/Down
+  // mirror) move between tabs with wrap, Home/End jump to the ends. Moving
+  // focus also activates the tab (automatic activation) — the filtered list
+  // re-renders cheaply, so this is the recommended pattern.
+  const handleTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const last = TABS.length - 1;
+      let nextIndex: number | null = null;
+      switch (event.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          nextIndex = index === last ? 0 : index + 1;
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          nextIndex = index === 0 ? last : index - 1;
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        case 'End':
+          nextIndex = last;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      handleSelectTab(TABS[nextIndex].key);
+      tabRefs.current[nextIndex]?.focus();
+    },
+    [],
+  );
+
+  // Read-status radiogroup (WAI-ARIA radio pattern): ArrowDown/ArrowRight move
+  // to the next radio, ArrowUp/ArrowLeft to the previous (both wrapping), in
+  // each case moving focus AND selecting. Space/Enter selects the focused
+  // radio. preventDefault only fires on keys we handle.
+  const handleRadioKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const last = READ_FILTERS.length - 1;
+      let nextIndex = index;
+      switch (event.key) {
+        case 'ArrowDown':
+        case 'ArrowRight':
+          nextIndex = index === last ? 0 : index + 1;
+          break;
+        case 'ArrowUp':
+        case 'ArrowLeft':
+          nextIndex = index === 0 ? last : index - 1;
+          break;
+        case ' ':
+        case 'Enter':
+          nextIndex = index;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      handleSelectRead(READ_FILTERS[nextIndex]);
+      radioRefs.current[nextIndex]?.focus();
+    },
+    [],
+  );
   const handleMarkAll = () => {
     if (visibleUnread.length === 0) return;
     markAll.mutate(tab.types ?? []);
@@ -245,18 +324,23 @@ export function NotificationsPage() {
           data-testid="notifications-tabs"
           className="flex flex-wrap items-center gap-1"
         >
-          {TABS.map((t) => {
+          {TABS.map((t, index) => {
             const isActive = t.key === activeTab;
             const unread = tabUnreadCounts[t.key];
             return (
               <button
                 key={t.key}
+                ref={(el) => {
+                  tabRefs.current[index] = el;
+                }}
                 type="button"
                 role="tab"
                 aria-selected={isActive}
+                tabIndex={isActive ? 0 : -1}
                 data-testid={`notifications-tab-${t.key}`}
                 data-active={isActive ? 'true' : 'false'}
                 onClick={() => handleSelectTab(t.key)}
+                onKeyDown={(event) => handleTabKeyDown(event, index)}
                 className={[
                   'px-3 py-1.5 text-xs font-medium rounded-md border transition-colors',
                   isActive
@@ -284,17 +368,22 @@ export function NotificationsPage() {
           data-testid="notifications-read-filter"
           className="flex items-center gap-1"
         >
-          {(['all', 'unread'] as ReadFilter[]).map((rf) => {
+          {READ_FILTERS.map((rf, index) => {
             const isActive = rf === readFilter;
             return (
               <button
                 key={rf}
+                ref={(el) => {
+                  radioRefs.current[index] = el;
+                }}
                 type="button"
                 role="radio"
                 aria-checked={isActive}
+                tabIndex={isActive ? 0 : -1}
                 data-testid={`notifications-read-${rf}`}
                 data-active={isActive ? 'true' : 'false'}
                 onClick={() => handleSelectRead(rf)}
+                onKeyDown={(event) => handleRadioKeyDown(event, index)}
                 className={[
                   'px-3 py-1 text-[11px] font-medium rounded-md border transition-colors',
                   isActive
