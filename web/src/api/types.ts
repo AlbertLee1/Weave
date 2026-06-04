@@ -78,6 +78,13 @@ export interface LinkType {
   linkedObjectTypeApiName: string;
   cardinality: 'ONE_TO_ONE' | 'ONE_TO_MANY' | 'MANY_TO_MANY';
   required: boolean;
+  // US-261: when set, this LinkType points at its inverse LinkType (the link
+  // describing the reverse direction), making the relationship bidirectional.
+  // Serialised from pkg/oms LinkType.InverseLinkRID; omitted when empty.
+  inverseLinkRid?: string;
+  // US-261: when true, Markings on linked objects are inherited across this
+  // link. Serialised from pkg/oms LinkType.PropagateMarkings; omitted when false.
+  propagateMarkings?: boolean;
   // VTX-010: Vertex graph rendering tags. See
   // web/src/features/vertex/links/edgeArrowStyle.ts for the recognised
   // values. Omitted on the wire when empty.
