@@ -3,6 +3,7 @@ import {
   createReaction,
   deleteReaction,
   getReactionSummary,
+  getReactionsBatch,
   type ReactionSummary,
 } from '../api/reactions';
 import { ApiRequestError } from '../api/client';
@@ -33,6 +34,51 @@ export function useReactionSummary(targetRid: string | null | undefined) {
       }
     },
     enabled: !!targetRid,
+  });
+}
+
+// useReactionsBatch loads the aggregate view for a whole page of object-list
+// rows in ONE POST /api/v2/reactions/batch (instead of N parallel GETs). The
+// response is index-aligned with the request, so we re-key it into a
+// Map<targetRid, ReactionSummary> for O(1) per-row lookup at render time.
+// Degraded mode (route unmounted / no PG → 404 / ReactionsUnavailable) yields
+// an empty, "unavailable" map so the list renders without a reactions cell
+// instead of erroring. The query key carries the exact RID list so paging to a
+// new page refetches; the list is sorted only for cache stability, never for
+// the request body (which preserves caller order for index alignment).
+export interface ReactionsBatch {
+  byRid: Map<string, ReactionSummary>;
+  available: boolean;
+}
+
+export function useReactionsBatch(targetRids: string[]) {
+  const cleaned = targetRids.filter((r) => !!r);
+  const cacheKey = [...cleaned].sort().join('|');
+  return useQuery<ReactionsBatch>({
+    queryKey: ['reactions', 'batch', cacheKey],
+    queryFn: async () => {
+      try {
+        const resp = await getReactionsBatch(cleaned);
+        const byRid = new Map<string, ReactionSummary>();
+        resp.summaries.forEach((s, i) => {
+          // Trust index alignment first; fall back to the Summary's own
+          // targetRid so a server that echoes RIDs out of order still keys
+          // correctly.
+          const rid = cleaned[i] ?? s.targetRid;
+          byRid.set(rid, s);
+        });
+        return { byRid, available: true };
+      } catch (e) {
+        if (
+          e instanceof ApiRequestError &&
+          (e.statusCode === 404 || e.errorName === 'ReactionsUnavailable')
+        ) {
+          return { byRid: new Map(), available: false };
+        }
+        throw e;
+      }
+    },
+    enabled: cleaned.length > 0,
   });
 }
 

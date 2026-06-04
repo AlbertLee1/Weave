@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 import type { ObjectType, WireObject } from '../../api/types';
+import type { ReactionSummary } from '../../api/reactions';
+import { useReactionsBatch } from '../../hooks/useReactions';
 import { DataTable, type Column } from '../common/DataTable';
 import { truncate } from '../../lib/formatters';
 
@@ -7,6 +9,41 @@ export interface ObjectTableSelection {
   selectedKeys: Set<string>;
   onToggle: (primaryKey: string) => void;
   onToggleAll: (select: boolean) => void;
+}
+
+// rowRid is the canonical reaction/watch/comment target for an object-list row
+// — the same __rid ObjectDetail feeds into ReactionBar/WatchButton/CommentsTab.
+function rowRid(row: WireObject): string {
+  return String(row.__rid ?? '');
+}
+
+// ReactionDigest renders the compact per-row reaction summary shown in the
+// object list: the single highest-count emoji plus the total reaction count
+// across all emojis (e.g. "👍 4"). Rows with no reactions render an empty,
+// muted cell so the column width stays stable without implying "0 reactions"
+// is a clickable affordance. Clicking is intentionally NOT wired here — the
+// full ReactionBar lives in ObjectDetail; the list cell is read-only.
+function ReactionDigest({ summary }: { summary: ReactionSummary | undefined }) {
+  const emojis = summary?.emojis ?? [];
+  if (emojis.length === 0) {
+    return (
+      <span className="text-text-tertiary" aria-hidden="true">
+        —
+      </span>
+    );
+  }
+  // Summaries arrive count-desc, emoji-asc from the store, so emojis[0] is the
+  // top emoji; guard anyway in case a caller passes an unsorted slice.
+  const top = emojis.reduce((a, b) =>
+    b.count > a.count ? b : a,
+  );
+  const total = emojis.reduce((sum, e) => sum + e.count, 0);
+  return (
+    <span className="inline-flex items-center gap-1 font-mono text-xs text-text-secondary">
+      <span aria-hidden="true">{top.emoji}</span>
+      <span>{total}</span>
+    </span>
+  );
 }
 
 interface ObjectTableProps {
@@ -29,6 +66,11 @@ interface ObjectTableProps {
   derivedColumns?: string[];
   sortablePropertyKeys?: ReadonlySet<string>;
   selection?: ObjectTableSelection;
+  // showReactions appends a compact per-row reaction digest column. All visible
+  // rows are fetched with a SINGLE POST /api/v2/reactions/batch (not one GET per
+  // row). Opt-in so bare renders (and pages that don't want the column) neither
+  // pay the request nor require a QueryClientProvider in the tree.
+  showReactions?: boolean;
 }
 
 function getHighlightSnippet(row: WireObject, field: string): string | undefined {
@@ -82,7 +124,34 @@ function renderCellValue(
   return truncate(String(value), 80);
 }
 
-export function ObjectTable({
+// ObjectTable is the public entry point. The reaction batch fetch is mounted
+// only when showReactions is set, so callers (and bare unit renders) that omit
+// it neither issue the request nor need a QueryClientProvider in the tree.
+export function ObjectTable(props: ObjectTableProps) {
+  if (props.showReactions) {
+    return <ObjectTableWithReactions {...props} />;
+  }
+  return <ObjectTableView {...props} reactionsByRid={undefined} />;
+}
+
+// ObjectTableWithReactions issues the SINGLE batched POST /api/v2/reactions/batch
+// covering every visible row RID, then hands the resulting Map down to the view.
+function ObjectTableWithReactions(props: ObjectTableProps) {
+  const targetRids = useMemo(
+    () => props.data.map(rowRid).filter(Boolean),
+    [props.data],
+  );
+  const batch = useReactionsBatch(targetRids);
+  return (
+    <ObjectTableView {...props} reactionsByRid={batch.data?.byRid} />
+  );
+}
+
+interface ObjectTableViewProps extends ObjectTableProps {
+  reactionsByRid: Map<string, ReactionSummary> | undefined;
+}
+
+function ObjectTableView({
   objectType,
   data,
   onRowClick,
@@ -97,7 +166,9 @@ export function ObjectTable({
   derivedColumns,
   sortablePropertyKeys,
   selection,
-}: ObjectTableProps) {
+  showReactions,
+  reactionsByRid,
+}: ObjectTableViewProps) {
   const pageKeys = useMemo(
     () => data.map((row) => String(row.__primaryKey ?? '')).filter(Boolean),
     [data],
@@ -190,8 +261,36 @@ export function ObjectTable({
       }
     }
 
+    // Per-row reactions digest. One column, fed from the single batched fetch
+    // re-keyed by RID — never a per-row request. Read-only; the interactive
+    // ReactionBar stays in ObjectDetail.
+    if (showReactions) {
+      cols.push({
+        key: '__reactions',
+        header: 'Reactions',
+        sortable: false,
+        width: '96px',
+        render: (row) => {
+          const rid = rowRid(row);
+          const summary = rid ? reactionsByRid?.get(rid) : undefined;
+          return (
+            <span data-testid={`row-reactions-${rid}`}>
+              <ReactionDigest summary={summary} />
+            </span>
+          );
+        },
+      });
+    }
+
     return cols;
-  }, [objectType, derivedColumns, sortablePropertyKeys, selection]);
+  }, [
+    objectType,
+    derivedColumns,
+    sortablePropertyKeys,
+    selection,
+    showReactions,
+    reactionsByRid,
+  ]);
 
   return (
     <div>
