@@ -431,6 +431,7 @@ export function QuiverPage() {
         >
           <input
             type="text"
+            aria-label="Object type"
             placeholder="Object type"
             value={draftObjectType}
             onChange={(e) => setDraftObjectType(e.target.value)}
@@ -439,6 +440,7 @@ export function QuiverPage() {
           />
           <input
             type="text"
+            aria-label="Primary key"
             placeholder="Primary key"
             value={draftPrimaryKey}
             onChange={(e) => setDraftPrimaryKey(e.target.value)}
@@ -447,6 +449,7 @@ export function QuiverPage() {
           />
           <input
             type="text"
+            aria-label="Property"
             placeholder="Property"
             value={draftProperty}
             onChange={(e) => setDraftProperty(e.target.value)}
@@ -455,6 +458,7 @@ export function QuiverPage() {
           />
           <input
             type="text"
+            aria-label="Label"
             placeholder="Label (optional)"
             value={draftLabel}
             onChange={(e) => setDraftLabel(e.target.value)}
@@ -463,6 +467,7 @@ export function QuiverPage() {
           />
           <input
             type="text"
+            aria-label="Branch"
             placeholder={`Branch (${activeBranch})`}
             value={draftBranch}
             onChange={(e) => setDraftBranch(e.target.value)}
