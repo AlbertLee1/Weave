@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import { Link, useLocation, useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from '../common/LanguageSwitcher';
@@ -45,7 +51,13 @@ export function Topbar() {
 
   const { theme, preference, setPreference } = useTheme();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  // Wraps the trigger + popup so outside-click detection covers both. The
+  // popup panel and trigger have their own refs for roving focus / refocus.
   const themeMenuRef = useRef<HTMLDivElement | null>(null);
+  // The role="menu" panel — scope for the menuitemradio roving-focus query.
+  const themeMenuPanelRef = useRef<HTMLDivElement | null>(null);
+  // The toggle button — focus is returned here when the menu closes via Escape.
+  const themeTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!themeMenuOpen) return;
@@ -57,6 +69,80 @@ export function Topbar() {
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [themeMenuOpen]);
+
+  // The theme options are the only roving-focus targets inside the panel.
+  // Scoped to the theme menu panel only — never touches BranchPicker or any
+  // other Topbar child.
+  const themeOptionEls = useCallback((): HTMLElement[] => {
+    const panel = themeMenuPanelRef.current;
+    if (!panel) return [];
+    return Array.from(
+      panel.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
+    );
+  }, []);
+
+  // Move roving focus to the next/previous option, wrapping at the ends.
+  const moveThemeFocus = useCallback(
+    (delta: 1 | -1) => {
+      const els = themeOptionEls();
+      if (els.length === 0) return;
+      const activeEl = document.activeElement as HTMLElement | null;
+      const current = activeEl ? els.indexOf(activeEl) : -1;
+      // From outside the list (current === -1) ArrowDown lands on the first
+      // option and ArrowUp on the last.
+      const base = current === -1 ? (delta === 1 ? -1 : 0) : current;
+      const next = (base + delta + els.length) % els.length;
+      els[next]?.focus();
+    },
+    [themeOptionEls],
+  );
+
+  const onThemeMenuKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setThemeMenuOpen(false);
+        themeTriggerRef.current?.focus();
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        moveThemeFocus(1);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        moveThemeFocus(-1);
+        return;
+      }
+      if (e.key === 'Home') {
+        e.preventDefault();
+        themeOptionEls()[0]?.focus();
+        return;
+      }
+      if (e.key === 'End') {
+        e.preventDefault();
+        const els = themeOptionEls();
+        els[els.length - 1]?.focus();
+      }
+    },
+    [moveThemeFocus, themeOptionEls],
+  );
+
+  // On open, move focus onto the active (aria-checked) option, or the first
+  // one, so Arrow keys have a starting anchor and screen readers announce the
+  // menu. Don't yank focus once the user has started navigating.
+  useEffect(() => {
+    if (!themeMenuOpen) return;
+    const els = themeOptionEls();
+    if (els.length === 0) return;
+    const activeEl = document.activeElement as HTMLElement | null;
+    if (activeEl && els.includes(activeEl)) return;
+    const target =
+      els.find((el) => el.getAttribute('aria-checked') === 'true') ?? els[0];
+    target.focus();
+  }, [themeMenuOpen, themeOptionEls]);
 
   return (
     <header
@@ -98,6 +184,7 @@ export function Topbar() {
         <BranchPicker ontologyApiName={activeOntology} />
         <div ref={themeMenuRef} className="relative">
           <button
+            ref={themeTriggerRef}
             type="button"
             aria-label={t('theme.label')}
             aria-haspopup="menu"
@@ -147,9 +234,11 @@ export function Topbar() {
           </button>
           {themeMenuOpen && (
             <div
+              ref={themeMenuPanelRef}
               role="menu"
               aria-label={t('theme.label')}
               data-testid="theme-menu"
+              onKeyDown={onThemeMenuKeyDown}
               className="absolute right-0 mt-1 min-w-[160px] rounded border border-border bg-bg-primary shadow-lg z-10"
             >
               {THEME_OPTION_VALUES.map((value) => {
