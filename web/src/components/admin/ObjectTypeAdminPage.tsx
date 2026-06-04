@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import type {
@@ -715,6 +715,23 @@ interface EditFormState {
   eventEndProp: string;
 }
 
+type EditTabId =
+  | 'details'
+  | 'properties'
+  | 'bindings'
+  | 'resolved'
+  | 'history';
+
+// Tablist definition, in DOM/visual order. Drives both rendering and the
+// WAI-ARIA arrow-key navigation (automatic activation) below.
+const EDIT_TABS: ReadonlyArray<{ id: EditTabId; label: string }> = [
+  { id: 'details', label: 'Details' },
+  { id: 'properties', label: 'Properties' },
+  { id: 'bindings', label: 'Bindings' },
+  { id: 'resolved', label: 'Resolved' },
+  { id: 'history', label: 'History' },
+];
+
 function EditObjectTypeModal({
   ontologyApiName,
   objectType,
@@ -727,9 +744,44 @@ function EditObjectTypeModal({
   onClose: () => void;
 }) {
   const update = useUpdateObjectType(ontologyApiName);
-  const [tab, setTab] = useState<
-    'details' | 'properties' | 'bindings' | 'resolved' | 'history'
-  >('details');
+  const [tab, setTab] = useState<EditTabId>('details');
+  const tablistRef = useRef<HTMLDivElement>(null);
+
+  // WAI-ARIA "Tabs with automatic activation" keyboard contract. ArrowLeft/
+  // ArrowRight move (wrapping) to the previous/next tab; Home/End jump to the
+  // first/last. Activation follows focus, and we move DOM focus to the target
+  // tab so the roving tabindex stays consistent. Scoped to the 5-tab tablist
+  // only — it never touches the edit form fields below.
+  function onTabKeyDown(
+    e: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) {
+    let nextIndex: number | null = null;
+    switch (e.key) {
+      case 'ArrowRight':
+        nextIndex = (index + 1) % EDIT_TABS.length;
+        break;
+      case 'ArrowLeft':
+        nextIndex = (index - 1 + EDIT_TABS.length) % EDIT_TABS.length;
+        break;
+      case 'Home':
+        nextIndex = 0;
+        break;
+      case 'End':
+        nextIndex = EDIT_TABS.length - 1;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    const next = EDIT_TABS[nextIndex];
+    setTab(next.id);
+    tablistRef.current
+      ?.querySelector<HTMLButtonElement>(
+        `[data-testid="object-type-edit-tab-${next.id}"]`,
+      )
+      ?.focus();
+  }
   const [form, setForm] = useState<EditFormState>({
     displayName: objectType.displayName,
     pluralDisplayName: objectType.pluralDisplayName ?? '',
@@ -825,81 +877,36 @@ function EditObjectTypeModal({
   return (
     <Modal open onClose={onClose} title={`Edit: ${objectType.displayName}`} size="xl">
       <div
+        ref={tablistRef}
         data-testid="object-type-edit-tabs"
         className="flex gap-2 border-b mb-4"
         style={{ borderColor: 'rgba(31,41,55,0.5)' }}
         role="tablist"
       >
-        <button
-          type="button"
-          role="tab"
-          data-testid="object-type-edit-tab-details"
-          aria-selected={tab === 'details'}
-          onClick={() => setTab('details')}
-          className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
-            tab === 'details'
-              ? 'border-accent-cyan text-accent-cyan'
-              : 'border-transparent text-text-secondary hover:text-text-primary'
-          }`}
-        >
-          Details
-        </button>
-        <button
-          type="button"
-          role="tab"
-          data-testid="object-type-edit-tab-properties"
-          aria-selected={tab === 'properties'}
-          onClick={() => setTab('properties')}
-          className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
-            tab === 'properties'
-              ? 'border-accent-cyan text-accent-cyan'
-              : 'border-transparent text-text-secondary hover:text-text-primary'
-          }`}
-        >
-          Properties
-        </button>
-        <button
-          type="button"
-          role="tab"
-          data-testid="object-type-edit-tab-bindings"
-          aria-selected={tab === 'bindings'}
-          onClick={() => setTab('bindings')}
-          className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
-            tab === 'bindings'
-              ? 'border-accent-cyan text-accent-cyan'
-              : 'border-transparent text-text-secondary hover:text-text-primary'
-          }`}
-        >
-          Bindings
-        </button>
-        <button
-          type="button"
-          role="tab"
-          data-testid="object-type-edit-tab-resolved"
-          aria-selected={tab === 'resolved'}
-          onClick={() => setTab('resolved')}
-          className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
-            tab === 'resolved'
-              ? 'border-accent-cyan text-accent-cyan'
-              : 'border-transparent text-text-secondary hover:text-text-primary'
-          }`}
-        >
-          Resolved
-        </button>
-        <button
-          type="button"
-          role="tab"
-          data-testid="object-type-edit-tab-history"
-          aria-selected={tab === 'history'}
-          onClick={() => setTab('history')}
-          className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
-            tab === 'history'
-              ? 'border-accent-cyan text-accent-cyan'
-              : 'border-transparent text-text-secondary hover:text-text-primary'
-          }`}
-        >
-          History
-        </button>
+        {EDIT_TABS.map(({ id, label }, index) => {
+          const selected = tab === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              data-testid={`object-type-edit-tab-${id}`}
+              aria-selected={selected}
+              // Roving tabindex: only the active tab is in the Tab order; the
+              // rest are reachable via the arrow keys handled below.
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setTab(id)}
+              onKeyDown={(e) => onTabKeyDown(e, index)}
+              className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
+                selected
+                  ? 'border-accent-cyan text-accent-cyan'
+                  : 'border-transparent text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
       {tab === 'properties' ? (
         <PropertiesEditor

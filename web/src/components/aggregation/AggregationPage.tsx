@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo } from 'react';
+import { useCallback, useRef, useState, useMemo, type KeyboardEvent } from 'react';
 import { useParams } from 'react-router';
 import { useObjectType } from '../../hooks/useObjectTypes';
 import { useAggregation } from '../../hooks/useAggregation';
@@ -139,6 +139,42 @@ export function AggregationPage() {
   const handleLiveSnapshot = useCallback((snapshot: AggregationResponse) => {
     setLiveResult(snapshot);
   }, []);
+
+  // Roving-tabindex refs for the chart-type tablist so keyboard navigation can
+  // move DOM focus to the activated tab (WAI-ARIA tabs pattern).
+  const chartTabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // ArrowLeft/Right move between tabs (wrapping), Home/End jump to the ends.
+  // Activation is automatic: moving focus also selects (setChartType), which is
+  // the recommended pattern for tablists whose panels render cheaply.
+  const handleChartTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const last = CHART_TYPES.length - 1;
+      let nextIndex: number | null = null;
+      switch (event.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          nextIndex = index === last ? 0 : index + 1;
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          nextIndex = index === 0 ? last : index - 1;
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        case 'End':
+          nextIndex = last;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      setChartType(CHART_TYPES[nextIndex]);
+      chartTabRefs.current[nextIndex]?.focus();
+    },
+    [],
+  );
 
   useAggregationSubscription(ontology ?? '', {
     objectType: objectType ?? '',
@@ -472,16 +508,21 @@ export function AggregationPage() {
                     data-testid="aggregation-chart-type-tabs"
                     className="inline-flex overflow-hidden rounded border border-border bg-bg-primary"
                   >
-                    {CHART_TYPES.map((type) => {
+                    {CHART_TYPES.map((type, index) => {
                       const selected = chartType === type;
                       return (
                         <button
                           key={type}
+                          ref={(el) => {
+                            chartTabRefs.current[index] = el;
+                          }}
                           type="button"
                           role="tab"
                           aria-selected={selected}
+                          tabIndex={selected ? 0 : -1}
                           data-testid={`aggregation-chart-type-${type}`}
                           onClick={() => setChartType(type)}
+                          onKeyDown={(event) => handleChartTabKeyDown(event, index)}
                           className={
                             selected
                               ? 'px-3 py-1.5 text-xs font-medium capitalize text-bg-primary bg-accent-cyan'
