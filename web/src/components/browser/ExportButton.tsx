@@ -1,4 +1,10 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  type KeyboardEvent,
+} from 'react';
 import {
   exportObjects,
   type ExportFormat,
@@ -24,8 +30,83 @@ export function ExportButton({
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const disabledDescriptionId =
     disabled && disabledReason ? 'export-disabled-reason' : undefined;
+
+  const getMenuItems = useCallback(
+    () =>
+      Array.from(
+        menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+      ),
+    [],
+  );
+
+  const closeMenu = useCallback((restoreFocus: boolean) => {
+    setOpen(false);
+    if (restoreFocus) {
+      triggerRef.current?.focus();
+    }
+  }, []);
+
+  // When the menu opens, move focus to the first menu item (WAI-ARIA menu pattern).
+  useEffect(() => {
+    if (!open || busy) return;
+    const items = getMenuItems();
+    items[0]?.focus();
+  }, [open, busy, getMenuItems]);
+
+  const handleMenuKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      const items = getMenuItems();
+      if (items.length === 0) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeMenu(true);
+        }
+        return;
+      }
+
+      const activeIndex = items.findIndex(
+        (item) => item === document.activeElement,
+      );
+
+      switch (e.key) {
+        case 'ArrowDown': {
+          e.preventDefault();
+          const next = activeIndex < 0 ? 0 : (activeIndex + 1) % items.length;
+          items[next]?.focus();
+          break;
+        }
+        case 'ArrowUp': {
+          e.preventDefault();
+          const prev =
+            activeIndex <= 0 ? items.length - 1 : activeIndex - 1;
+          items[prev]?.focus();
+          break;
+        }
+        case 'Home': {
+          e.preventDefault();
+          items[0]?.focus();
+          break;
+        }
+        case 'End': {
+          e.preventDefault();
+          items[items.length - 1]?.focus();
+          break;
+        }
+        case 'Escape': {
+          e.preventDefault();
+          closeMenu(true);
+          break;
+        }
+        default:
+          break;
+      }
+    },
+    [getMenuItems, closeMenu],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -65,6 +146,7 @@ export function ExportButton({
   return (
     <div ref={rootRef} className="relative inline-block">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => {
           if (disabled) return;
@@ -111,7 +193,10 @@ export function ExportButton({
 
       {open && !busy && (
         <div
+          ref={menuRef}
           role="menu"
+          aria-orientation="vertical"
+          onKeyDown={handleMenuKeyDown}
           className="absolute right-0 mt-1 min-w-[160px] rounded border border-border bg-bg-primary shadow-lg z-10"
         >
           <button

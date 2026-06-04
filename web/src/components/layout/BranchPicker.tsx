@@ -1,3 +1,4 @@
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -60,6 +61,11 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
     { id: string; name: string } | null
   >(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  // The dropdown panel (role="menu"). Used to query the branch-item buttons
+  // for roving focus and to move focus onto the first/active item on open.
+  const menuPanelRef = useRef<HTMLDivElement | null>(null);
+  // The toggle button — focus is returned here when the menu closes via Escape.
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const queryClient = useQueryClient();
 
   const activeBranch = useBranchStore((s) =>
@@ -105,6 +111,81 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [open, closeMenu]);
+
+  // Close the menu and hand focus back to the trigger button. Used by the
+  // Escape key handler so keyboard users are not stranded with no focus.
+  const closeAndRefocusTrigger = useCallback(() => {
+    closeMenu();
+    triggerRef.current?.focus();
+  }, [closeMenu]);
+
+  // The branch rows are the only roving-focus targets. The create form,
+  // create toggle and per-row delete buttons are intentionally excluded so
+  // Arrow keys don't disrupt form entry (WAI-ARIA menu radio items only).
+  const branchItemEls = useCallback((): HTMLElement[] => {
+    const panel = menuPanelRef.current;
+    if (!panel) return [];
+    return Array.from(
+      panel.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
+    );
+  }, []);
+
+  // Move roving focus to the next/previous branch item, wrapping at the ends.
+  const moveBranchFocus = useCallback(
+    (delta: 1 | -1) => {
+      const els = branchItemEls();
+      if (els.length === 0) return;
+      const activeEl = document.activeElement as HTMLElement | null;
+      const current = activeEl ? els.indexOf(activeEl) : -1;
+      // From outside the list (current === -1) ArrowDown lands on the first
+      // item and ArrowUp on the last.
+      const base = current === -1 ? (delta === 1 ? -1 : 0) : current;
+      const next = (base + delta + els.length) % els.length;
+      els[next]?.focus();
+    },
+    [branchItemEls],
+  );
+
+  const onMenuKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeAndRefocusTrigger();
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        moveBranchFocus(1);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        moveBranchFocus(-1);
+      }
+    },
+    [closeAndRefocusTrigger, moveBranchFocus],
+  );
+
+  // On open, move focus onto the active branch item (or the first one) so the
+  // Arrow keys have a starting anchor and screen readers announce the menu.
+  // Re-runs when the resolved item list changes so focus also lands once the
+  // branches finish loading. Skipped while the inline create form is open so
+  // typing in it is never interrupted.
+  useEffect(() => {
+    if (!open || creating) return;
+    const els = branchItemEls();
+    if (els.length === 0) return;
+    const activeEl = document.activeElement as HTMLElement | null;
+    // Don't yank focus if it already sits on a branch item (e.g. after the
+    // user has started navigating with the Arrow keys).
+    if (activeEl && els.includes(activeEl)) return;
+    const target =
+      els.find(
+        (el) => el.getAttribute('data-testid') === `branch-picker-option-${activeBranch}`,
+      ) ?? els[0];
+    target.focus();
+  }, [open, creating, activeBranch, branchItemEls, items]);
 
   if (!ontologyApiName) return null;
 
@@ -169,6 +250,7 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
     <>
     <div ref={menuRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         aria-label={t('branch.label')}
         aria-haspopup="menu"
@@ -209,9 +291,11 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
       </button>
       {open && (
         <div
+          ref={menuPanelRef}
           role="menu"
           aria-label={t('branch.label')}
           data-testid="branch-picker-menu"
+          onKeyDown={onMenuKeyDown}
           className="absolute right-0 mt-1 min-w-[220px] max-h-72 overflow-y-auto rounded border border-border bg-bg-primary shadow-lg z-10"
         >
           {isLoading && items.length <= 1 ? (
