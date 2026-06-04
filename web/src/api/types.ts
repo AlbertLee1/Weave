@@ -679,6 +679,13 @@ export interface OntologyBranch {
   updatedAt: string;
 }
 
+// BranchDetailResponse mirrors pkg/oms/handlers_branch.go BranchDetailResponse:
+// the embedded OntologyBranch plus the pending change count (len of the
+// branch's branch_changes overlay) returned by GET /branches/{branchId}.
+export interface BranchDetailResponse extends OntologyBranch {
+  changeCount: number;
+}
+
 // --- US-385 / US-387 Branch Reconcile (mirrors pkg/oms/handlers_branch_merge.go) ---
 
 export interface AnnotatedDiffEntry {
