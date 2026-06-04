@@ -170,7 +170,15 @@ export function QuiverPage() {
   const deleteMutation = useMutation({
     mutationFn: deleteQuiverDashboard,
     onSuccess: () => {
+      setSaveError(null);
       queryClient.invalidateQueries({ queryKey: QUIVER_DASHBOARDS_KEY });
+    },
+    onError: (err: unknown) => {
+      if (err instanceof ApiRequestError) {
+        setSaveError(`${err.errorName}: ${JSON.stringify(err.parameters ?? {})}`);
+      } else {
+        setSaveError(String(err));
+      }
     },
   });
 
@@ -372,11 +380,24 @@ export function QuiverPage() {
                 <button
                   type="button"
                   onClick={() => deleteMutation.mutate(d.rid)}
-                  className="text-text-muted hover:text-accent-error"
+                  disabled={
+                    deleteMutation.isPending &&
+                    deleteMutation.variables === d.rid
+                  }
+                  className="text-text-muted hover:text-accent-error disabled:opacity-40 disabled:cursor-not-allowed"
                   aria-label={`Delete ${d.name}`}
+                  title={
+                    deleteMutation.isPending &&
+                    deleteMutation.variables === d.rid
+                      ? 'Deleting…'
+                      : `Delete ${d.name}`
+                  }
                   data-testid={`quiver-delete-${d.rid}`}
                 >
-                  ×
+                  {deleteMutation.isPending &&
+                  deleteMutation.variables === d.rid
+                    ? '…'
+                    : '×'}
                 </button>
               </span>
             ))}
