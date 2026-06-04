@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router';
 import type {
   InterfaceOutgoingLinkType,
@@ -47,6 +47,14 @@ const BASE_TYPES = [
 ] as const;
 
 const LINK_CARDINALITIES = ['ONE', 'MANY'] as const;
+
+// Edit-modal tablist order (DOM order). Drives the roving-tabindex render
+// and the WAI-ARIA keyboard handler in InterfaceBuilderModal.
+const EDIT_TABS = [
+  { id: 'definition', label: 'Definition' },
+  { id: 'methods', label: 'Methods' },
+] as const;
+type EditTabId = (typeof EDIT_TABS)[number]['id'];
 
 export function InterfaceAdminPage() {
   const { ontology } = useParams<{ ontology: string }>();
@@ -472,7 +480,53 @@ function InterfaceBuilderModal({
   // US-498: edit-mode modal grows a Methods tab that hosts CRUD + invoke
   // for InterfaceMethods. Create mode keeps the single-form layout
   // because methods need the interface RID to exist first.
-  const [tab, setTab] = useState<'definition' | 'methods'>('definition');
+  const [tab, setTab] = useState<EditTabId>('definition');
+  const tablistRef = useRef<HTMLDivElement>(null);
+  // Once the user drives the tablist (keyboard or click), stop autofocusing
+  // the Definition form's Display Name input when that panel remounts. This
+  // keeps the modal's initial-open autofocus UX intact while letting the
+  // roving-tabindex keyboard handler retain focus on the active tab.
+  const tabNavigatedRef = useRef(false);
+
+  // WAI-ARIA "Tabs with automatic activation" keyboard contract. ArrowLeft/
+  // ArrowRight (with ArrowUp/ArrowDown mirrors) move (wrapping) to the
+  // previous/next tab; Home/End jump to the first/last. Activation follows
+  // focus, and we move DOM focus to the target tab so the roving tabindex
+  // stays consistent. Scoped to the 2-tab tablist only — it never touches
+  // the edit form fields below.
+  function onTabKeyDown(
+    e: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) {
+    let nextIndex: number | null = null;
+    switch (e.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        nextIndex = (index + 1) % EDIT_TABS.length;
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        nextIndex = (index - 1 + EDIT_TABS.length) % EDIT_TABS.length;
+        break;
+      case 'Home':
+        nextIndex = 0;
+        break;
+      case 'End':
+        nextIndex = EDIT_TABS.length - 1;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    tabNavigatedRef.current = true;
+    const next = EDIT_TABS[nextIndex];
+    setTab(next.id);
+    tablistRef.current
+      ?.querySelector<HTMLButtonElement>(
+        `[data-testid="interface-edit-tab-${next.id}"]`,
+      )
+      ?.focus();
+  }
   return (
     <Modal
       open
@@ -482,39 +536,39 @@ function InterfaceBuilderModal({
     >
       {isEdit && (
         <div
+          ref={tablistRef}
           data-testid="interface-edit-tabs"
           className="flex gap-2 border-b mb-4"
           style={{ borderColor: 'rgba(31,41,55,0.5)' }}
           role="tablist"
         >
-          <button
-            type="button"
-            role="tab"
-            data-testid="interface-edit-tab-definition"
-            aria-selected={tab === 'definition'}
-            onClick={() => setTab('definition')}
-            className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
-              tab === 'definition'
-                ? 'border-accent-cyan text-accent-cyan'
-                : 'border-transparent text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            Definition
-          </button>
-          <button
-            type="button"
-            role="tab"
-            data-testid="interface-edit-tab-methods"
-            aria-selected={tab === 'methods'}
-            onClick={() => setTab('methods')}
-            className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
-              tab === 'methods'
-                ? 'border-accent-cyan text-accent-cyan'
-                : 'border-transparent text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            Methods
-          </button>
+          {EDIT_TABS.map(({ id, label }, index) => {
+            const selected = tab === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                data-testid={`interface-edit-tab-${id}`}
+                aria-selected={selected}
+                // Roving tabindex: only the active tab is in the Tab order;
+                // the rest are reachable via the arrow keys handled below.
+                tabIndex={selected ? 0 : -1}
+                onClick={() => {
+                  tabNavigatedRef.current = true;
+                  setTab(id);
+                }}
+                onKeyDown={(e) => onTabKeyDown(e, index)}
+                className={`px-3 py-1.5 text-xs font-semibold border-b-2 -mb-px ${
+                  selected
+                    ? 'border-accent-cyan text-accent-cyan'
+                    : 'border-transparent text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       )}
       {isEdit && tab === 'methods' ? (
@@ -537,7 +591,10 @@ function InterfaceBuilderModal({
               value={form.displayName}
               onChange={(e) => updateDisplayName(e.target.value)}
               required
-              autoFocus
+              // Autofocus only on the modal's first open, not when the
+              // Definition panel remounts after a tab round-trip — otherwise
+              // it would steal focus from the active tab (a11y keyboard nav).
+              autoFocus={!tabNavigatedRef.current}
               className={inputClass}
             />
           </Field>
