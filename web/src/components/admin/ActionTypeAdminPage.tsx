@@ -347,10 +347,14 @@ interface BuilderState {
   // it is split into a string[] on submit.
   requiresApproval: boolean;
   approvers: string;
-  // submissionCriteria / parameterSchema are raw JSON text the author edits
-  // directly; they are parsed (and surfaced as inline errors) on submit.
+  // submissionCriteria / parameterSchema / sideEffects are raw JSON text the
+  // author edits directly; they are parsed (and surfaced as inline errors) on
+  // submit.
   submissionCriteria: string;
   parameterSchema: string;
+  // sideEffects is the raw JSON list of webhook/notification side effects the
+  // backend runs after a successful apply. Edit-only (UpdateActionTypeRequest).
+  sideEffects: string;
   // compensateActionRid points at another ActionType in the same ontology
   // (US-239). Empty means no compensation pairing.
   compensateActionRid: string;
@@ -414,6 +418,7 @@ function initialStateFromAction(
       approvers: '',
       submissionCriteria: '',
       parameterSchema: '',
+      sideEffects: '',
       compensateActionRid: '',
       implementsMethodRid: '',
     };
@@ -465,6 +470,7 @@ function initialStateFromAction(
     approvers: (at.approvers ?? []).join(', '),
     submissionCriteria: jsonToEditorText(at.submissionCriteria),
     parameterSchema: jsonToEditorText(at.parameterSchema),
+    sideEffects: jsonToEditorText(at.sideEffects),
     compensateActionRid: at.compensateActionRid ?? '',
     // implementsMethodRid is not on the typed read model yet; read it
     // defensively off the wire object so an existing binding pre-loads.
@@ -546,6 +552,7 @@ function ActionTypeBuilderModal({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [criteriaError, setCriteriaError] = useState<string | null>(null);
   const [schemaError, setSchemaError] = useState<string | null>(null);
+  const [sideEffectsError, setSideEffectsError] = useState<string | null>(null);
 
   const apiNameTaken = useMemo(
     () =>
@@ -659,7 +666,12 @@ function ActionTypeBuilderModal({
       form.parameterSchema,
       setSchemaError,
     );
-    if (submissionCriteria === INVALID_JSON || parameterSchema === INVALID_JSON) {
+    const sideEffects = parseOptionalJson(form.sideEffects, setSideEffectsError);
+    if (
+      submissionCriteria === INVALID_JSON ||
+      parameterSchema === INVALID_JSON ||
+      sideEffects === INVALID_JSON
+    ) {
       return;
     }
 
@@ -686,6 +698,10 @@ function ActionTypeBuilderModal({
           // make clearing an existing binding impossible.
           implementsMethodRid,
           ...(submissionCriteria !== undefined ? { submissionCriteria } : {}),
+          // sideEffects only lives on UpdateActionTypeRequest, and the server
+          // persists it solely when non-empty (omitempty), so only send it when
+          // the editor holds valid JSON. An empty editor omits the key.
+          ...(sideEffects !== undefined ? { sideEffects } : {}),
         };
         await update.mutateAsync({ rid: editing.rid, body });
       } else {
@@ -896,6 +912,29 @@ function ActionTypeBuilderModal({
               spellCheck={false}
               rows={6}
               placeholder={'{\n  "type": "parameterMatch",\n  "value": { "parameter": "status", "operator": "eq", "value": "active" }\n}'}
+              className={inputClass + ' font-mono text-xs'}
+            />
+          </Field>
+        </Section>
+
+        <Section
+          title="Side Effects"
+          testId="action-type-side-effects-section"
+        >
+          <Field
+            label="Side Effects (JSON)"
+            hint="Optional list of webhook / notification side effects the server runs after a successful apply. Edit-only; leave blank for none."
+            error={sideEffectsError ?? undefined}
+          >
+            <textarea
+              data-testid="action-type-side-effects"
+              value={form.sideEffects}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, sideEffects: e.target.value }))
+              }
+              spellCheck={false}
+              rows={6}
+              placeholder={'[\n  { "type": "webhook", "url": "https://hooks.example.com/applied" }\n]'}
               className={inputClass + ' font-mono text-xs'}
             />
           </Field>
