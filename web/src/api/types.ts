@@ -474,6 +474,10 @@ export interface QueryType {
   output: unknown;
   query: unknown;
   status: string;
+  // functionRid points at the embedded Function backing a function-backed
+  // QueryType (pkg/oms.QueryType.FunctionRID -> wire["functionRid"]).
+  // Absent for non-function-backed queries.
+  functionRid?: string;
 }
 
 // --- ObjectSet Definition (mirrors pkg/oss/objectset/definition.go) ---

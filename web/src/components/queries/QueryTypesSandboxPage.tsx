@@ -394,6 +394,17 @@ export function QueryTypesSandboxPage() {
                     {selectedQueryType.description}
                   </p>
                 )}
+                {selectedQueryType.functionRid && (
+                  <p
+                    data-testid="query-type-function-rid"
+                    className="text-[10px] uppercase tracking-wider text-text-secondary mt-2"
+                  >
+                    Function:{' '}
+                    <span className="font-mono normal-case tracking-normal text-text-primary">
+                      {selectedQueryType.functionRid}
+                    </span>
+                  </p>
+                )}
               </div>
 
               <FormProvider {...form}>
