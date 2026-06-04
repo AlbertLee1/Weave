@@ -25,6 +25,10 @@ export interface MarkAllReadResponse {
   updated: number;
 }
 
+export interface UnreadCountResponse {
+  count: number;
+}
+
 export function listNotifications(
   options: ListNotificationsOptions = {},
 ): Promise<ListNotificationsResponse> {
@@ -40,6 +44,20 @@ export function listNotifications(
   return request<ListNotificationsResponse>(
     'GET',
     `/api/v2/notifications${qs ? `?${qs}` : ''}`,
+  );
+}
+
+/**
+ * Fetch the caller's unread notification count from the dedicated O(1)
+ * endpoint (`GET /api/v2/notifications/unread-count`). The backend handler
+ * (GetNotificationsUnreadCount) returns the minimal `{"count": <int>}` shape
+ * backed by a partial index, so the navbar badge never has to load the full
+ * unread list just to render a number.
+ */
+export function getNotificationsUnreadCount(): Promise<UnreadCountResponse> {
+  return request<UnreadCountResponse>(
+    'GET',
+    '/api/v2/notifications/unread-count',
   );
 }
 

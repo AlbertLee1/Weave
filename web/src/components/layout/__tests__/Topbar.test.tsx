@@ -7,11 +7,21 @@ import { Topbar } from '../Topbar';
 
 const NOW = new Date('2026-04-18T12:00:00Z');
 
+// The badge now reads its number from the dedicated O(1)
+// `/notifications/unread-count` endpoint ({"count": <int>}) rather than
+// counting the full unread list. We still accept an `items` array for the
+// existing call sites and derive the count from its length so these
+// scenarios keep expressing intent in terms of "N unread notifications".
 function stubNotifications(items: unknown[]) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/api/v2/notifications/unread-count')) {
+        return new Response(JSON.stringify({ count: items.length }), {
+          status: 200,
+        });
+      }
       if (url.includes('/api/v2/notifications')) {
         return new Response(JSON.stringify({ data: items }), { status: 200 });
       }
