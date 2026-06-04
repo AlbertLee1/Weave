@@ -45,6 +45,19 @@ function renderPage(initialPath = '/quiver/test') {
   );
 }
 
+// Deleting now goes through a confirmation gate: clicking the row's × opens a
+// dialog, and only the dialog's destructive Delete button fires the request.
+// This helper drives that two-step flow so the error/disabled/success
+// assertions below still exercise the same deleteMutation.
+async function clickDeleteAndConfirm() {
+  const deleteBtn = await screen.findByTestId(
+    `quiver-delete-${SAVED_DASHBOARD.rid}`,
+  );
+  fireEvent.click(deleteBtn);
+  const confirmBtn = await screen.findByTestId('quiver-delete-confirm-confirm');
+  fireEvent.click(confirmBtn);
+}
+
 describe('BDD: QuiverPage dashboard delete error handling', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -78,10 +91,7 @@ describe('BDD: QuiverPage dashboard delete error handling', () => {
 
     renderPage();
 
-    const deleteBtn = await screen.findByTestId(
-      `quiver-delete-${SAVED_DASHBOARD.rid}`,
-    );
-    fireEvent.click(deleteBtn);
+    await clickDeleteAndConfirm();
 
     const errorBox = await screen.findByTestId('quiver-save-error');
     expect(errorBox).toHaveTextContent('DeleteNotPermitted');
@@ -97,10 +107,7 @@ describe('BDD: QuiverPage dashboard delete error handling', () => {
 
     renderPage();
 
-    const deleteBtn = await screen.findByTestId(
-      `quiver-delete-${SAVED_DASHBOARD.rid}`,
-    );
-    fireEvent.click(deleteBtn);
+    await clickDeleteAndConfirm();
 
     const errorBox = await screen.findByTestId('quiver-save-error');
     expect(errorBox).toHaveTextContent('network down');
@@ -125,7 +132,8 @@ describe('BDD: QuiverPage dashboard delete error handling', () => {
     );
     expect(deleteBtn).not.toBeDisabled();
 
-    fireEvent.click(deleteBtn);
+    // Confirm through the gate so the in-flight delete actually starts.
+    await clickDeleteAndConfirm();
 
     await waitFor(() => {
       expect(
@@ -148,10 +156,7 @@ describe('BDD: QuiverPage dashboard delete error handling', () => {
 
     renderPage();
 
-    const deleteBtn = await screen.findByTestId(
-      `quiver-delete-${SAVED_DASHBOARD.rid}`,
-    );
-    fireEvent.click(deleteBtn);
+    await clickDeleteAndConfirm();
 
     await waitFor(() => {
       expect(quiverMocks.deleteQuiverDashboard).toHaveBeenCalled();

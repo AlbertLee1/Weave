@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { EmptyState } from '../common/EmptyState';
+import { Modal } from '../common/Modal';
 import { pickColor } from '../../utils/quiverAggregation';
 import {
   QuiverWorkbenchView,
@@ -98,6 +99,14 @@ export function QuiverPage() {
   const [dashboardRID, setDashboardRID] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // Confirmation gate for the destructive delete: deleting a dashboard is
+  // irreversible, so clicking a row's × only stages the target here; the
+  // actual deleteMutation only fires once the user confirms in the dialog.
+  const [pendingDelete, setPendingDelete] = useState<{
+    rid: string;
+    name: string;
+  } | null>(null);
+
   // Picker form state
   const [draftObjectType, setDraftObjectType] = useState('');
   const [draftPrimaryKey, setDraftPrimaryKey] = useState('');
@@ -181,6 +190,15 @@ export function QuiverPage() {
       }
     },
   });
+
+  function handleConfirmDelete() {
+    if (!pendingDelete) return;
+    const rid = pendingDelete.rid;
+    setPendingDelete(null);
+    // Same mutation as before: preserves onError surfacing, the per-row
+    // in-flight disabled state, and the success-path list invalidation.
+    deleteMutation.mutate(rid);
+  }
 
   function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -379,7 +397,9 @@ export function QuiverPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => deleteMutation.mutate(d.rid)}
+                  onClick={() =>
+                    setPendingDelete({ rid: d.rid, name: d.name })
+                  }
                   disabled={
                     deleteMutation.isPending &&
                     deleteMutation.variables === d.rid
@@ -484,6 +504,40 @@ export function QuiverPage() {
           </>
         )}
       </div>
+
+      <Modal
+        open={pendingDelete !== null}
+        onClose={() => setPendingDelete(null)}
+        title="Delete dashboard"
+      >
+        <div data-testid="quiver-delete-confirm" className="flex flex-col gap-5">
+          <p className="text-sm text-text-secondary leading-relaxed">
+            Delete dashboard{' '}
+            <span className="font-medium text-text-primary">
+              &ldquo;{pendingDelete?.name}&rdquo;
+            </span>
+            ? This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setPendingDelete(null)}
+              data-testid="quiver-delete-confirm-cancel"
+              className="px-3 py-1.5 text-sm border border-border rounded text-text-secondary hover:text-text-primary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDelete}
+              data-testid="quiver-delete-confirm-confirm"
+              className="px-3 py-1.5 text-sm rounded font-medium bg-accent-error text-bg-primary hover:opacity-80"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
