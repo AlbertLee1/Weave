@@ -57,6 +57,7 @@ import {
   VertexAddObjectsDialog,
   type AddedObjectInput,
 } from './VertexAddObjectsDialog';
+import { VertexShareLinkPanel } from './VertexShareLinkPanel';
 
 export interface HierarchicalLayoutSpec {
   kind: 'hierarchical';
@@ -206,7 +207,6 @@ interface TopBarProps {
 
 const PASSIVE_TOPBAR_BUTTONS: Array<[string, string]> = [
   ['vertex-topbar-save', 'Save'],
-  ['vertex-topbar-share', 'Share'],
   ['vertex-topbar-time-selection', 'Time'],
   ['vertex-topbar-run', 'Run'],
 ];
@@ -238,6 +238,7 @@ function TopBar({
           + Add objects
         </button>
         <LayoutMenu onApply={onApplyLayout} />
+        <ShareMenu graphRid={graph?.rid} />
         <button
           type="button"
           data-testid="vertex-topbar-merge-toggle"
@@ -372,6 +373,35 @@ function LayoutMenu({ onApply }: { onApply: (spec: LayoutSpec) => void }) {
             </button>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ShareMenu — VTX-013. Toggles the quick share-link panel under the
+// TopBar "Share" button. Disabled (no panel) for unsaved /vertex/new
+// graphs since there is no persisted rid to mint a share link for.
+// Mirrors LayoutMenu's relative-wrapper + absolute-popover pattern so no
+// new dependency lands behind the Vertex lazy chunk.
+function ShareMenu({ graphRid }: { graphRid?: string }) {
+  const [open, setOpen] = useState(false);
+  const disabled = !graphRid || graphRid === 'new';
+  const close = useCallback(() => setOpen(false), []);
+  return (
+    <div className="relative" data-testid="vertex-topbar-share-wrap">
+      <button
+        type="button"
+        data-testid="vertex-topbar-share"
+        aria-expanded={open}
+        disabled={disabled}
+        title={disabled ? 'Save the graph first to share it' : undefined}
+        onClick={() => setOpen((v) => !v)}
+        className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Share
+      </button>
+      {open && graphRid && (
+        <VertexShareLinkPanel graphRid={graphRid} onClose={close} />
       )}
     </div>
   );
