@@ -11,13 +11,25 @@ import {
   type CreateLogicFlowRequest,
   type DryRunLogicNodeRequest,
   type ExecuteLogicFlowRequest,
+  type ListLogicRunsParams,
   type UpdateLogicFlowRequest,
 } from '../api/aipLogic';
 
 export const aipLogicQueryKeys = {
   flows: ['aip', 'logic-flows'] as const,
   flow: (flowId: string) => ['aip', 'logic-flow', flowId] as const,
-  runs: (flowId: string) => ['aip', 'logic-flow', flowId, 'runs'] as const,
+  // The runs key keeps the `…, 'runs'` prefix so a partial-match
+  // invalidateQueries({ queryKey: runs(flowId) }) still busts every limit
+  // variant after an execute. The optional limit is appended as a trailing
+  // segment so distinct limits get their own cache entry + refetch.
+  runs: (flowId: string, limit?: number) =>
+    [
+      'aip',
+      'logic-flow',
+      flowId,
+      'runs',
+      ...(limit === undefined ? [] : [limit]),
+    ] as const,
 };
 
 export function useAIPLogicFlows(enabled = true) {
@@ -38,12 +50,20 @@ export function useAIPLogicFlow(flowId: string | null) {
   });
 }
 
-export function useAIPLogicRuns(flowId: string | null) {
+export function useAIPLogicRuns(
+  flowId: string | null,
+  params?: ListLogicRunsParams,
+) {
+  const limit = params?.limit;
   return useQuery({
     queryKey: flowId
-      ? aipLogicQueryKeys.runs(flowId)
+      ? aipLogicQueryKeys.runs(flowId, limit)
       : ['aip', 'logic-flow', '__none__', 'runs'],
-    queryFn: () => listLogicRuns(flowId as string),
+    queryFn: () =>
+      listLogicRuns(
+        flowId as string,
+        limit === undefined ? undefined : { limit },
+      ),
     enabled: !!flowId,
   });
 }

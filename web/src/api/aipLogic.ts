@@ -145,13 +145,25 @@ export function executeLogicFlow(
   );
 }
 
+// ListLogicRunsParams mirrors the ?limit= query the ListRuns handler accepts
+// (pkg/aip/logic/handlers.go). The backend defaults to 50 and only honors a
+// parsed value when 0 < limit < 500; when `limit` is omitted here we send no
+// query string at all so the server default governs.
+export interface ListLogicRunsParams {
+  limit?: number;
+}
+
 export function listLogicRuns(
   flowId: string,
+  params?: ListLogicRunsParams,
 ): Promise<ListLogicRunsResponse> {
-  return request<ListLogicRunsResponse>(
-    'GET',
-    `/api/v2/aip/logic-flows/${encodeURIComponent(flowId)}/runs`,
-  );
+  let path = `/api/v2/aip/logic-flows/${encodeURIComponent(flowId)}/runs`;
+  if (params?.limit !== undefined) {
+    const query = new URLSearchParams();
+    query.set('limit', String(params.limit));
+    path += `?${query.toString()}`;
+  }
+  return request<ListLogicRunsResponse>('GET', path);
 }
 
 export function dryRunLogicNode(
