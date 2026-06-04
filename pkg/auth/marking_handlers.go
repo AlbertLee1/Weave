@@ -50,11 +50,17 @@ type MarkingRequest struct {
 }
 
 // MarkingResponse is the wire shape for a single marking definition.
+//
+// CreatedAt is the RFC3339 formatted instant the marking was defined (seed
+// migration time for the built-in markings, or the operator's add-marking
+// time for custom ones). It is sourced from the DB-populated Marking.CreatedAt
+// so the admin UI can show "when was this marking defined?".
 type MarkingResponse struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName"`
 	Description string `json:"description"`
 	Color       string `json:"color"`
+	CreatedAt   string `json:"createdAt"`
 }
 
 // MarkingListResponse is returned by GET /api/admin/markings.
@@ -86,6 +92,7 @@ func toMarkingResponse(m Marking) MarkingResponse {
 		DisplayName: m.DisplayName,
 		Description: m.Description,
 		Color:       m.Color,
+		CreatedAt:   m.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
 

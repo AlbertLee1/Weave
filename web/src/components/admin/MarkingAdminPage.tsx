@@ -21,6 +21,18 @@ function formatGrantTimestamp(iso: string): string {
   }
 }
 
+// formatCreatedAt renders a marking's createdAt for the read-only "Created"
+// cell. Unlike formatGrantTimestamp it returns an em-dash placeholder for
+// missing / unparseable values so a marking without a createdAt (older API,
+// degraded mode) renders cleanly instead of leaking "Invalid Date" or a raw
+// ISO string into the UI.
+function formatCreatedAt(iso?: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString();
+}
+
 export function MarkingAdminPage() {
   const {
     data: markings,
@@ -146,22 +158,30 @@ export function MarkingAdminPage() {
                     type="button"
                     data-testid={`marking-row-${m.name}`}
                     onClick={() => setSelectedName(m.name)}
-                    className={`w-full text-left px-4 py-2 flex items-center gap-3 text-sm transition-colors ${
+                    className={`w-full text-left px-4 py-2 flex flex-col gap-1 text-sm transition-colors ${
                       selectedName === m.name
                         ? 'bg-white/5 text-text-primary'
                         : 'text-text-secondary hover:bg-white/[0.03]'
                     }`}
                   >
-                    <span
-                      aria-hidden="true"
-                      className="inline-block w-3 h-3 rounded-sm"
-                      style={{ background: m.color || '#64748b' }}
-                    />
-                    <span className="flex-1 truncate">
-                      {m.displayName || m.name}
+                    <span className="flex items-center gap-3">
+                      <span
+                        aria-hidden="true"
+                        className="inline-block w-3 h-3 rounded-sm"
+                        style={{ background: m.color || '#64748b' }}
+                      />
+                      <span className="flex-1 truncate">
+                        {m.displayName || m.name}
+                      </span>
+                      <span className="text-[10px] uppercase tracking-widest text-text-secondary">
+                        {m.name}
+                      </span>
                     </span>
-                    <span className="text-[10px] uppercase tracking-widest text-text-secondary">
-                      {m.name}
+                    <span className="pl-6 text-[10px] text-text-secondary">
+                      <span className="uppercase tracking-widest">Created</span>{' '}
+                      <span data-testid={`marking-created-${m.name}`}>
+                        {formatCreatedAt(m.createdAt)}
+                      </span>
                     </span>
                   </button>
                 </li>
