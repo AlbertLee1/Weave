@@ -58,6 +58,36 @@ const STATUS_VALUES = [
 ] as const;
 const VISIBILITY_VALUES = ['PROMINENT', 'NORMAL', 'HIDDEN'] as const;
 
+// rfc3339ToDatetimeLocal converts a stored RFC3339 deprecation deadline into
+// the "YYYY-MM-DDTHH:mm" shape an `<input type="datetime-local">` displays.
+// The control speaks local wall-clock time, so we derive the components from
+// the parsed Date in local time — symmetric with datetimeLocalToRFC3339, which
+// reads that same control's value back out via `new Date(local).toISOString()`.
+// Returns '' for empty/unparseable input so the control renders blank.
+function rfc3339ToDatetimeLocal(value: string | null | undefined): string {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
+// datetimeLocalToRFC3339 turns the control's local "YYYY-MM-DDTHH:mm" value
+// into the RFC3339 instant the backend's time.Parse(time.RFC3339) accepts
+// (pkg/oms/admin_handlers.go). `new Date(local)` interprets the value in the
+// browser's local timezone; `.toISOString()` yields a UTC `...Z` string such
+// as "2026-06-03T12:00:00.000Z", which is valid RFC3339. Returns null for a
+// blank/unparseable control so the PUT body clears the stored deadline.
+function datetimeLocalToRFC3339(local: string): string | null {
+  if (!local) return null;
+  const d = new Date(local);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
 export function ObjectTypeAdminPage() {
   const { ontology } = useParams<{ ontology: string }>();
   const ontologyApiName = ontology ?? '';
@@ -670,6 +700,10 @@ interface EditFormState {
   titleProperty: string;
   status: (typeof STATUS_VALUES)[number];
   visibility: (typeof VISIBILITY_VALUES)[number];
+  deprecatedReason: string;
+  // Local "YYYY-MM-DDTHH:mm" value backing the datetime-local control; '' when
+  // no deadline is set. Serialized back to RFC3339 on submit.
+  deprecatedDeadline: string;
   iconName: string;
   color: string;
   classification: '' | Classification;
@@ -699,6 +733,10 @@ function EditObjectTypeModal({
     titleProperty: objectType.titleProperty ?? '',
     status: objectType.status,
     visibility: objectType.visibility,
+    deprecatedReason: objectType.deprecatedReason ?? '',
+    // Convert the stored RFC3339 deadline back to the datetime-local shape so
+    // the control preloads the existing value.
+    deprecatedDeadline: rfc3339ToDatetimeLocal(objectType.deprecatedDeadline),
     iconName: objectType.icon ?? '',
     color: objectType.color ?? '',
     classification: objectType.classification ?? '',
@@ -728,6 +766,15 @@ function EditObjectTypeModal({
       titleProperty: form.titleProperty.trim() || undefined,
       status: form.status,
       visibility: form.visibility,
+      // Records *why* a type was deprecated. Backend persists this verbatim
+      // (updated.DeprecatedReason = req.DeprecatedReason); send the trimmed
+      // value, or undefined when blank so the omitempty field is dropped.
+      deprecatedReason: form.deprecatedReason.trim() || undefined,
+      // Records *when* a deprecated type should be retired. The backend parses
+      // a non-empty value with time.Parse(time.RFC3339, ...) and clears the
+      // stored deadline on null/empty. Send the control's local value as an
+      // RFC3339 instant, or null when blank so the backend wipes it.
+      deprecatedDeadline: datetimeLocalToRFC3339(form.deprecatedDeadline),
       // Backend reads the icon under the `icon` JSON key (IconName
       // `json:"icon"`); sending `iconName` was silently dropped server-side.
       icon: form.iconName.trim() || undefined,
@@ -946,6 +993,36 @@ function EditObjectTypeModal({
             </select>
           </Field>
         </div>
+        <Field
+          label="Deprecation reason"
+          hint="Recorded when deprecating a type — explain why and what replaces it."
+        >
+          <textarea
+            aria-label="Deprecation reason"
+            data-testid="object-type-edit-deprecated-reason"
+            value={form.deprecatedReason}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, deprecatedReason: e.target.value }))
+            }
+            rows={2}
+            className={inputClass}
+          />
+        </Field>
+        <Field
+          label="Deprecation deadline"
+          hint="Optional date/time by which this type should be retired. Leave blank to clear."
+        >
+          <input
+            type="datetime-local"
+            aria-label="Deprecation deadline"
+            data-testid="object-type-edit-deprecated-deadline"
+            value={form.deprecatedDeadline}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, deprecatedDeadline: e.target.value }))
+            }
+            className={inputClass}
+          />
+        </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Icon" hint="Free-form icon identifier.">
             <input
