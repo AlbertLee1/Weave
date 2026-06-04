@@ -492,6 +492,30 @@ export interface QueryType {
   functionRid?: string;
 }
 
+// CreateQueryTypeRequest mirrors pkg/oms.CreateQueryTypeRequest. parameters /
+// output / query are loose JSON shapes (JSONB columns); the admin form sends
+// already-parsed JSON values.
+export interface CreateQueryTypeRequest {
+  apiName: string;
+  displayName: string;
+  description?: string;
+  parameters?: unknown;
+  output?: unknown;
+  query?: unknown;
+  status?: string;
+}
+
+// UpdateQueryTypeRequest mirrors pkg/oms.UpdateQueryTypeRequest. apiName is
+// immutable post-create, so it is intentionally omitted.
+export interface UpdateQueryTypeRequest {
+  displayName?: string;
+  description?: string;
+  parameters?: unknown;
+  output?: unknown;
+  query?: unknown;
+  status?: string;
+}
+
 // --- ObjectSet Definition (mirrors pkg/oss/objectset/definition.go) ---
 
 export type ObjectSetDefinition =

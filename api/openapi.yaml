@@ -160,6 +160,13 @@ components:
       description: Resource identifier (or API name) of the action type.
       schema:
         type: string
+    QueryTypeRid:
+      in: path
+      name: queryTypeRid
+      required: true
+      description: Resource identifier of the query type.
+      schema:
+        type: string
     InterfaceType:
       in: path
       name: interfaceType
@@ -949,6 +956,45 @@ components:
           type: string
         apiName:
           type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+        output:
+          type: object
+          additionalProperties: true
+        query:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+    CreateQueryTypeRequest:
+      type: object
+      required: [apiName, displayName]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+        output:
+          type: object
+          additionalProperties: true
+        query:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+    UpdateQueryTypeRequest:
+      type: object
+      properties:
         displayName:
           type: string
         description:
@@ -7797,6 +7843,92 @@ paths:
                 $ref: "#/components/schemas/QueryTypeListResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
+    post:
+      operationId: createQueryType
+      summary: Create a QueryType
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateQueryTypeRequest"
+      responses:
+        "201":
+          description: Created query type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "409":
+          $ref: "#/components/responses/ConflictError"
+  /api/v2/ontologies/{ontologyApiName}/queryTypes/byRid/{queryTypeRid}:
+    get:
+      operationId: getQueryTypeByRid
+      summary: Get a QueryType by RID
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/QueryTypeRid"
+      responses:
+        "200":
+          description: QueryType details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryType"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      operationId: updateQueryType
+      summary: Update an existing QueryType
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/QueryTypeRid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateQueryTypeRequest"
+      responses:
+        "200":
+          description: Updated query type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryType"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      operationId: deleteQueryType
+      summary: Delete a QueryType
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/QueryTypeRid"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
   /api/v2/ontologies/{ontologyApiName}/queryTypes/{queryApiName}:
     get:
       operationId: getQueryType
