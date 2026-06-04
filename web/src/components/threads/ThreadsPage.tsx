@@ -93,8 +93,22 @@ export function ThreadsPage() {
   const [draft, setDraft] = useState<NewThreadDraft>(EMPTY_DRAFT);
   const [draftError, setDraftError] = useState<string | null>(null);
 
+  // Id of the thread whose deletion is awaiting confirmation in the styled
+  // Modal. null = no confirmation pending (dialog closed). We deliberately
+  // use the shared styled Modal here rather than window.confirm so the
+  // dialog matches the dark theme and is consistently testable — see the
+  // same rationale in DashboardEditorPage.
+  const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<
+    string | null
+  >(null);
+
   const createMutation = useCreateAIPThread();
   const deleteMutation = useDeleteAIPThread();
+
+  const pendingDeleteThread = useMemo(
+    () => threads.find((t) => t.id === pendingDeleteThreadId) ?? null,
+    [threads, pendingDeleteThreadId],
+  );
 
   const openNewThread = () => {
     setDraft(EMPTY_DRAFT);
@@ -131,17 +145,31 @@ export function ThreadsPage() {
     );
   };
 
+  // Open the styled confirmation Modal for the chosen thread. The actual
+  // delete only fires once the user confirms inside the dialog.
   const onDelete = (threadId: string) => {
-    if (typeof window !== 'undefined') {
-      // eslint-disable-next-line no-alert
-      const ok = window.confirm('Delete this thread? This cannot be undone.');
-      if (!ok) return;
-    }
+    setPendingDeleteThreadId(threadId);
+  };
+
+  const cancelDelete = () => {
+    setPendingDeleteThreadId(null);
+  };
+
+  const confirmDelete = () => {
+    const threadId = pendingDeleteThreadId;
+    if (threadId === null) return;
     deleteMutation.mutate(threadId, {
       onSuccess: () => {
         if (activeThreadId === threadId) {
           setActiveThreadId(null);
         }
+        setPendingDeleteThreadId(null);
+      },
+      onError: () => {
+        // Close the dialog on failure too — the thread list is unchanged so
+        // the user can retry from the list. Surfacing a detailed inline
+        // error in the dialog is a future enhancement.
+        setPendingDeleteThreadId(null);
       },
     });
   };
@@ -252,6 +280,42 @@ export function ThreadsPage() {
               className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-500 disabled:opacity-60"
             >
               {createMutation.isPending ? 'Creating…' : 'Create'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={pendingDeleteThreadId !== null}
+        onClose={cancelDelete}
+        title="Delete thread"
+        size="md"
+      >
+        <div className="space-y-4" data-testid="delete-thread-confirm">
+          <p className="text-sm text-text-secondary">
+            Delete{' '}
+            <span className="font-semibold text-text-primary">
+              {pendingDeleteThread?.title?.trim() || 'this thread'}
+            </span>
+            ? This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={cancelDelete}
+              data-testid="cancel-delete-thread"
+              className="rounded-md border border-border/60 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-tertiary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDelete}
+              disabled={deleteMutation.isPending}
+              data-testid="confirm-delete-thread"
+              className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-60"
+            >
+              {deleteMutation.isPending ? 'Deleting…' : 'Delete'}
             </button>
           </div>
         </div>
