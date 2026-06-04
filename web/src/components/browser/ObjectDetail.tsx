@@ -1,4 +1,12 @@
-import { useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import type {
@@ -177,6 +185,45 @@ export function ObjectDetail({
 
   const [activeTab, setActiveTab] = useState<DetailTab>('properties');
 
+  // Roving-tabindex refs for the detail tablist so keyboard navigation can move
+  // DOM focus to the activated tab (WAI-ARIA tabs pattern — same as the
+  // AggregationPage / MetricsPage tablists).
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // ArrowLeft/Right (and Down/Up mirrors) move between tabs with wrapping;
+  // Home/End jump to the ends. Activation is automatic: moving focus also
+  // selects (setActiveTab), the recommended pattern for tablists whose panels
+  // render cheaply. preventDefault fires only on keys we handle so native
+  // behaviour (Tab, etc.) is untouched.
+  const handleTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const last = TABS.length - 1;
+      let nextIndex: number | null = null;
+      switch (event.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          nextIndex = index === last ? 0 : index + 1;
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          nextIndex = index === 0 ? last : index - 1;
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        case 'End':
+          nextIndex = last;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      setActiveTab(TABS[nextIndex].key);
+      tabRefs.current[nextIndex]?.focus();
+    },
+    [],
+  );
+
   const title = object
     ? `${objectType.displayName} - ${String(object.__primaryKey)}`
     : objectType.displayName;
@@ -228,13 +275,18 @@ export function ObjectDetail({
             role="tablist"
             aria-label="Object detail tabs"
           >
-            {TABS.map((tab) => (
+            {TABS.map((tab, index) => (
               <button
                 key={tab.key}
+                ref={(el) => {
+                  tabRefs.current[index] = el;
+                }}
                 type="button"
                 role="tab"
                 aria-selected={activeTab === tab.key}
+                tabIndex={activeTab === tab.key ? 0 : -1}
                 onClick={() => setActiveTab(tab.key)}
+                onKeyDown={(event) => handleTabKeyDown(event, index)}
                 className={`px-3 py-2 text-xs font-mono transition-colors border-b-2 ${
                   activeTab === tab.key
                     ? 'border-accent-cyan text-accent-cyan'
