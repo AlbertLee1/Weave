@@ -142,15 +142,19 @@ describe('BranchPicker close branch (US-116)', () => {
         },
       ),
     );
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-
     const user = userEvent.setup();
     renderPicker();
 
     await user.click(screen.getByTestId('branch-picker-trigger'));
     await screen.findByTestId('branch-picker-option-br-feature-x');
 
+    // Deletion now goes through the shared styled Modal: clicking the row's
+    // delete button opens the confirmation dialog, and only confirming inside
+    // it issues the DELETE.
     await user.click(screen.getByTestId('branch-picker-delete-br-feature-x'));
+    await user.click(
+      await screen.findByTestId('branch-picker-delete-confirm-btn'),
+    );
 
     await waitFor(() => {
       expect(deleted).toBe('br-feature-x');
@@ -162,7 +166,7 @@ describe('BranchPicker close branch (US-116)', () => {
     });
   });
 
-  it('does not call DELETE when the confirm is dismissed', async () => {
+  it('does not call DELETE when the confirmation Modal is cancelled', async () => {
     let deleteCount = 0;
     server.use(
       http.get('/api/v2/ontologies/foundry/branches', () =>
@@ -176,7 +180,6 @@ describe('BranchPicker close branch (US-116)', () => {
         },
       ),
     );
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
 
     const user = userEvent.setup();
     renderPicker();
@@ -184,6 +187,11 @@ describe('BranchPicker close branch (US-116)', () => {
     await user.click(screen.getByTestId('branch-picker-trigger'));
     await screen.findByTestId('branch-picker-option-br-feature-x');
     await user.click(screen.getByTestId('branch-picker-delete-br-feature-x'));
+
+    // Cancelling the styled Modal must not issue any DELETE request.
+    await user.click(
+      await screen.findByTestId('branch-picker-delete-cancel'),
+    );
 
     await new Promise((r) => setTimeout(r, 30));
     expect(deleteCount).toBe(0);

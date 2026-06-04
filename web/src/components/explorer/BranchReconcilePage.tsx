@@ -8,6 +8,7 @@ import {
 } from '../../hooks/useBranches';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
+import { Modal } from '../common/Modal';
 import {
   MergeBranchConflictError,
   RebaseBranchConflictError,
@@ -263,6 +264,11 @@ export function BranchReconcilePage() {
   >(null);
   const [rebaseError, setRebaseError] = useState<string | null>(null);
   const [rebaseSuccess, setRebaseSuccess] = useState<number | null>(null);
+  // Drives the styled rebase confirmation Modal. Rebase rewrites the branch's
+  // history (a destructive operation), so it stays behind an explicit confirm —
+  // but the shared `common/Modal` instead of the unstylable native
+  // window.confirm, matching the rest of the app's dialogs.
+  const [pendingRebase, setPendingRebase] = useState(false);
 
   const conflicts = useMemo(
     () => serverConflicts ?? data?.conflicts ?? [],
@@ -352,8 +358,13 @@ export function BranchReconcilePage() {
     );
   };
 
-  const onRebase = () => {
-    if (!window.confirm(t('branchReconcile.rebaseConfirm'))) return;
+  // Open the styled confirmation Modal instead of a native window.confirm.
+  const onRebase = () => setPendingRebase(true);
+
+  const cancelRebase = () => setPendingRebase(false);
+
+  const confirmRebase = () => {
+    setPendingRebase(false);
     setRebaseError(null);
     setRebaseSuccess(null);
     rebaseMutation.mutate(undefined, {
@@ -591,6 +602,46 @@ export function BranchReconcilePage() {
           />
         )}
       </div>
+
+      <Modal
+        open={pendingRebase}
+        onClose={cancelRebase}
+        title={t('branchReconcile.rebaseButton')}
+      >
+        <div
+          data-testid="branch-reconcile-rebase-confirm"
+          className="space-y-4"
+        >
+          <p className="text-sm text-text-secondary">
+            {t('branchReconcile.rebaseConfirm')}
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={cancelRebase}
+              data-testid="branch-reconcile-rebase-cancel-btn"
+              className="rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-bg-tertiary"
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={confirmRebase}
+              disabled={rebaseMutation.isPending}
+              data-testid="branch-reconcile-rebase-confirm-btn"
+              className={`rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                rebaseMutation.isPending
+                  ? 'border-border text-text-muted cursor-not-allowed'
+                  : 'border-rose-500/50 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20'
+              }`}
+            >
+              {rebaseMutation.isPending
+                ? t('branchReconcile.rebasing')
+                : t('branchReconcile.rebaseButton')}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
