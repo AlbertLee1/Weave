@@ -4,9 +4,21 @@ interface SearchBarProps {
   value: string;
   onSearch: (searchText: string) => void;
   onToggleFilters: () => void;
+  // Fuzzy full-text search toggle. When `fuzzy` is true the parent appends
+  // `?fuzziness=` to the /search request (Bleve Levenshtein matching), letting
+  // e.g. "Kafca" match the indexed "kafka". Controlled by the parent so the
+  // setting participates in the search query just like `value`.
+  fuzzy?: boolean;
+  onFuzzyChange?: (fuzzy: boolean) => void;
 }
 
-export function SearchBar({ value, onSearch, onToggleFilters }: SearchBarProps) {
+export function SearchBar({
+  value,
+  onSearch,
+  onToggleFilters,
+  fuzzy = false,
+  onFuzzyChange,
+}: SearchBarProps) {
   const [draftText, setDraftText] = useState(value);
 
   useEffect(() => {
@@ -56,6 +68,23 @@ export function SearchBar({ value, onSearch, onToggleFilters }: SearchBarProps) 
           data-testid="search-input"
         />
       </div>
+      {onFuzzyChange && (
+        <label
+          className="flex items-center gap-1.5 px-3 py-2 bg-bg-primary border border-border rounded text-xs font-sans text-text-secondary cursor-pointer select-none hover:text-text-primary hover:border-accent-cyan focus-within:ring-2 focus-within:ring-accent-cyan/50 transition-colors"
+          data-testid="fuzzy-toggle-label"
+          title="Fuzzy search tolerates typos (Levenshtein edit distance up to 2)"
+        >
+          <input
+            type="checkbox"
+            checked={fuzzy}
+            onChange={(e) => onFuzzyChange(e.target.checked)}
+            className="accent-accent-cyan"
+            data-testid="fuzzy-toggle"
+            aria-label="Fuzzy search"
+          />
+          Fuzzy
+        </label>
+      )}
       <button
         type="button"
         onClick={onToggleFilters}
