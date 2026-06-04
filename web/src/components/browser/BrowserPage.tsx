@@ -1005,6 +1005,7 @@ function BrowserPageContent({
                 onPrevPage={handlePrevPage}
                 currentPage={currentPage}
                 selection={tableSelection}
+                showReactions
               />
             )}
 
