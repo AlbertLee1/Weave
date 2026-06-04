@@ -400,6 +400,12 @@ export function BranchReconcilePage() {
 
   return (
     <div className="flex flex-col h-full" data-testid="branch-reconcile-page">
+      {/* Stable page-level heading. Visually hidden so the layout is
+          unchanged, but it gives the standalone Branch Reconcile route exactly
+          one <h1> (its visible title renders as an <h2>), matching the rest of
+          the app's heading structure. */}
+      <h1 className="sr-only">{t('branchReconcile.title')}</h1>
+
       {/* Header */}
       <div className="px-6 py-4 border-b border-border shrink-0">
         <div className="flex items-center gap-2 text-xs text-text-muted mb-2">
