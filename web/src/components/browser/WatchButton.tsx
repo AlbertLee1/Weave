@@ -3,9 +3,24 @@ import {
   useDeleteWatch,
   useWatchStatus,
 } from '../../hooks/useWatches';
+import { ApiRequestError } from '../../api/client';
+import { useToastStore } from '../../stores/toastStore';
 
 interface WatchButtonProps {
   targetRid: string | null | undefined;
+}
+
+// describeWatchError turns a failed watch toggle into a short user-facing
+// string. Mirrors the convention used by AutomationRulesPage so the toast
+// reads "<ErrorName>: <reason>" for structured API errors and falls back to
+// the raw message otherwise.
+function describeWatchError(err: unknown): string {
+  if (err instanceof ApiRequestError) {
+    const reason = err.parameters?.reason ?? err.parameters?.error;
+    return reason ? `${err.errorName}: ${reason}` : err.errorName;
+  }
+  if (err instanceof Error) return err.message;
+  return 'Watch update failed.';
 }
 
 // WatchButton toggles the caller's follow state for a single object RID
@@ -16,6 +31,7 @@ export function WatchButton({ targetRid }: WatchButtonProps) {
   const status = useWatchStatus(targetRid);
   const create = useCreateWatch();
   const remove = useDeleteWatch();
+  const pushToast = useToastStore((s) => s.push);
 
   if (!targetRid) return null;
   if (status.data && status.data.available === false) return null;
@@ -26,9 +42,24 @@ export function WatchButton({ targetRid }: WatchButtonProps) {
   const onToggle = () => {
     if (!targetRid || pending) return;
     if (watching) {
-      remove.mutate(targetRid);
+      // Surface unwatch failures: the hook's onSuccess flips the cached
+      // status, but without an onError a 5xx/timeout left the button stuck
+      // with zero feedback. Push a user-visible error toast instead.
+      remove.mutate(targetRid, {
+        onError: (err) =>
+          pushToast({
+            message: `Failed to stop watching: ${describeWatchError(err)}`,
+            severity: 'error',
+          }),
+      });
     } else {
-      create.mutate(targetRid);
+      create.mutate(targetRid, {
+        onError: (err) =>
+          pushToast({
+            message: `Failed to watch object: ${describeWatchError(err)}`,
+            severity: 'error',
+          }),
+      });
     }
   };
 
