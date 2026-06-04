@@ -31,6 +31,9 @@ export function AggregationPage() {
   const [filters, setFilters] = useState<FilterCondition[]>([]);
   const [aggRequest, setAggRequest] = useState<AggregationRequest | null>(null);
   const [chartType, setChartType] = useState<SimpleChartType>('bar');
+  const [accuracyMode, setAccuracyMode] = useState<
+    'ALLOW_APPROXIMATE' | 'REQUIRE_ACCURATE'
+  >('ALLOW_APPROXIMATE');
 
   const availableProperties = useMemo<
     Record<string, { dataType: { type: string; itemType?: unknown }; rid: string }>
@@ -79,6 +82,9 @@ export function AggregationPage() {
       aggregation: metrics,
       groupBy: groupBy.length > 0 ? groupBy : undefined,
       where,
+      // Only send accuracy when the user opts out of the approximate default;
+      // omitting it lets the backend apply ALLOW_APPROXIMATE.
+      accuracy: accuracyMode === 'REQUIRE_ACCURATE' ? 'REQUIRE_ACCURATE' : undefined,
     });
   }
 
@@ -131,14 +137,36 @@ export function AggregationPage() {
               {ontology} / {objectType}
             </div>
           </div>
-          <button
-            onClick={handleExecute}
-            disabled={metrics.length === 0 || hasInvalidGroupBy}
-            data-testid="aggregation-execute"
-            className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50"
-          >
-            Execute
-          </button>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-text-secondary font-sans">
+              <span>Accuracy</span>
+              <select
+                value={accuracyMode}
+                onChange={(e) =>
+                  setAccuracyMode(
+                    e.target.value === 'REQUIRE_ACCURATE'
+                      ? 'REQUIRE_ACCURATE'
+                      : 'ALLOW_APPROXIMATE',
+                  )
+                }
+                data-testid="aggregation-accuracy-select"
+                aria-label="Aggregation accuracy mode"
+                title="REQUIRE_ACCURATE promotes approximateDistinct/percentile to exact computation"
+                className="bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs text-text-primary font-mono focus:border-accent-cyan focus:outline-none"
+              >
+                <option value="ALLOW_APPROXIMATE">Allow approximate</option>
+                <option value="REQUIRE_ACCURATE">Require accurate</option>
+              </select>
+            </label>
+            <button
+              onClick={handleExecute}
+              disabled={metrics.length === 0 || hasInvalidGroupBy}
+              data-testid="aggregation-execute"
+              className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50"
+            >
+              Execute
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
