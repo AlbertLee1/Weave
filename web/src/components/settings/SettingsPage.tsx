@@ -23,8 +23,24 @@ import type {
   ThemePreferenceValue,
 } from '../../api/userPreferences';
 import { HOTKEYS } from '../../hotkeys/registry';
+import {
+  useRevokeOtherSessions,
+  useRevokeSession,
+  useSessions,
+} from '../../hooks/useSessions';
+import type { Session } from '../../api/sessions';
 
 const THEME_OPTIONS: ThemePreference[] = ['system', 'light', 'dark'];
+
+// formatSessionTimestamp renders an ISO timestamp as the user's locale
+// date-time, falling back to the raw string when the backend sends an
+// unparseable value so the row never shows "Invalid Date".
+function formatSessionTimestamp(iso: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
+}
 
 // formatUptime humanises a seconds count into "Nd HHh MMm" (dropping
 // leading zero units) for the System status row.
@@ -91,6 +107,14 @@ export function SettingsPage() {
   });
   const serverInfo = serverInfoQuery.data;
   const connections = connectionsQuery.data;
+
+  // Active login sessions (US: session management parity). A degraded
+  // deployment (dev auth / no session store) may 404/501 — we render the
+  // section only when the list resolves so the page never crashes.
+  const sessionsQuery = useSessions();
+  const sessions = sessionsQuery.data ?? [];
+  const revokeSession = useRevokeSession();
+  const revokeOthers = useRevokeOtherSessions();
 
   // Working copies seeded from the persisted row when it loads. Local
   // edits flow through `apply()` so the optimistic UI stays in sync
@@ -390,6 +414,93 @@ export function SettingsPage() {
           ))}
         </ul>
       </section>
+
+      {sessionsQuery.isSuccess && (
+        <section
+          data-testid="settings-section-sessions"
+          aria-labelledby="settings-sessions-heading"
+          className="rounded border border-border bg-bg-secondary p-4"
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2
+              id="settings-sessions-heading"
+              className="text-sm font-semibold text-text-primary"
+            >
+              Active sessions
+            </h2>
+            <button
+              type="button"
+              data-testid="session-revoke-others"
+              onClick={() => revokeOthers.mutate()}
+              disabled={revokeOthers.isPending}
+              className="rounded border border-border px-2.5 py-1 text-xs text-text-secondary transition-colors hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-50"
+            >
+              Log out other devices
+            </button>
+          </div>
+
+          {revokeSession.isError || revokeOthers.isError ? (
+            <div
+              role="alert"
+              data-testid="session-action-error"
+              className="mb-3 rounded border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-400"
+            >
+              {((revokeSession.error || revokeOthers.error) as Error)?.message ??
+                'Session action failed'}
+            </div>
+          ) : null}
+
+          {sessions.length === 0 ? (
+            <p data-testid="session-empty" className="text-sm text-text-secondary">
+              No active sessions.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border text-sm">
+              {sessions.map((s: Session) => (
+                <li
+                  key={s.id}
+                  data-testid={`session-row-${s.id}`}
+                  className="flex items-start justify-between gap-3 py-3"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-text-primary break-all">
+                        {s.ip || 'unknown IP'}
+                      </span>
+                      {s.current && (
+                        <span
+                          data-testid="session-current-badge"
+                          className="inline-flex items-center rounded border border-accent-cyan/40 bg-accent-cyan/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-cyan"
+                        >
+                          This device
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-text-secondary">
+                      {s.user_agent || 'Unknown device'}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-text-secondary">
+                      <span>Created {formatSessionTimestamp(s.created_at)}</span>
+                      <span>
+                        Last active {formatSessionTimestamp(s.last_seen)}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid={`session-revoke-${s.id}`}
+                    onClick={() => revokeSession.mutate(s.id)}
+                    disabled={revokeSession.isPending}
+                    className="shrink-0 rounded border border-border px-2.5 py-1 text-xs text-text-secondary transition-colors hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-50"
+                  >
+                    Revoke
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       {buildInfo && (
         <section
