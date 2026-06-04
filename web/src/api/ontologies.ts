@@ -280,6 +280,12 @@ export interface CreateObjectTypeRequest {
   extendsRid?: string;
   // US-264: opt this ObjectType into per-read data-access audit logging.
   auditDataAccess?: boolean;
+  // VTX-077: timeline event metadata. isEvent marks this ObjectType as an
+  // event; eventStartProp / eventEndProp name the start/end timestamp
+  // properties the Vertex Timeline spans each object across.
+  isEvent?: boolean;
+  eventStartProp?: string;
+  eventEndProp?: string;
 }
 
 export interface UpdateObjectTypeRequest {
@@ -304,6 +310,12 @@ export interface UpdateObjectTypeRequest {
   // US-264 tri-state: omit = preserve, explicit bool = toggle the per-read
   // data-access audit flag.
   auditDataAccess?: boolean;
+  // VTX-077 tri-state: omit = preserve, explicit value = overwrite the
+  // timeline event metadata. isEvent toggles the event flag; eventStartProp /
+  // eventEndProp re-point (or clear, via '') the start/end timestamp props.
+  isEvent?: boolean;
+  eventStartProp?: string;
+  eventEndProp?: string;
 }
 
 export function createObjectType(
