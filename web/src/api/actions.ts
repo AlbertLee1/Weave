@@ -39,6 +39,74 @@ export function applyBatch(
   );
 }
 
+// ── Real-time field-level validation ────────────────────────────────────────
+//
+// Foundry OSv2 exposes a dedicated, side-effect-free validate surface so an
+// editing form can red-line individual fields as the user types without
+// running (or even validate-only-applying) the action. The server mirror is
+// pkg/actions/handlers.go::Validate + pkg/actions/executor.go's
+// ValidateActionResponse. The endpoint ALWAYS returns HTTP 200 — even when
+// `result === 'INVALID'` — because the envelope is a validation report, not
+// an HTTP error. Callers must therefore branch on `result`, not on the HTTP
+// status. The action API name lives in the URL; the body carries only
+// { parameters } (any actionType field in the body is ignored server-side).
+//
+//   POST /api/v2/ontologies/{ontology}/actions/{action}/validate
+
+// EvaluatedConstraint mirrors actions.EvaluatedConstraint — one evaluated
+// constraint on a parameter (e.g. {type:'required', result:'INVALID'}). The
+// taxonomy is forwards-compatible: switch on `type` and tolerate unknown
+// kinds.
+export interface EvaluatedConstraint {
+  type: string;
+  result: 'VALID' | 'INVALID';
+}
+
+// ParameterValidationResult mirrors actions.ParameterValidationResult — the
+// per-parameter entry in ValidateActionResponse.parameters, keyed by
+// parameter id. `result === 'INVALID'` is what a form maps to a field-level
+// (inline) error.
+export interface ParameterValidationResult {
+  result: 'VALID' | 'INVALID';
+  required: boolean;
+  evaluatedConstraints: EvaluatedConstraint[];
+}
+
+// SubmissionCriterionResult mirrors actions.SubmissionCriterionResult — one
+// submission-criteria envelope. On INVALID the server synthesizes a single
+// entry carrying the underlying validation error verbatim in
+// configuredFailureMessage, which a form renders as a form-level banner.
+export interface SubmissionCriterionResult {
+  result: 'VALID' | 'INVALID';
+  configuredFailureMessage?: string;
+}
+
+// ValidateActionResponse mirrors actions.ValidateActionResponse — the wire
+// envelope of the /validate endpoint. submissionCriteria and parameters are
+// always present ([]/{}) so callers can iterate without nil-guards.
+export interface ValidateActionResponse {
+  result: 'VALID' | 'INVALID';
+  submissionCriteria: SubmissionCriterionResult[];
+  parameters: Record<string, ParameterValidationResult>;
+}
+
+// validateAction POSTs the current parameter draft to the dedicated validate
+// surface and returns the structured per-parameter + form-level report. It
+// never throws on an INVALID result (that's a 200 carrying result:'INVALID');
+// it only rejects on transport / 4xx-5xx errors via the shared `request`
+// helper.
+export function validateAction(
+  ontologyApiName: string,
+  actionApiName: string,
+  parameters: Record<string, unknown>,
+): Promise<ValidateActionResponse> {
+  return request<ValidateActionResponse>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/actions/${encodeURIComponent(actionApiName)}/validate`,
+    { parameters },
+  );
+}
+
 // AsyncApplyResponse mirrors the server's actions.AsyncApplyResponse — the
 // 202 envelope returned by ?async=true on /apply or /applyBatch. US-318.
 export interface AsyncApplyResponse {
