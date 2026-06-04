@@ -180,6 +180,7 @@ export function MetricSelector({ metrics, onChange, availableFields }: MetricSel
             value={metric.name ?? ''}
             onChange={(e) => updateMetric(index, { name: e.target.value || undefined })}
             placeholder="alias"
+            aria-label="metric alias"
             data-testid={`metric-${index}-name`}
             className={`${inputClass} w-28`}
           />

@@ -311,6 +311,7 @@ export function QuiverPage() {
             >
               <input
                 type="text"
+                aria-label="Dashboard name"
                 placeholder="Dashboard name"
                 value={dashboardName}
                 onChange={(e) => setDashboardName(e.target.value)}
