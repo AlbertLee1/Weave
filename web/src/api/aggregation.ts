@@ -12,23 +12,23 @@ export interface AggregationBucket {
   metrics: Record<string, number>;
 }
 
-interface WireMetricValue {
+export interface WireMetricValue {
   name: string;
   value: unknown;
 }
 
-interface WireAggregationRow {
+export interface WireAggregationRow {
   group?: Record<string, unknown>;
   metrics: WireMetricValue[] | Record<string, unknown>;
 }
 
-interface WireAggregationResponse {
+export interface WireAggregationResponse {
   data?: WireAggregationRow[];
   accuracy?: string;
   excludedItems?: number;
 }
 
-function normalizeMetrics(
+export function normalizeMetrics(
   metrics: WireMetricValue[] | Record<string, unknown> | undefined,
 ): Record<string, number> {
   if (!metrics) return {};
@@ -49,6 +49,24 @@ function normalizeMetrics(
   return out;
 }
 
+// normalizeAggregationResponse converts the on-the-wire response (metrics as a
+// `[{name,value}]` array OR a `{name: value}` record) into the normalized
+// `AggregationResponse` the UI renders. Shared by the HTTP `aggregate` path and
+// the live `subscribeAggregation` WebSocket snapshots so both surfaces agree on
+// the result shape.
+export function normalizeAggregationResponse(
+  wire: WireAggregationResponse | undefined,
+): AggregationResponse {
+  return {
+    accuracy: wire?.accuracy,
+    excludedItems: wire?.excludedItems,
+    data: (wire?.data ?? []).map((row) => ({
+      group: row.group,
+      metrics: normalizeMetrics(row.metrics),
+    })),
+  };
+}
+
 export async function aggregate(
   ontologyApiName: string,
   objectType: string,
@@ -59,12 +77,5 @@ export async function aggregate(
     `/api/v2/ontologies/${ontologyApiName}/objects/${objectType}/aggregate`,
     aggRequest,
   );
-  return {
-    accuracy: wire.accuracy,
-    excludedItems: wire.excludedItems,
-    data: (wire.data ?? []).map((row) => ({
-      group: row.group,
-      metrics: normalizeMetrics(row.metrics),
-    })),
-  };
+  return normalizeAggregationResponse(wire);
 }
