@@ -258,6 +258,8 @@ export function AuditReportPage() {
           data-filename={lastExport.filename}
           data-row-count={lastExport.rowCount}
           role="status"
+          aria-live="polite"
+          aria-atomic="true"
           className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200"
         >
           Exported {lastExport.rowCount} row
@@ -495,6 +497,7 @@ function AuditRow({
             data-testid="audit-report-row-expand-btn"
             data-audit-id={event.id}
             aria-expanded={expanded}
+            aria-controls={`audit-payload-${event.id}`}
             aria-label={`Toggle audit event ${event.id} payload`}
             onClick={onToggle}
             className="text-text-secondary hover:text-text-primary"
@@ -549,6 +552,7 @@ function AuditRow({
       {expanded && (
         <tr
           data-testid="audit-report-row-payload"
+          id={`audit-payload-${event.id}`}
           data-audit-id={event.id}
           className="border-t border-border/40 bg-bg-primary/40"
         >
