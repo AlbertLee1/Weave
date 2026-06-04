@@ -217,6 +217,21 @@ export interface AggregationRequest {
   // approximateDistinct→exactDistinct and approximatePercentile→exact
   // sorted percentile). Omit for the approximate default.
   accuracy?: 'ALLOW_APPROXIMATE' | 'REQUIRE_ACCURATE';
+  // Post-aggregation row filters (SQL HAVING). Each clause names a metric
+  // produced by THIS request, a comparison op, and a numeric threshold; the
+  // backend drops result rows where any clause fails (AND semantics). Wire
+  // shape mirrors aggregation.HavingClause (metric/op/value). Omit when empty.
+  having?: HavingClause[];
+}
+
+// HavingClause is a post-aggregation row filter, wire-compatible with the
+// backend aggregation.HavingClause (pkg/oss/aggregation/engine.go). `metric`
+// is the output name of a metric in the same request; an unnamed metric uses
+// the server's derived name, so prefer aliasing the metric for robust matching.
+export interface HavingClause {
+  metric: string;
+  op: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte';
+  value: number;
 }
 
 export interface AggregationMetric {
