@@ -4,7 +4,7 @@ import { useObjectType } from '../../hooks/useObjectTypes';
 import { useAggregation } from '../../hooks/useAggregation';
 import type { AggregationMetric, GroupByClause, AggregationRequest } from '../../api/types';
 import { MetricSelector } from './MetricSelector';
-import { GroupByBuilder } from './GroupByBuilder';
+import { GroupByBuilder, HavingBuilder, toHavingClauses, type HavingDraft } from './GroupByBuilder';
 import { ResultTable } from './ResultTable';
 import { SimpleChart, type SimpleChartType } from './SimpleChart';
 import { LoadingSpinner } from '../common/LoadingSpinner';
@@ -28,6 +28,7 @@ export function AggregationPage() {
 
   const [metrics, setMetrics] = useState<AggregationMetric[]>([{ type: 'count' }]);
   const [groupBy, setGroupBy] = useState<GroupByClause[]>([]);
+  const [having, setHaving] = useState<HavingDraft[]>([]);
   const [filters, setFilters] = useState<FilterCondition[]>([]);
   const [aggRequest, setAggRequest] = useState<AggregationRequest | null>(null);
   const [chartType, setChartType] = useState<SimpleChartType>('bar');
@@ -43,6 +44,16 @@ export function AggregationPage() {
   const availableFields = useMemo(() => {
     return Object.keys(availableProperties);
   }, [availableProperties]);
+
+  // Metric output names a having clause can reference: the user-supplied
+  // alias on each metric. Offered as datalist hints in the having editor.
+  const metricNames = useMemo(
+    () =>
+      metrics
+        .map((m) => m.name?.trim())
+        .filter((n): n is string => !!n),
+    [metrics],
+  );
 
   const { data: aggResult, isLoading: aggLoading, isError, error } = useAggregation(
     ontology ?? '',
@@ -85,6 +96,8 @@ export function AggregationPage() {
       // Only send accuracy when the user opts out of the approximate default;
       // omitting it lets the backend apply ALLOW_APPROXIMATE.
       accuracy: accuracyMode === 'REQUIRE_ACCURATE' ? 'REQUIRE_ACCURATE' : undefined,
+      // Drop incomplete having rows; undefined omits `having` from the body.
+      having: toHavingClauses(having),
     });
   }
 
@@ -179,6 +192,17 @@ export function AggregationPage() {
             groupBy={groupBy}
             onChange={setGroupBy}
             availableFields={availableFields}
+          />
+        </div>
+
+        <div
+          data-testid="aggregation-having-section"
+          className="flex flex-col gap-3 border-t border-border pt-4"
+        >
+          <HavingBuilder
+            having={having}
+            onChange={setHaving}
+            metricNames={metricNames}
           />
         </div>
 
