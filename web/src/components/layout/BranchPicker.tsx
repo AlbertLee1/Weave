@@ -1,13 +1,46 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { listBranches } from '../../api/ontologies';
+import { getBranch, listBranches } from '../../api/ontologies';
 import { useCreateBranch, useDeleteBranch } from '../../hooks/useBranches';
-import type { OntologyBranch } from '../../api/types';
+import type { BranchDetailResponse, OntologyBranch } from '../../api/types';
 import { DEFAULT_BRANCH, useBranchStore } from '../../stores/branchStore';
 
 interface BranchPickerProps {
   ontologyApiName: string | null;
+}
+
+interface BranchChangeCountBadgeProps {
+  ontologyApiName: string;
+  branchId: string;
+}
+
+// Renders a "N pending" badge for a single non-default branch row. Fetches the
+// branch detail (BranchDetailResponse.changeCount) lazily and renders nothing
+// until the count is known or when there are zero pending changes.
+function BranchChangeCountBadge({
+  ontologyApiName,
+  branchId,
+}: BranchChangeCountBadgeProps) {
+  const { t } = useTranslation();
+  const { data } = useQuery<BranchDetailResponse>({
+    queryKey: ['branch-detail', ontologyApiName, branchId],
+    queryFn: () => getBranch(ontologyApiName, branchId),
+    staleTime: 30_000,
+  });
+
+  const count = data?.changeCount ?? 0;
+  if (count <= 0) return null;
+
+  return (
+    <span
+      data-testid={`branch-picker-change-count-${branchId}`}
+      title={t('branch.pendingChangesTitle', { n: count })}
+      className="ml-2 inline-flex items-center rounded-full bg-bg-tertiary px-1.5 py-0.5 text-[10px] font-medium text-text-secondary"
+    >
+      {t('branch.pendingChanges', { n: count })}
+    </span>
+  );
 }
 
 export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
@@ -189,7 +222,12 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
                       <span className="ml-3 text-text-muted text-[10px] uppercase">
                         {t('branch.default')}
                       </span>
-                    ) : null}
+                    ) : (
+                      <BranchChangeCountBadge
+                        ontologyApiName={ontologyApiName}
+                        branchId={b.id}
+                      />
+                    )}
                   </button>
                   {!isDefault ? (
                     <button

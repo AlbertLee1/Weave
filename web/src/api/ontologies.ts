@@ -13,6 +13,7 @@ import type {
   ObjectTypeInterface,
   ValueType,
   QueryType,
+  BranchDetailResponse,
   BranchDiffEntry,
   BranchDiffPostResponse,
   CreateBranchRequest,
@@ -972,6 +973,20 @@ export async function listBranches(
     `/api/v2/ontologies/${ontologyApiName}/branches`,
   );
   return resp.data ?? [];
+}
+
+// GET a single branch's detail. The handler returns the raw
+// BranchDetailResponse (OntologyBranch + changeCount) with no `{ data }`
+// envelope. `changeCount` is the number of pending changes in the branch's
+// overlay (len of branch_changes).
+export async function getBranch(
+  ontologyApiName: string,
+  branchId: string,
+): Promise<BranchDetailResponse> {
+  return request<BranchDetailResponse>(
+    'GET',
+    `/api/v2/ontologies/${ontologyApiName}/branches/${branchId}`,
+  );
 }
 
 // US-113 / US-383: create a new branch. The handler echoes back the raw

@@ -87,6 +87,8 @@ const zhCN = {
     deleteConfirm: '确定关闭分支“{{name}}”？此操作不可撤销。',
     deleting: '正在关闭…',
     deleteError: '关闭分支失败：{{message}}',
+    pendingChanges: '{{n}} 待改',
+    pendingChangesTitle: '该分支有 {{n}} 项待改',
   },
   branchReconcile: {
     title: '分支合并',
