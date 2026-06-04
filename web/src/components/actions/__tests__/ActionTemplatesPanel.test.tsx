@@ -244,14 +244,15 @@ describe('ActionTemplatesPanel', () => {
     );
   });
 
-  it('delete button calls API after window.confirm true', async () => {
+  it('delete button opens styled Modal confirm and calls API only on confirm', async () => {
     vi.spyOn(api, 'listActionTemplates').mockResolvedValue({
       actionTemplates: [OWN_ROW],
     });
     const delSpy = vi
       .spyOn(api, 'deleteActionTemplate')
       .mockResolvedValue(undefined as void);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    // Deletion no longer uses the native, unstylable window.confirm.
+    const confirmSpy = vi.spyOn(window, 'confirm');
 
     renderWithProviders(
       <ActionTemplatesPanel
@@ -270,7 +271,18 @@ describe('ActionTemplatesPanel', () => {
     await act(async () => {
       fireEvent.click(delBtn);
     });
-    expect(confirmSpy).toHaveBeenCalled();
+
+    // No native confirm; a styled Modal opens instead and nothing is
+    // deleted until the destructive button is pressed.
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(delSpy).not.toHaveBeenCalled();
+
+    const confirmBtn = screen.getByTestId('action-template-delete-confirm-btn');
+    await act(async () => {
+      fireEvent.click(confirmBtn);
+    });
+    expect(confirmSpy).not.toHaveBeenCalled();
     await waitFor(() => expect(delSpy).toHaveBeenCalledWith(OWN_ROW.id));
   });
 

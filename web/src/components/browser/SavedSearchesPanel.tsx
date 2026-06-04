@@ -58,6 +58,14 @@ export function SavedSearchesPanel({
   const [duplicateName, setDuplicateName] = useState<string | null>(null);
   const [updateErrorId, setUpdateErrorId] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  // The saved search the operator has asked to delete but not yet confirmed.
+  // Holding the row's id + name lets the styled confirmation Modal name the
+  // target without re-deriving it, and keeps the destructive action gated
+  // behind an explicit confirm (replacing the unstyleable window.confirm).
+  const [pendingDelete, setPendingDelete] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   // Existing names for the current (ontology, objectType) scope. The
   // backend enforces (createdBy, name) uniqueness exactly — case- and
@@ -140,17 +148,35 @@ export function SavedSearchesPanel({
     [onLoad],
   );
 
-  const handleDelete = useCallback(
-    (row: SavedSearch) => {
-      if (typeof window !== 'undefined' && !window.confirm(
-        `Delete saved search "${row.name}"?`,
-      )) {
-        return;
-      }
-      deleteMutation.mutate(row.id);
-    },
-    [deleteMutation],
-  );
+  // Open the styled confirmation Modal for the chosen row. The actual delete
+  // only fires once the operator confirms inside the dialog — this replaces
+  // the native window.confirm, which doesn't match the dark theme and is hard
+  // to drive consistently in tests.
+  const handleDelete = useCallback((row: SavedSearch) => {
+    setPendingDelete({ id: row.id, name: row.name });
+  }, []);
+
+  const cancelDelete = useCallback(() => {
+    setPendingDelete(null);
+  }, []);
+
+  const confirmDelete = useCallback(() => {
+    if (pendingDelete === null) return;
+    // Preserve the existing delete behaviour: the mutation's own onSuccess
+    // invalidates the saved-searches query so the list refetches. We layer on
+    // per-call callbacks purely to close the Modal once the request settles.
+    deleteMutation.mutate(pendingDelete.id, {
+      onSuccess: () => {
+        setPendingDelete(null);
+      },
+      onError: () => {
+        // Close the dialog on failure too — the list is unchanged so the
+        // operator can retry from the row. A detailed inline error in the
+        // dialog is a future enhancement.
+        setPendingDelete(null);
+      },
+    });
+  }, [deleteMutation, pendingDelete]);
 
   const handleUpdate = useCallback(
     async (row: SavedSearch) => {
@@ -356,6 +382,41 @@ export function SavedSearchesPanel({
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        open={pendingDelete !== null}
+        onClose={cancelDelete}
+        title="Delete saved search"
+      >
+        <div className="space-y-4" data-testid="delete-saved-search-confirm">
+          <p className="text-sm text-text-secondary">
+            Delete{' '}
+            <span className="font-semibold text-text-primary">
+              {pendingDelete?.name?.trim() || 'this saved search'}
+            </span>
+            ? This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={cancelDelete}
+              data-testid="cancel-delete-saved-search"
+              className="px-3 py-1 rounded border border-border text-xs font-mono text-text-secondary hover:text-text-primary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDelete}
+              disabled={deleteMutation.isPending}
+              data-testid="confirm-delete-saved-search"
+              className="px-3 py-1 rounded border border-accent-error text-xs font-mono text-accent-error hover:bg-accent-error/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {deleteMutation.isPending ? 'Deleting…' : 'Delete'}
+            </button>
+          </div>
+        </div>
       </Modal>
     </aside>
   );
