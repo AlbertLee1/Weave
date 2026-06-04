@@ -10,7 +10,7 @@
 // Tailwind popover (mirrors LayoutMenu / VertexAddObjectsDialog) so no new
 // heavy dependency lands behind the Vertex lazy chunk.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as React from 'react';
 
 import {
@@ -37,6 +37,16 @@ function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+// Elements that can receive keyboard focus, used by the dialog's focus trap.
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
 export function VertexShareLinkPanel({ graphRid, onClose }: VertexShareLinkPanelProps) {
   const [links, setLinks] = useState<ShareLinkSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,6 +55,79 @@ export function VertexShareLinkPanel({ graphRid, onClose }: VertexShareLinkPanel
   const [created, setCreated] = useState<CreatedState | null>(null);
   const [copied, setCopied] = useState(false);
   const [revoking, setRevoking] = useState<ReadonlySet<string>>(() => new Set());
+
+  // Focus management for this self-drawn dialog (it is NOT the shared
+  // common/Modal, which already traps + restores focus). On open we move focus
+  // inside, keep Tab/Shift+Tab cycling within, close on Escape, and restore
+  // focus to whatever element opened the panel (typically the Share button)
+  // when it unmounts — so keyboard users never end up behind the popover.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
+  // Record the element that had focus when the panel mounted, move focus into
+  // the dialog, and restore focus to the trigger on unmount. Runs once per
+  // mount — the parent conditionally mounts/unmounts this component on
+  // open/close, so mount == open and unmount == close.
+  useEffect(() => {
+    triggerRef.current = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    if (dialog) {
+      const first = dialog.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+      // Prefer the first focusable child; fall back to the dialog itself
+      // (focusable via tabIndex={-1}) so focus never sits on the page behind.
+      if (first) first.focus();
+      else dialog.focus();
+    }
+    return () => {
+      const trigger = triggerRef.current;
+      if (trigger && typeof trigger.focus === 'function') trigger.focus();
+    };
+  }, []);
+
+  // Escape closes the panel.
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  // Focus trap: keep Tab / Shift+Tab cycling among the dialog's focusable
+  // elements instead of escaping to the background page.
+  const handleTrapKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusables = Array.from(
+      dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+    );
+
+    // Degenerate case: nothing focusable inside — keep focus on the dialog.
+    if (focusables.length === 0) {
+      e.preventDefault();
+      dialog.focus();
+      return;
+    }
+
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+
+    if (e.shiftKey) {
+      // Shift+Tab on the first element (or focus already outside) wraps to last.
+      if (active === first || !dialog.contains(active)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      // Tab on the last element (or focus already outside) wraps to first.
+      if (active === last || !dialog.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, []);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -145,10 +228,14 @@ export function VertexShareLinkPanel({ graphRid, onClose }: VertexShareLinkPanel
 
   return (
     <div
+      ref={dialogRef}
       data-testid="vertex-share-panel"
       role="dialog"
+      aria-modal="true"
       aria-label="Share links"
+      tabIndex={-1}
       onClick={stop}
+      onKeyDown={handleTrapKeyDown}
       className="absolute right-0 top-full z-30 mt-1 w-80 rounded border border-zinc-700 bg-zinc-950 p-3 text-xs text-zinc-100 shadow-lg"
     >
       <div className="mb-2 flex items-center justify-between">
