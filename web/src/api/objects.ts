@@ -76,6 +76,11 @@ export interface ListLinkedObjectsParams {
   linkType: string;
   pageSize?: number;
   pageToken?: string;
+  // Traversal direction. "forward" (the default) walks the link in its
+  // declared source -> target direction; "reverse" walks target -> source
+  // to surface incoming/reverse links. Mirrors the backend `?direction=`
+  // query param read in pkg/oss/handlers.go.
+  direction?: 'forward' | 'reverse';
 }
 
 export function listLinkedObjects(
@@ -84,6 +89,7 @@ export function listLinkedObjects(
   const query = new URLSearchParams();
   if (params.pageSize) query.set('pageSize', String(params.pageSize));
   if (params.pageToken) query.set('pageToken', params.pageToken);
+  if (params.direction) query.set('direction', params.direction);
   const qs = query.toString();
   return request<ObjectPage>(
     'GET',
