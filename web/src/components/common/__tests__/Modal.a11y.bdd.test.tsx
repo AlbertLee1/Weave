@@ -129,4 +129,43 @@ describe('BDD: Modal accessibility & focus trap', () => {
     await userEvent.click(screen.getByTestId('modal-overlay'));
     expect(onClose).toHaveBeenCalledTimes(2);
   });
+
+  it('Given two stacked open Modals, Then each dialog is labelled by its own unique title id', () => {
+    // Given two Modals are open at the same time (e.g. a confirm dialog
+    // stacked on top of an edit form), each with a distinct title.
+    render(
+      <>
+        <Modal open={true} onClose={() => {}} title="Edit Object Type">
+          <button>Save</button>
+        </Modal>
+        <Modal open={true} onClose={() => {}} title="Discard changes?">
+          <button>Discard</button>
+        </Modal>
+      </>,
+    );
+
+    const dialogs = screen.getAllByRole('dialog');
+    expect(dialogs).toHaveLength(2);
+
+    const labelledByIds = dialogs.map((d) => d.getAttribute('aria-labelledby'));
+    // Both must actually be wired up...
+    labelledByIds.forEach((id) => expect(id).toBeTruthy());
+    // ...and crucially the two ids must be DIFFERENT, so a screen reader can
+    // never confuse the top dialog with the one beneath it (the bug with a
+    // shared module-level "modal-title" constant).
+    expect(labelledByIds[0]).not.toBe(labelledByIds[1]);
+
+    // And each dialog's labelledby resolves through the DOM to its OWN visible
+    // heading text (relationship-based, not a hardcoded id value).
+    const headingTexts = labelledByIds.map(
+      (id) => document.getElementById(id as string)?.textContent,
+    );
+    expect(headingTexts).toEqual(
+      expect.arrayContaining(['Edit Object Type', 'Discard changes?']),
+    );
+
+    // And each dialog exposes its own title as its accessible name.
+    const accessibleNames = dialogs.map((d) => d.getAttribute('aria-label') ?? null);
+    expect(accessibleNames).toEqual([null, null]); // labelled by id, not aria-label
+  });
 });

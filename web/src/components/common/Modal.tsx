@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 
 interface ModalProps {
   open: boolean;
@@ -14,9 +14,6 @@ const SIZE_CLASS: Record<NonNullable<ModalProps['size']>, string> = {
   xl: 'max-w-4xl',
 };
 
-// Stable id wiring the dialog's aria-labelledby to its <h2> title.
-const TITLE_ID = 'modal-title';
-
 // Selector for elements that can receive keyboard focus, used by the focus trap.
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -30,6 +27,10 @@ const FOCUSABLE_SELECTOR = [
 export function Modal({ open, onClose, title, children, size = 'md' }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  // Per-instance unique id wiring this dialog's aria-labelledby to its own <h2>
+  // title. A module-level constant would collide when two Modals are stacked,
+  // making both <h2> share one id and mislabelling the top dialog.
+  const titleId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -117,7 +118,7 @@ export function Modal({ open, onClose, title, children, size = 'md' }: ModalProp
         ref={panelRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={title ? TITLE_ID : undefined}
+        aria-labelledby={title ? titleId : undefined}
         aria-label={title ? undefined : 'Dialog'}
         tabIndex={-1}
         onKeyDown={handleTrapKeyDown}
@@ -132,7 +133,7 @@ export function Modal({ open, onClose, title, children, size = 'md' }: ModalProp
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-border/50">
           <h2
-            id={TITLE_ID}
+            id={titleId}
             className="text-xl font-semibold text-text-primary tracking-tight"
             style={{ fontFamily: 'var(--font-sans)' }}
           >
