@@ -275,6 +275,12 @@ export function ActionConsolePage() {
 
   return (
     <div className="flex h-full">
+      {/* Stable page-level heading. Visually hidden so the layout is
+          unchanged, but it gives the standalone Action Console route exactly
+          one <h1> across every main state, matching the rest of the app's
+          heading structure (the visible panel headings stay <h2>). */}
+      <h1 className="sr-only">Action Console</h1>
+
       {/* Left panel: action types list */}
       <div className="w-72 border-r border-border flex flex-col bg-bg-primary">
         <div className="px-4 py-3 border-b border-border">

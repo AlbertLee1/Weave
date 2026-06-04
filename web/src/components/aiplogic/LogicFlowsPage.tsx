@@ -506,6 +506,10 @@ function LogicFlowsInner() {
       className="mx-auto flex h-[calc(100vh-9rem)] max-w-[1400px] gap-4"
       data-testid="logic-flows-page"
     >
+      {/* Stable page-level heading for a11y/landmark parity with the rest of
+          the app (every routed page exposes exactly one <h1>). Visually hidden
+          via the shared sr-only util so the existing layout is unchanged. */}
+      <h1 className="sr-only">Logic Flows</h1>
       <FlowList
         flows={flows}
         loading={flowsQuery.isLoading}
