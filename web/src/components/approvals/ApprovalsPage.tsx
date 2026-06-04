@@ -1,4 +1,10 @@
-import { useMemo, useState } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 import { useParams } from 'react-router';
 import type { ActionApproval } from '../../api/approvals';
 import { ApiRequestError } from '../../api/client';
@@ -51,6 +57,42 @@ export function ApprovalsPage() {
   const rejectMutation = useRejectAction(activeOntology);
 
   const approvals = useMemo(() => listQuery.data?.data ?? [], [listQuery.data]);
+
+  // Roving-tabindex refs for the status-filter tablist so keyboard navigation
+  // can move DOM focus to the activated tab (WAI-ARIA tabs pattern).
+  const statusTabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // ArrowLeft/Right (and Up/Down) move between tabs (wrapping), Home/End jump to
+  // the ends. Activation is automatic: moving focus also selects (setStatus),
+  // which is the recommended pattern for tablists whose panels render cheaply.
+  const handleStatusTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const last = STATUS_OPTIONS.length - 1;
+      let nextIndex: number | null = null;
+      switch (event.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          nextIndex = index === last ? 0 : index + 1;
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          nextIndex = index === 0 ? last : index - 1;
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        case 'End':
+          nextIndex = last;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      setStatus(STATUS_OPTIONS[nextIndex].value);
+      statusTabRefs.current[nextIndex]?.focus();
+    },
+    [],
+  );
 
   if (!activeOntology) {
     return (
@@ -127,13 +169,18 @@ export function ApprovalsPage() {
         data-testid="approvals-filters"
       >
         <div className="flex items-center gap-1" role="tablist" aria-label="Status filter">
-          {STATUS_OPTIONS.map((opt) => (
+          {STATUS_OPTIONS.map((opt, index) => (
             <button
               key={opt.value}
+              ref={(el) => {
+                statusTabRefs.current[index] = el;
+              }}
               type="button"
               role="tab"
               aria-selected={status === opt.value}
+              tabIndex={status === opt.value ? 0 : -1}
               onClick={() => setStatus(opt.value)}
+              onKeyDown={(event) => handleStatusTabKeyDown(event, index)}
               data-testid={`filter-status-${opt.value.toLowerCase()}`}
               className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                 status === opt.value
