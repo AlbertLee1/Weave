@@ -49,10 +49,15 @@ function ToastTile({ toast }: { toast: Toast }) {
   }, [toast.id, ttl, dismiss]);
 
   const borderClass = SEVERITY_BORDER[severity] ?? SEVERITY_BORDER.info;
+  // Errors interrupt screen-reader output immediately; everything else
+  // (info / success / warning) waits politely so it never talks over the user.
+  const ariaLive = severity === 'error' ? 'assertive' : 'polite';
 
   return (
     <div
       role="status"
+      aria-live={ariaLive}
+      aria-atomic="true"
       data-testid="toast"
       data-toast-id={toast.id}
       className={`pointer-events-auto flex items-start gap-3 rounded-lg border px-3 py-2.5 text-sm text-text-primary shadow-lg backdrop-blur ${borderClass}`}
