@@ -42,9 +42,16 @@ export function LinkTypesPanel({ linkTypes }: LinkTypesPanelProps) {
               </span>
             )}
           </div>
-          <Badge variant={cardinalityVariant[lt.cardinality] ?? 'default'}>
-            {lt.cardinality.replace(/_/g, ':')}
-          </Badge>
+          <div className="flex items-center gap-2 shrink-0">
+            {lt.required ? (
+              <Badge variant="warning">Required</Badge>
+            ) : (
+              <span className="text-xs text-text-muted">Optional</span>
+            )}
+            <Badge variant={cardinalityVariant[lt.cardinality] ?? 'default'}>
+              {lt.cardinality.replace(/_/g, ':')}
+            </Badge>
+          </div>
         </li>
       ))}
     </ul>
