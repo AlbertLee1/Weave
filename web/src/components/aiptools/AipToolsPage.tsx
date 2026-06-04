@@ -6,7 +6,7 @@ import type {
   ToolRecord,
   UpdateAipToolRequest,
 } from '../../api/aipTools';
-import { validateToolName } from '../../api/aipTools';
+import { getAipTool, validateToolName } from '../../api/aipTools';
 import {
   useAipTools,
   useCreateAipTool,
@@ -23,6 +23,15 @@ function describeError(err: unknown): string {
   }
   if (err instanceof Error) return err.message;
   return 'Request failed.';
+}
+
+// formatTimestamp renders an ISO instant as a localized, human-readable string,
+// falling back to the raw value when it is unparseable.
+function formatTimestamp(raw: string): string {
+  if (!raw) return '';
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  return date.toLocaleString();
 }
 
 interface ToolDraft {
@@ -91,6 +100,15 @@ export function AipToolsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [parametersError, setParametersError] = useState<string | null>(null);
 
+  // Read-only "View" detail modal state. Unlike the edit modal it fetches the
+  // full record via getAipTool (the read-time source of truth) rather than
+  // reusing the list row, and never mutates anything.
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailName, setDetailName] = useState<string | null>(null);
+  const [detailTool, setDetailTool] = useState<ToolRecord | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
   const isEditing = editingName !== null;
 
   const openCreate = () => {
@@ -110,6 +128,22 @@ export function AipToolsPage() {
   };
 
   const closeModal = () => setModalOpen(false);
+
+  const openView = (tool: ToolRecord) => {
+    setDetailName(tool.name);
+    // Seed the modal with the row we already have so it renders instantly,
+    // then refresh from the read-only endpoint for the authoritative record.
+    setDetailTool(tool);
+    setDetailError(null);
+    setDetailLoading(true);
+    setDetailOpen(true);
+    getAipTool(tool.name)
+      .then((full) => setDetailTool(full))
+      .catch((err) => setDetailError(describeError(err)))
+      .finally(() => setDetailLoading(false));
+  };
+
+  const closeDetail = () => setDetailOpen(false);
 
   const onSubmit = () => {
     setFormError(null);
@@ -271,8 +305,17 @@ export function AipToolsPage() {
                       definition-only (no handler)
                     </p>
                   )}
+                  <ToolMetaLine tool={tool} />
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openView(tool)}
+                    data-testid="aip-tool-view-btn"
+                    className="rounded-md border border-border/60 px-2.5 py-1 text-xs text-text-secondary hover:bg-bg-tertiary"
+                  >
+                    View
+                  </button>
                   <button
                     type="button"
                     onClick={() => openEdit(tool)}
@@ -420,6 +463,157 @@ export function AipToolsPage() {
           </div>
         </div>
       </Modal>
+
+      <Modal
+        open={detailOpen}
+        onClose={closeDetail}
+        title={detailName ? `Tool: ${detailName}` : 'Tool detail'}
+        size="lg"
+      >
+        <ToolDetail
+          tool={detailTool}
+          loading={detailLoading}
+          error={detailError}
+        />
+      </Modal>
+    </div>
+  );
+}
+
+// ToolMetaLine renders the audit trail (createdBy / createdAt / updatedAt) as a
+// single muted line. Each segment is guarded independently so a record missing
+// any field never renders a dangling "Created by  ·" fragment.
+function ToolMetaLine({ tool }: { tool: ToolRecord }) {
+  const segments: string[] = [];
+  if (tool.createdBy) segments.push(`Created by ${tool.createdBy}`);
+  if (tool.createdAt) segments.push(formatTimestamp(tool.createdAt));
+  if (tool.updatedAt) segments.push(`Updated ${formatTimestamp(tool.updatedAt)}`);
+  if (segments.length === 0) return null;
+  return (
+    <p
+      data-testid="aip-tool-row-meta"
+      className="mt-1 text-[11px] text-text-muted"
+    >
+      {segments.join(' · ')}
+    </p>
+  );
+}
+
+// ToolDetail is the read-only body of the View modal: it never mutates the
+// catalog, just surfaces the full record (including the pretty-printed
+// parameters JSON schema) fetched via getAipTool.
+function ToolDetail({
+  tool,
+  loading,
+  error,
+}: {
+  tool: ToolRecord | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (error) {
+    return (
+      <div
+        role="alert"
+        data-testid="aip-tool-detail-error"
+        className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300"
+      >
+        {error}
+      </div>
+    );
+  }
+  if (!tool) {
+    return (
+      <div
+        className="flex items-center justify-center py-10"
+        data-testid="aip-tool-detail-loading"
+      >
+        <LoadingSpinner />
+      </div>
+    );
+  }
+
+  let parametersText = '';
+  if (tool.parameters !== undefined && tool.parameters !== null) {
+    try {
+      parametersText = JSON.stringify(tool.parameters, null, 2);
+    } catch {
+      parametersText = '';
+    }
+  }
+
+  return (
+    <div className="space-y-4 text-xs" data-testid="aip-tool-detail">
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-sm font-semibold text-text-primary">
+          {tool.name}
+        </span>
+        <EnabledBadge enabled={tool.enabled} />
+        {loading && (
+          <span className="text-[11px] text-text-muted">refreshing…</span>
+        )}
+      </div>
+
+      <DetailField label="Description">
+        {tool.description ? (
+          <p className="text-xs text-text-secondary">{tool.description}</p>
+        ) : (
+          <p className="text-[11px] italic text-text-muted">No description.</p>
+        )}
+      </DetailField>
+
+      <DetailField label="Handler Function RID">
+        {tool.handlerFunctionRid ? (
+          <p className="font-mono text-[11px] text-text-secondary">
+            {tool.handlerFunctionRid}
+          </p>
+        ) : (
+          <p className="text-[11px] italic text-text-muted">
+            definition-only (no handler)
+          </p>
+        )}
+      </DetailField>
+
+      <DetailField label="Audit">
+        <ToolMetaLine tool={tool} />
+        {!tool.createdBy && !tool.createdAt && !tool.updatedAt && (
+          <p className="text-[11px] italic text-text-muted">
+            No audit metadata.
+          </p>
+        )}
+      </DetailField>
+
+      <DetailField label="Parameters (JSON schema)">
+        {parametersText ? (
+          <pre
+            data-testid="aip-tool-detail-parameters"
+            className="max-h-72 overflow-auto rounded-md border border-border/50 bg-bg-primary px-2.5 py-2 font-mono text-[11px] text-text-primary"
+          >
+            {parametersText}
+          </pre>
+        ) : (
+          <p className="text-[11px] italic text-text-muted">
+            No parameters defined.
+          </p>
+        )}
+      </DetailField>
+    </div>
+  );
+}
+
+function DetailField({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+        {label}
+      </span>
+      {children}
     </div>
   );
 }
