@@ -18,6 +18,18 @@ const ENTITY_TYPES = [
   'Session',
 ];
 
+// Action vocabulary mirrored from the ActionBadge / actionTone tones below
+// (create / update / delete) plus the auth lifecycle events the backend
+// records (login_success / login_failure). Serialized to the `action` query
+// param that cmd/server/admin_audit.go reads.
+const ACTIONS = [
+  'create',
+  'update',
+  'delete',
+  'login_success',
+  'login_failure',
+];
+
 const PAGE_SIZE = 50;
 
 export function AuditHistoryPage() {
@@ -26,6 +38,8 @@ export function AuditHistoryPage() {
 
   const [entityType, setEntityType] = useState('');
   const [actor, setActor] = useState('');
+  const [resourceRid, setResourceRid] = useState('');
+  const [action, setAction] = useState('');
   const [since, setSince] = useState('');
   const [until, setUntil] = useState('');
 
@@ -33,11 +47,13 @@ export function AuditHistoryPage() {
     () => ({
       resource_type: entityType || undefined,
       actor: actor.trim() || undefined,
+      resourceRid: resourceRid.trim() || undefined,
+      action: action || undefined,
       since: since ? new Date(since).toISOString() : undefined,
       until: until ? new Date(until).toISOString() : undefined,
       pageSize: PAGE_SIZE,
     }),
-    [entityType, actor, since, until],
+    [entityType, actor, resourceRid, action, since, until],
   );
 
   const {
@@ -58,6 +74,8 @@ export function AuditHistoryPage() {
   const clearFilters = () => {
     setEntityType('');
     setActor('');
+    setResourceRid('');
+    setAction('');
     setSince('');
     setUntil('');
   };
@@ -125,6 +143,37 @@ export function AuditHistoryPage() {
             onChange={(e) => setActor(e.target.value)}
             className="px-3 py-1.5 text-sm rounded bg-bg-tertiary text-text-primary outline-none border border-transparent focus:border-accent-cyan/40"
           />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] uppercase tracking-widest text-text-secondary">
+            Resource RID
+          </span>
+          <input
+            type="text"
+            aria-label="Resource RID"
+            placeholder="e.g. ri.ontology.main.object-type.x"
+            value={resourceRid}
+            onChange={(e) => setResourceRid(e.target.value)}
+            className="px-3 py-1.5 text-sm rounded bg-bg-tertiary text-text-primary outline-none border border-transparent focus:border-accent-cyan/40"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] uppercase tracking-widest text-text-secondary">
+            Action
+          </span>
+          <select
+            aria-label="Action"
+            value={action}
+            onChange={(e) => setAction(e.target.value)}
+            className="px-3 py-1.5 text-sm rounded bg-bg-tertiary text-text-primary outline-none border border-transparent focus:border-accent-cyan/40"
+          >
+            <option value="">All actions</option>
+            {ACTIONS.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-[10px] uppercase tracking-widest text-text-secondary">
