@@ -1,4 +1,11 @@
-import { useMemo, useState } from 'react';
+import {
+  useMemo,
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  type KeyboardEvent,
+} from 'react';
 import type {
   ActionType,
   ObjectType,
@@ -72,6 +79,87 @@ export function BulkActionToolbar({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  // Refs scoped ONLY to the export menu (the role="menu" dropdown below the
+  // "Export Selected" trigger). The confirm / progress Modals are unrelated
+  // and intentionally untouched by this keyboard wiring.
+  const exportTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const getExportMenuItems = useCallback(
+    () =>
+      Array.from(
+        exportMenuRef.current?.querySelectorAll<HTMLElement>(
+          '[role="menuitem"]',
+        ) ?? [],
+      ),
+    [],
+  );
+
+  const closeExportMenu = useCallback((restoreFocus: boolean) => {
+    setExportOpen(false);
+    if (restoreFocus) {
+      exportTriggerRef.current?.focus();
+    }
+  }, []);
+
+  // When the export menu opens, move focus to the first format item
+  // (WAI-ARIA menu pattern). No-op when there are no items.
+  useEffect(() => {
+    if (!exportOpen) return;
+    const items = getExportMenuItems();
+    items[0]?.focus();
+  }, [exportOpen, getExportMenuItems]);
+
+  const handleExportMenuKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      const items = getExportMenuItems();
+      if (items.length === 0) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeExportMenu(true);
+        }
+        return;
+      }
+
+      const activeIndex = items.findIndex(
+        (item) => item === document.activeElement,
+      );
+
+      switch (e.key) {
+        case 'ArrowDown': {
+          e.preventDefault();
+          const next = activeIndex < 0 ? 0 : (activeIndex + 1) % items.length;
+          items[next]?.focus();
+          break;
+        }
+        case 'ArrowUp': {
+          e.preventDefault();
+          const prev = activeIndex <= 0 ? items.length - 1 : activeIndex - 1;
+          items[prev]?.focus();
+          break;
+        }
+        case 'Home': {
+          e.preventDefault();
+          items[0]?.focus();
+          break;
+        }
+        case 'End': {
+          e.preventDefault();
+          items[items.length - 1]?.focus();
+          break;
+        }
+        case 'Escape': {
+          e.preventDefault();
+          closeExportMenu(true);
+          break;
+        }
+        default:
+          break;
+      }
+    },
+    [getExportMenuItems, closeExportMenu],
+  );
+
   // US-318: when async submit succeeds we open the BatchProgressModal and
   // hand it the jobId. progressOpen flips first (so the modal appears with
   // a "scheduling…" placeholder), then progressJobId fills in once the 202
@@ -175,8 +263,11 @@ export function BulkActionToolbar({
         </button>
         <div className="relative">
           <button
+            ref={exportTriggerRef}
             type="button"
             onClick={() => setExportOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={exportOpen}
             data-testid="bulk-export"
             className="px-3 py-1.5 rounded text-xs font-sans text-text-secondary hover:text-text-primary border border-border hover:border-accent-cyan transition-colors"
           >
@@ -184,7 +275,10 @@ export function BulkActionToolbar({
           </button>
           {exportOpen && (
             <div
+              ref={exportMenuRef}
               role="menu"
+              aria-orientation="vertical"
+              onKeyDown={handleExportMenuKeyDown}
               className="absolute bottom-full mb-2 left-0 min-w-[160px] rounded border border-border bg-bg-primary shadow-lg"
             >
               <button
