@@ -76,9 +76,12 @@ export function CommentsTab({ targetRid, highlightCommentId }: CommentsTabProps)
   const [createError, setCreateError] = useState<string | null>(null);
   const [replyParent, setReplyParent] = useState<string | null>(null);
   const [replyDraft, setReplyDraft] = useState('');
+  const [replyError, setReplyError] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const threads = useMemo(
     () => (data ? buildThreads(data.comments) : []),
@@ -148,33 +151,41 @@ export function CommentsTab({ targetRid, highlightCommentId }: CommentsTabProps)
   async function handleReply(parentId: string) {
     const trimmed = replyDraft.trim();
     if (!trimmed) return;
+    setReplyError(null);
     try {
       await createMut.mutateAsync({ targetRid, body: trimmed, parentId });
       setReplyDraft('');
       setReplyParent(null);
-    } catch {
-      // Error toast surfaces via the mutation; keep the draft so user can retry.
+    } catch (e) {
+      // Keep the reply form + draft open so the user can retry without
+      // retyping, and surface the failure inline.
+      setReplyError((e as Error).message);
     }
   }
 
   async function handleUpdate(id: string) {
     const trimmed = editDraft.trim();
     if (!trimmed) return;
+    setUpdateError(null);
     try {
       await updateMut.mutateAsync({ id, body: trimmed });
       setEditId(null);
       setEditDraft('');
-    } catch {
-      // keep edit open on error
+    } catch (e) {
+      // Keep the inline editor open and show why the save failed.
+      setUpdateError((e as Error).message);
     }
   }
 
   async function handleConfirmDelete() {
     if (!pendingDeleteId) return;
+    setDeleteError(null);
     try {
       await deleteMut.mutateAsync(pendingDeleteId);
-    } finally {
       setPendingDeleteId(null);
+    } catch (e) {
+      // Keep the confirm modal open and surface the failure inside it.
+      setDeleteError((e as Error).message);
     }
   }
 
@@ -202,19 +213,26 @@ export function CommentsTab({ targetRid, highlightCommentId }: CommentsTabProps)
                   onReplyClick={() => {
                     setReplyParent(node.comment.id);
                     setReplyDraft('');
+                    setReplyError(null);
                   }}
                   onEditClick={() => {
                     setEditId(node.comment.id);
                     setEditDraft(node.comment.body);
+                    setUpdateError(null);
                   }}
-                  onDeleteClick={() => setPendingDeleteId(node.comment.id)}
+                  onDeleteClick={() => {
+                    setPendingDeleteId(node.comment.id);
+                    setDeleteError(null);
+                  }}
                   isEditing={editId === node.comment.id}
                   editDraft={editDraft}
+                  editError={editId === node.comment.id ? updateError : null}
                   onEditDraftChange={setEditDraft}
                   onEditSave={() => handleUpdate(node.comment.id)}
                   onEditCancel={() => {
                     setEditId(null);
                     setEditDraft('');
+                    setUpdateError(null);
                   }}
                   updating={updateMut.isPending}
                   canReply
@@ -238,15 +256,21 @@ export function CommentsTab({ targetRid, highlightCommentId }: CommentsTabProps)
                           onEditClick={() => {
                             setEditId(reply.id);
                             setEditDraft(reply.body);
+                            setUpdateError(null);
                           }}
-                          onDeleteClick={() => setPendingDeleteId(reply.id)}
+                          onDeleteClick={() => {
+                            setPendingDeleteId(reply.id);
+                            setDeleteError(null);
+                          }}
                           isEditing={editId === reply.id}
                           editDraft={editDraft}
+                          editError={editId === reply.id ? updateError : null}
                           onEditDraftChange={setEditDraft}
                           onEditSave={() => handleUpdate(reply.id)}
                           onEditCancel={() => {
                             setEditId(null);
                             setEditDraft('');
+                            setUpdateError(null);
                           }}
                           updating={updateMut.isPending}
                           canReply={false}
@@ -271,12 +295,21 @@ export function CommentsTab({ targetRid, highlightCommentId }: CommentsTabProps)
                       className="w-full text-xs font-mono px-2 py-1.5 rounded border border-border bg-bg-base text-text-primary"
                       data-testid={`comment-reply-input-${node.comment.id}`}
                     />
+                    {replyError && (
+                      <p
+                        className="text-xs text-accent-error"
+                        data-testid={`comment-reply-error-${node.comment.id}`}
+                      >
+                        {replyError}
+                      </p>
+                    )}
                     <div className="flex gap-2 justify-end">
                       <button
                         type="button"
                         onClick={() => {
                           setReplyParent(null);
                           setReplyDraft('');
+                          setReplyError(null);
                         }}
                         className="text-xs px-2 py-1 rounded border border-border text-text-secondary hover:text-text-primary"
                         data-testid={`comment-reply-cancel-${node.comment.id}`}
@@ -340,7 +373,10 @@ export function CommentsTab({ targetRid, highlightCommentId }: CommentsTabProps)
 
       <Modal
         open={pendingDeleteId !== null}
-        onClose={() => setPendingDeleteId(null)}
+        onClose={() => {
+          setPendingDeleteId(null);
+          setDeleteError(null);
+        }}
         title="Delete this comment?"
       >
         <div className="space-y-4" data-testid="comment-delete-confirm">
@@ -348,10 +384,21 @@ export function CommentsTab({ targetRid, highlightCommentId }: CommentsTabProps)
             The comment body will be cleared but the placeholder stays visible
             so reply chains keep their context.
           </p>
+          {deleteError && (
+            <p
+              className="text-xs text-accent-error"
+              data-testid="comment-delete-error"
+            >
+              {deleteError}
+            </p>
+          )}
           <div className="flex justify-end gap-2">
             <button
               type="button"
-              onClick={() => setPendingDeleteId(null)}
+              onClick={() => {
+                setPendingDeleteId(null);
+                setDeleteError(null);
+              }}
               className="text-xs px-3 py-1.5 rounded border border-border text-text-secondary"
               data-testid="comment-delete-cancel"
             >
@@ -381,6 +428,7 @@ interface CommentRowProps {
   onDeleteClick: () => void;
   isEditing: boolean;
   editDraft: string;
+  editError?: string | null;
   onEditDraftChange: (value: string) => void;
   onEditSave: () => void;
   onEditCancel: () => void;
@@ -397,6 +445,7 @@ function CommentRow({
   onDeleteClick,
   isEditing,
   editDraft,
+  editError = null,
   onEditDraftChange,
   onEditSave,
   onEditCancel,
@@ -438,6 +487,14 @@ function CommentRow({
             className="w-full text-xs font-mono px-2 py-1.5 rounded border border-border bg-bg-base text-text-primary"
             data-testid={`comment-edit-input-${comment.id}`}
           />
+          {editError && (
+            <p
+              className="text-xs text-accent-error"
+              data-testid={`comment-edit-error-${comment.id}`}
+            >
+              {editError}
+            </p>
+          )}
           <div className="flex gap-2 justify-end">
             <button
               type="button"
