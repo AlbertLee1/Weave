@@ -179,6 +179,7 @@ export function ThreadsPage() {
       className="mx-auto flex h-[calc(100vh-9rem)] max-w-7xl gap-4"
       data-testid="threads-page"
     >
+      <h1 className="sr-only">Threads</h1>
       <ThreadList
         threads={threads}
         loading={threadsQuery.isLoading}

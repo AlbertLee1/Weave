@@ -750,6 +750,13 @@ export function PipelinesPage() {
       data-testid="pipelines-page"
       className="mx-auto flex h-[calc(100vh-9rem)] max-w-[1400px] gap-4"
     >
+      {/* Stable page-level heading. Visually hidden so the layout is
+          unchanged, but it gives the standalone Pipelines route exactly one
+          <h1> across every state, matching the rest of the app's heading
+          structure (mirrors ExplorerPage #228). The visible section labels
+          remain <h4>/<h2> and are intentionally left unchanged. */}
+      <h1 className="sr-only">Pipelines</h1>
+
       <PipelineList
         pipelines={pipelines}
         loading={listQuery.isLoading}
