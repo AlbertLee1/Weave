@@ -44,11 +44,24 @@ type executeRequest struct {
 // because queries run synchronously on the request goroutine; the
 // "running" / "canceled" variants are documented in the OpenAPI spec for
 // SDK compatibility but never returned by this implementation.
+//
+// On a succeeded status the engine result is inlined: Columns carries the
+// SELECT-list column names and Rows carries one []any per result row
+// (positionally aligned with Columns). Weave executes synchronously, so
+// returning the data on the same response is natural — there is no async
+// "fetch results" round-trip. Columns / Rows are omitted on failed
+// statuses and when the configured engine does not implement ResultEngine.
 type QueryStatus struct {
 	Type          string `json:"type"`
 	QueryID       string `json:"queryId"`
 	ErrorMessage  string `json:"errorMessage,omitempty"`
 	FailureReason string `json:"failureReason,omitempty"`
+	// Columns / Rows are intentionally NOT omitempty: a zero-row SELECT
+	// still serialises columns + an empty rows array so the UI can render
+	// the result header, while a result-less / failed status leaves both
+	// nil → JSON null (distinguishable from an empty [] result set).
+	Columns []string `json:"columns"`
+	Rows    [][]any  `json:"rows"`
 }
 
 // Execute handles POST /api/v2/sqlQueries/execute.
@@ -84,28 +97,30 @@ func (h *Handler) Execute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	queryID := newQueryID()
-	if err := h.engine.Execute(r.Context(), body.Query); err != nil {
-		reason := "ExecutionError"
-		switch {
-		case errors.Is(err, ErrQueryTimeout),
-			errors.Is(err, context.DeadlineExceeded):
-			reason = "QueryTimeout"
-		case errors.Is(err, ErrMaxRowsExceeded):
-			reason = "MaxRowsExceeded"
-		case errors.Is(err, ErrNotSelect),
-			errors.Is(err, ErrForbiddenStatement),
-			errors.Is(err, ErrEmptyQuery):
-			reason = "NonSelectQuery"
-		case errors.Is(err, ErrStackedStatement):
-			reason = "StackedStatement"
-		case errors.Is(err, ErrSystemTableAccess):
-			reason = "SystemTableAccess"
-		}
+
+	// Prefer the result-returning path when the engine supports it so the
+	// succeeded status can inline columns + rows. Falls back to the
+	// result-less Execute for engines that only implement the base
+	// interface (e.g. test fakes / future streaming backends).
+	var (
+		columns []string
+		rows    [][]any
+		execErr error
+	)
+	if re, ok := h.engine.(ResultEngine); ok {
+		columns, rows, execErr = re.ExecuteWithResult(r.Context(), body.Query)
+	} else {
+		execErr = h.engine.Execute(r.Context(), body.Query)
+	}
+
+	if execErr != nil {
+		// On any failure we deliberately drop columns / rows so a failed
+		// envelope never carries a partial result set.
 		httputil.WriteJSON(w, http.StatusOK, QueryStatus{
 			Type:          "failed",
 			QueryID:       queryID,
-			ErrorMessage:  err.Error(),
-			FailureReason: reason,
+			ErrorMessage:  execErr.Error(),
+			FailureReason: classifyExecutionError(execErr),
 		})
 		return
 	}
@@ -113,7 +128,34 @@ func (h *Handler) Execute(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, QueryStatus{
 		Type:    "succeeded",
 		QueryID: queryID,
+		Columns: columns,
+		Rows:    rows,
 	})
+}
+
+// classifyExecutionError maps an engine error to the wire failureReason.
+// Mirrors classifyValidationError but covers the runtime sentinels
+// (timeout / row cap) in addition to the validation sentinels, since a
+// ResultEngine runs ValidateQuery itself and may surface a safety
+// sentinel from the engine layer.
+func classifyExecutionError(err error) string {
+	switch {
+	case errors.Is(err, ErrQueryTimeout),
+		errors.Is(err, context.DeadlineExceeded):
+		return "QueryTimeout"
+	case errors.Is(err, ErrMaxRowsExceeded):
+		return "MaxRowsExceeded"
+	case errors.Is(err, ErrStackedStatement):
+		return "StackedStatement"
+	case errors.Is(err, ErrSystemTableAccess):
+		return "SystemTableAccess"
+	case errors.Is(err, ErrNotSelect),
+		errors.Is(err, ErrForbiddenStatement),
+		errors.Is(err, ErrEmptyQuery):
+		return "NonSelectQuery"
+	default:
+		return "ExecutionError"
+	}
 }
 
 // newQueryID returns a 16-byte random hex string for QueryStatus.queryId.
