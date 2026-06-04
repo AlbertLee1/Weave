@@ -709,6 +709,10 @@ interface EditFormState {
   classification: '' | Classification;
   extendsRid: string;
   auditDataAccess: boolean;
+  // VTX-077: timeline event metadata. isEvent gates the start/end pickers.
+  isEvent: boolean;
+  eventStartProp: string;
+  eventEndProp: string;
 }
 
 function EditObjectTypeModal({
@@ -742,8 +746,19 @@ function EditObjectTypeModal({
     classification: objectType.classification ?? '',
     extendsRid: objectType.extendsRid ?? '',
     auditDataAccess: objectType.auditDataAccess ?? false,
+    isEvent: objectType.isEvent ?? false,
+    eventStartProp: objectType.eventStartProp ?? '',
+    eventEndProp: objectType.eventEndProp ?? '',
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // VTX-077: the start/end pickers offer this ObjectType's own properties by
+  // apiName. The read model exposes them as a keyed record; an empty/absent
+  // map just yields an empty dropdown (operator can still toggle the flag).
+  const propertyNames = useMemo(
+    () => Object.keys(objectType.properties ?? {}).sort(),
+    [objectType.properties],
+  );
 
   // US-212: a type cannot extend itself, so the current ObjectType is
   // excluded from the candidate list. (The backend additionally rejects
@@ -792,6 +807,12 @@ function EditObjectTypeModal({
       // US-264: always send the toggle's current state so the backend
       // tri-state pointer receives an explicit bool.
       auditDataAccess: form.auditDataAccess,
+      // VTX-077: the form is authoritative. Always send isEvent; carry the
+      // start/end props when it's on, and clear them ('') when it's off so a
+      // type demoted from "event" doesn't keep stale Timeline placement.
+      isEvent: form.isEvent,
+      eventStartProp: form.isEvent ? form.eventStartProp : '',
+      eventEndProp: form.isEvent ? form.eventEndProp : '',
     };
     try {
       await update.mutateAsync({ rid: objectType.rid, body });
@@ -1096,6 +1117,61 @@ function EditObjectTypeModal({
           testId="object-type-edit-audit-data-access"
           hint="Emit an audit event for every successful read of objects of this type."
         />
+        <ToggleField
+          label="Timeline event"
+          checked={form.isEvent}
+          onChange={(checked) =>
+            setForm((f) => ({ ...f, isEvent: checked }))
+          }
+          testId="object-type-edit-is-event"
+          hint="Mark this ObjectType as a Vertex Timeline event spanning a start/end property."
+        />
+        {form.isEvent && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field
+              label="Event start property"
+              hint="Property holding the event's start timestamp."
+            >
+              <select
+                aria-label="Event start property"
+                data-testid="object-type-edit-event-start-prop"
+                value={form.eventStartProp}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, eventStartProp: e.target.value }))
+                }
+                className={inputClass + ' font-mono'}
+              >
+                <option value="">— None —</option>
+                {propertyNames.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              label="Event end property"
+              hint="Property holding the event's end timestamp. Leave as None for point-in-time events."
+            >
+              <select
+                aria-label="Event end property"
+                data-testid="object-type-edit-event-end-prop"
+                value={form.eventEndProp}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, eventEndProp: e.target.value }))
+                }
+                className={inputClass + ' font-mono'}
+              >
+                <option value="">— None —</option>
+                {propertyNames.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        )}
         {submitError && (
           <p
             role="alert"
