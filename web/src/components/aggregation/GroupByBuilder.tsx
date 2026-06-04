@@ -1,9 +1,30 @@
 import type { GroupByClause, HavingClause } from '../../api/types';
 
+// SubtotalMode selects the Palantir cube/rollup subtotal expansion the backend
+// applies to the declared groupBys:
+//   - 'none'   — one row per concrete groupBy combination (default).
+//   - 'cube'   — every 2^N subset of the groupBys (+ grand total).
+//   - 'rollup' — the hierarchical chain [gb0..N] … [gb0] [] (+ grand total).
+// cube and rollup are mutually exclusive on the wire (AggregationRequest), so a
+// single-select control is the right shape. Only meaningful with ≥1 groupBy.
+export type SubtotalMode = 'none' | 'cube' | 'rollup';
+
+const subtotalModes: { value: SubtotalMode; label: string }[] = [
+  { value: 'none', label: 'No subtotals' },
+  { value: 'cube', label: 'Cube (all subsets)' },
+  { value: 'rollup', label: 'Rollup (hierarchy)' },
+];
+
 interface GroupByBuilderProps {
   groupBy: GroupByClause[];
   onChange: (groupBy: GroupByClause[]) => void;
   availableFields: string[];
+  // Subtotal expansion mode. The control is disabled until at least one groupBy
+  // clause exists, since cube/rollup are no-ops without grouping dimensions.
+  // Optional so existing callers that don't surface cube/rollup (e.g. the
+  // ObjectSet groupBy builder) keep working; when omitted the control hides.
+  subtotalMode?: SubtotalMode;
+  onSubtotalModeChange?: (mode: SubtotalMode) => void;
 }
 
 // HavingDraft is the editor-side row for a post-aggregation HavingClause.
@@ -65,7 +86,14 @@ const durationPeriods = ['P1D', 'P1W', 'P1M', 'P3M', 'P1Y', 'PT1H'];
 // Types that accept an optional maxGroupCount (wire key `maxGroupCount`).
 const maxGroupCountTypes: GroupByClause['type'][] = ['exact', 'topValues'];
 
-export function GroupByBuilder({ groupBy, onChange, availableFields }: GroupByBuilderProps) {
+export function GroupByBuilder({
+  groupBy,
+  onChange,
+  availableFields,
+  subtotalMode = 'none',
+  onSubtotalModeChange,
+}: GroupByBuilderProps) {
+  const subtotalDisabled = groupBy.length === 0;
   function addGroupBy() {
     onChange([...groupBy, { field: availableFields[0] ?? '', type: 'exact' }]);
   }
@@ -114,16 +142,39 @@ export function GroupByBuilder({ groupBy, onChange, availableFields }: GroupByBu
 
   return (
     <div data-testid="groupby-section" className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <label className={labelClass}>Group By</label>
-        <button
-          type="button"
-          onClick={addGroupBy}
-          data-testid="groupby-add"
-          className="bg-bg-tertiary border border-border text-text-primary px-4 py-2 rounded text-sm hover:bg-bg-elevated"
-        >
-          + Add Group By
-        </button>
+        <div className="flex items-center gap-2">
+          {onSubtotalModeChange && (
+            <select
+              value={subtotalMode}
+              onChange={(e) => onSubtotalModeChange(e.target.value as SubtotalMode)}
+              disabled={subtotalDisabled}
+              data-testid="aggregation-subtotal-mode"
+              aria-label="Subtotal mode"
+              title={
+                subtotalDisabled
+                  ? 'Add at least one group by to enable cube/rollup subtotals'
+                  : 'Cube computes every subset of the group by dimensions; rollup computes the hierarchical chain'
+              }
+              className={`${inputClass} flex-shrink-0 disabled:opacity-50`}
+            >
+              {subtotalModes.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            type="button"
+            onClick={addGroupBy}
+            data-testid="groupby-add"
+            className="bg-bg-tertiary border border-border text-text-primary px-4 py-2 rounded text-sm hover:bg-bg-elevated"
+          >
+            + Add Group By
+          </button>
+        </div>
       </div>
 
       {groupBy.length === 0 && (

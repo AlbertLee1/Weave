@@ -4,7 +4,13 @@ import { useObjectType } from '../../hooks/useObjectTypes';
 import { useAggregation } from '../../hooks/useAggregation';
 import type { AggregationMetric, GroupByClause, AggregationRequest } from '../../api/types';
 import { MetricSelector } from './MetricSelector';
-import { GroupByBuilder, HavingBuilder, toHavingClauses, type HavingDraft } from './GroupByBuilder';
+import {
+  GroupByBuilder,
+  HavingBuilder,
+  toHavingClauses,
+  type HavingDraft,
+  type SubtotalMode,
+} from './GroupByBuilder';
 import { ResultTable } from './ResultTable';
 import { SimpleChart, type SimpleChartType } from './SimpleChart';
 import { LoadingSpinner } from '../common/LoadingSpinner';
@@ -28,6 +34,7 @@ export function AggregationPage() {
 
   const [metrics, setMetrics] = useState<AggregationMetric[]>([{ type: 'count' }]);
   const [groupBy, setGroupBy] = useState<GroupByClause[]>([]);
+  const [subtotalMode, setSubtotalMode] = useState<SubtotalMode>('none');
   const [having, setHaving] = useState<HavingDraft[]>([]);
   const [filters, setFilters] = useState<FilterCondition[]>([]);
   const [aggRequest, setAggRequest] = useState<AggregationRequest | null>(null);
@@ -89,15 +96,23 @@ export function AggregationPage() {
 
   function handleExecute() {
     const where = buildWhereClause(filters);
+    const hasGroupBy = groupBy.length > 0;
+    // cube/rollup are no-ops without grouping dimensions, and mutually
+    // exclusive on the wire — send exactly one boolean, only when a groupBy
+    // exists. Omit both for the 'none' default so the body stays minimal.
+    const cube = hasGroupBy && subtotalMode === 'cube' ? true : undefined;
+    const rollup = hasGroupBy && subtotalMode === 'rollup' ? true : undefined;
     setAggRequest({
       aggregation: metrics,
-      groupBy: groupBy.length > 0 ? groupBy : undefined,
+      groupBy: hasGroupBy ? groupBy : undefined,
       where,
       // Only send accuracy when the user opts out of the approximate default;
       // omitting it lets the backend apply ALLOW_APPROXIMATE.
       accuracy: accuracyMode === 'REQUIRE_ACCURATE' ? 'REQUIRE_ACCURATE' : undefined,
       // Drop incomplete having rows; undefined omits `having` from the body.
       having: toHavingClauses(having),
+      cube,
+      rollup,
     });
   }
 
@@ -192,6 +207,8 @@ export function AggregationPage() {
             groupBy={groupBy}
             onChange={setGroupBy}
             availableFields={availableFields}
+            subtotalMode={subtotalMode}
+            onSubtotalModeChange={setSubtotalMode}
           />
         </div>
 

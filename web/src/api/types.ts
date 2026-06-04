@@ -222,6 +222,18 @@ export interface AggregationRequest {
   // backend drops result rows where any clause fails (AND semantics). Wire
   // shape mirrors aggregation.HavingClause (metric/op/value). Omit when empty.
   having?: HavingClause[];
+  // Cube, when true, asks the backend to compute every 2^N subset of the
+  // declared groupBys and concatenate the resulting rows (most specific subset
+  // first, down to the grand total). Rows for aggregated-away dimensions omit
+  // those keys from `group` — the result renderer surfaces them as subtotals.
+  // Mutually exclusive with rollup; the backend prefers cube when both are set,
+  // so the UI only ever sends one. Omit for the plain (none) mode.
+  cube?: boolean;
+  // Rollup, when true, asks the backend to compute the hierarchical chain
+  // [gb0..N], [gb0..N-1], ..., [gb0], [] — N+1 groupings, each a subtotal of
+  // the level above. Same group-key-absence semantics as cube. Mutually
+  // exclusive with cube. Omit for the plain (none) mode.
+  rollup?: boolean;
 }
 
 // HavingClause is a post-aggregation row filter, wire-compatible with the
