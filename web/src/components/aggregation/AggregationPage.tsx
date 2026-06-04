@@ -290,7 +290,7 @@ export function AggregationPage() {
       >
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-medium text-text-primary">Aggregation</h2>
+            <h1 className="text-sm font-medium text-text-primary">Aggregation</h1>
             <div className="text-xs font-mono text-text-secondary mt-0.5">
               {ontology} / {objectType}
             </div>
