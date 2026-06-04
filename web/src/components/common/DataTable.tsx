@@ -59,16 +59,38 @@ export function DataTable<T extends Record<string, unknown>>({
                     col.frozen ? 'sticky left-0 bg-bg-tertiary z-10' : ''
                   } ${col.sortable ? 'cursor-pointer hover:text-text-primary' : ''}`}
                   style={col.width ? { width: col.width } : undefined}
-                  onClick={col.sortable ? () => handleSort(col.key) : undefined}
+                  aria-sort={
+                    col.sortable
+                      ? sortField === col.key
+                        ? sortDir === 'asc'
+                          ? 'ascending'
+                          : 'descending'
+                        : 'none'
+                      : undefined
+                  }
                 >
-                  <span className="flex items-center gap-1">
-                    {col.header}
-                    {col.sortable && sortField === col.key && (
-                      <span className="text-accent-cyan">
-                        {sortDir === 'asc' ? '\u2191' : '\u2193'}
-                      </span>
-                    )}
-                  </span>
+                  {col.sortable ? (
+                    <button
+                      type="button"
+                      onClick={() => handleSort(col.key)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleSort(col.key);
+                        }
+                      }}
+                      className="flex items-center gap-1 bg-transparent p-0 font-mono text-xs font-medium text-inherit cursor-pointer"
+                    >
+                      {col.header}
+                      {sortField === col.key && (
+                        <span className="text-accent-cyan">
+                          {sortDir === 'asc' ? '\u2191' : '\u2193'}
+                        </span>
+                      )}
+                    </button>
+                  ) : (
+                    <span className="flex items-center gap-1">{col.header}</span>
+                  )}
                 </th>
               ))}
             </tr>
@@ -114,6 +136,7 @@ export function DataTable<T extends Record<string, unknown>>({
             {hasPrevPage && (
               <button
                 onClick={onPrevPage}
+                aria-label="Previous page"
                 className="px-2 py-1 bg-bg-tertiary rounded hover:bg-bg-elevated transition-colors"
               >
                 Prev
@@ -123,6 +146,7 @@ export function DataTable<T extends Record<string, unknown>>({
             {hasNextPage && (
               <button
                 onClick={onNextPage}
+                aria-label="Next page"
                 className="px-2 py-1 bg-bg-tertiary rounded hover:bg-bg-elevated transition-colors"
               >
                 Next
