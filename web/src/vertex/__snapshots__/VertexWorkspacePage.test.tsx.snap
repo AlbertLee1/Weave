@@ -40,6 +40,21 @@ exports[`VertexWorkspacePage (VTX-017) > snapshot: /vertex/new shell is stable 1
             Layout
           </button>
         </div>
+        <div
+          class="relative"
+          data-testid="vertex-topbar-share-wrap"
+        >
+          <button
+            aria-expanded="false"
+            class="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+            data-testid="vertex-topbar-share"
+            disabled=""
+            title="Save the graph first to share it"
+            type="button"
+          >
+            Share
+          </button>
+        </div>
         <button
           aria-pressed="false"
           class="rounded border px-2 py-1 border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
@@ -54,13 +69,6 @@ exports[`VertexWorkspacePage (VTX-017) > snapshot: /vertex/new shell is stable 1
           type="button"
         >
           Save
-        </button>
-        <button
-          class="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
-          data-testid="vertex-topbar-share"
-          type="button"
-        >
-          Share
         </button>
         <button
           class="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 hover:bg-zinc-800"
