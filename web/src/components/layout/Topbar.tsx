@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from '../common/LanguageSwitcher';
 import { BranchPicker } from './BranchPicker';
 import { TimeRangePicker } from './TimeRangePicker';
-import { useNotifications } from '../../hooks/useNotifications';
+import { useNotificationsUnreadCount } from '../../hooks/useNotifications';
 import { useTheme, type ThemePreference } from '../../hooks/useTheme';
 import { useOntologyStore } from '../../stores/ontologyStore';
 import { splitCamelCase } from '../../lib/breadcrumb';
@@ -35,11 +35,12 @@ export function Topbar() {
     selectedOntology ??
     null;
 
-  const { data } = useNotifications({ unreadOnly: true });
-  const unreadCount = useMemo(
-    () => (data?.data ?? []).filter((n) => !n.read).length,
-    [data],
-  );
+  // Read the badge number from the dedicated O(1) `/notifications/unread-count`
+  // endpoint rather than pulling the entire unread list and counting it
+  // client-side — the backend handler is partial-index-backed for exactly
+  // this "lightweight badge" use case.
+  const { data } = useNotificationsUnreadCount();
+  const unreadCount = data?.count ?? 0;
   const badgeLabel = unreadCount > 9 ? '9+' : String(unreadCount);
 
   const { theme, preference, setPreference } = useTheme();

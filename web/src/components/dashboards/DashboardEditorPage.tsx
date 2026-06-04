@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createDashboard,
+  deleteDashboard,
   duplicateDashboard,
   getDashboard,
   listDashboards,
@@ -177,6 +178,13 @@ export function DashboardEditorPage({
   const [duplicateStatus, setDuplicateStatus] = useState<
     'idle' | 'duplicating' | 'error'
   >('idle');
+  const [deleteStatus, setDeleteStatus] = useState<
+    'idle' | 'deleting' | 'error'
+  >('idle');
+  // Gate the destructive DELETE behind an explicit confirm step rendered
+  // inline in the toolbar (rather than window.confirm, which can't be
+  // observed deterministically in tests).
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Load on mount when an id was passed in (the SPA's /dashboards/:id
   // route wrapper supplies it). Failures fall back to the empty editor
@@ -278,6 +286,31 @@ export function DashboardEditorPage({
       setDuplicateStatus('idle');
     } catch {
       setDuplicateStatus('error');
+    }
+  }, [savedId, onSaved]);
+
+  const handleDelete = useCallback(async () => {
+    if (!savedId) return;
+    setDeleteStatus('deleting');
+    try {
+      await deleteDashboard(savedId);
+      // Reset the editor back to a fresh, unsaved state — the deleted row no
+      // longer exists, so clearing savedId/name/widgets matches what a brand
+      // new editor shows.
+      setConfirmingDelete(false);
+      setSavedId(null);
+      setName('Untitled Dashboard');
+      setIsPublic(false);
+      setWidgets([]);
+      setConfiguringId(null);
+      setDeleteStatus('idle');
+      setSaveStatus('idle');
+      // Tell the route wrapper to leave the now-deleted dashboard's URL. The
+      // empty id signals "navigate away from this dashboard" (the Save-new /
+      // Load / Duplicate flows pass a real id to mount a row instead).
+      onSaved?.('');
+    } catch {
+      setDeleteStatus('error');
     }
   }, [savedId, onSaved]);
 
@@ -522,6 +555,58 @@ export function DashboardEditorPage({
             className="text-xs font-mono text-accent-error"
           >
             Duplicate failed
+          </span>
+        )}
+        {savedId && !confirmingDelete && (
+          <button
+            type="button"
+            data-testid="dashboard-delete"
+            onClick={() => setConfirmingDelete(true)}
+            disabled={deleteStatus === 'deleting'}
+            title="Delete this dashboard"
+            className="px-3 py-1.5 rounded border border-border bg-bg-secondary text-sm text-accent-error hover:border-accent-error disabled:opacity-60"
+          >
+            Delete
+          </button>
+        )}
+        {savedId && confirmingDelete && (
+          <span
+            role="dialog"
+            aria-label="Confirm delete dashboard"
+            data-testid="dashboard-delete-confirm-dialog"
+            className="inline-flex items-center gap-2 px-2 py-1 rounded border border-accent-error/60 bg-accent-error/10"
+          >
+            <span className="text-xs font-mono text-text-primary">
+              Delete this dashboard?
+            </span>
+            <button
+              type="button"
+              data-testid="dashboard-delete-confirm"
+              onClick={() => {
+                void handleDelete();
+              }}
+              disabled={deleteStatus === 'deleting'}
+              className="px-2 py-0.5 rounded border border-accent-error text-xs text-accent-error hover:bg-accent-error/20 disabled:opacity-60"
+            >
+              {deleteStatus === 'deleting' ? 'Deleting…' : 'Confirm Delete'}
+            </button>
+            <button
+              type="button"
+              data-testid="dashboard-delete-cancel"
+              onClick={() => setConfirmingDelete(false)}
+              disabled={deleteStatus === 'deleting'}
+              className="px-2 py-0.5 rounded border border-border text-xs text-text-secondary hover:text-text-primary disabled:opacity-60"
+            >
+              Cancel
+            </button>
+          </span>
+        )}
+        {deleteStatus === 'error' && (
+          <span
+            data-testid="dashboard-delete-status"
+            className="text-xs font-mono text-accent-error"
+          >
+            Delete failed
           </span>
         )}
         {savedDashboards.length > 0 && (
