@@ -11,6 +11,14 @@ export function buildWhereClause(
 ): WhereClause | undefined {
   if (filters.length === 0) return undefined;
 
+  // The operator is a direct op→type mapping onto the backend WhereClause
+  // contract. Every operator the FilterBuilder exposes — including `regex`,
+  // which the converter turns into a Bleve RegexpQuery
+  // (pkg/oss/where/converter.go case "regex" → convertRegex) — uses the
+  // canonical { type, field, value } shape, where `value` is the raw operand
+  // (for regex: the pattern string). No per-operator special-casing is needed
+  // here because the FilterBuilder already produces operand values in the
+  // shape each backend operator expects.
   const clauses: WhereClause[] = filters.map((f) => ({
     type: f.op,
     field: f.field,
