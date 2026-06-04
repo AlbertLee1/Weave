@@ -23,7 +23,11 @@ const TRANSFORM_OPS: readonly TransformOp[] = [
   'scale',
 ];
 
-const RESAMPLE_AGGS = ['avg', 'sum', 'min', 'max', 'count', 'first', 'last'] as const;
+// Only aggregations the backend's resample handler accepts
+// (pkg/timeseries/transform.go: avg|mean|sum|min|max|count). `first`/`last`
+// are intentionally excluded — the backend rejects them with a 4xx, so
+// exposing them only produced guaranteed-failing transform POSTs.
+const RESAMPLE_AGGS = ['avg', 'sum', 'min', 'max', 'count'] as const;
 
 interface DraftStep {
   op: TransformOp;
