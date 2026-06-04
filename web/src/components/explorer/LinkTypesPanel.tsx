@@ -43,6 +43,19 @@ export function LinkTypesPanel({ linkTypes }: LinkTypesPanelProps) {
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {lt.inverseLinkRid && (
+              <span
+                data-testid="link-inverse-indicator"
+                title={`Bidirectional — has inverse link ${lt.inverseLinkRid}`}
+                className="text-xs text-text-secondary"
+                aria-label="Bidirectional link"
+              >
+                &harr;
+              </span>
+            )}
+            {lt.propagateMarkings && (
+              <Badge variant="info">Propagates markings</Badge>
+            )}
             {lt.required ? (
               <Badge variant="warning">Required</Badge>
             ) : (
