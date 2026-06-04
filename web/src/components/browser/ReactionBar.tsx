@@ -4,6 +4,21 @@ import {
   useDeleteReaction,
   useReactionSummary,
 } from '../../hooks/useReactions';
+import { ApiRequestError } from '../../api/client';
+import { useToastStore } from '../../stores/toastStore';
+
+// describeReactionError turns a failed reaction toggle into a short
+// user-facing string. Mirrors WatchButton.describeWatchError so the toast
+// reads "<ErrorName>: <reason>" for structured API errors and falls back to
+// the raw message otherwise.
+function describeReactionError(err: unknown): string {
+  if (err instanceof ApiRequestError) {
+    const reason = err.parameters?.reason ?? err.parameters?.error;
+    return reason ? `${err.errorName}: ${reason}` : err.errorName;
+  }
+  if (err instanceof Error) return err.message;
+  return 'Reaction update failed.';
+}
 
 // DEFAULT_EMOJIS is the small palette offered by the picker. Keep it
 // short so the bar doesn't dominate the panel — most reactions converge
@@ -24,6 +39,7 @@ export function ReactionBar({ targetRid }: ReactionBarProps) {
   const summary = useReactionSummary(targetRid);
   const create = useCreateReaction();
   const remove = useDeleteReaction();
+  const pushToast = useToastStore((s) => s.push);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [customEmoji, setCustomEmoji] = useState('');
 
@@ -36,9 +52,30 @@ export function ReactionBar({ targetRid }: ReactionBarProps) {
   const togglePill = (emoji: string, mine: boolean) => {
     if (!targetRid || pending) return;
     if (mine) {
-      remove.mutate({ targetRid, emoji });
+      // Surface unreact failures: the hook's onSuccess invalidates the
+      // summary, but without an onError a 5xx/timeout left the pill stuck
+      // with zero feedback. Push a user-visible error toast instead.
+      remove.mutate(
+        { targetRid, emoji },
+        {
+          onError: (err) =>
+            pushToast({
+              message: `Failed to remove ${emoji} reaction: ${describeReactionError(err)}`,
+              severity: 'error',
+            }),
+        },
+      );
     } else {
-      create.mutate({ targetRid, emoji });
+      create.mutate(
+        { targetRid, emoji },
+        {
+          onError: (err) =>
+            pushToast({
+              message: `Failed to add ${emoji} reaction: ${describeReactionError(err)}`,
+              severity: 'error',
+            }),
+        },
+      );
     }
   };
 
@@ -48,9 +85,27 @@ export function ReactionBar({ targetRid }: ReactionBarProps) {
     if (!trimmed) return;
     const existing = buckets.find((b) => b.emoji === trimmed);
     if (existing && existing.mine) {
-      remove.mutate({ targetRid, emoji: trimmed });
+      remove.mutate(
+        { targetRid, emoji: trimmed },
+        {
+          onError: (err) =>
+            pushToast({
+              message: `Failed to remove ${trimmed} reaction: ${describeReactionError(err)}`,
+              severity: 'error',
+            }),
+        },
+      );
     } else {
-      create.mutate({ targetRid, emoji: trimmed });
+      create.mutate(
+        { targetRid, emoji: trimmed },
+        {
+          onError: (err) =>
+            pushToast({
+              message: `Failed to add ${trimmed} reaction: ${describeReactionError(err)}`,
+              severity: 'error',
+            }),
+        },
+      );
     }
     setCustomEmoji('');
     setPickerOpen(false);
