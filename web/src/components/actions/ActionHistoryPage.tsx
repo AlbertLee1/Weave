@@ -1,4 +1,10 @@
-import { useMemo, useState } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 import { useParams } from 'react-router';
 import {
   useActionHistory,
@@ -37,6 +43,43 @@ export function ActionHistoryPage() {
   const [userIdFilter, setUserIdFilter] = useState<string>('');
   const [detailLogId, setDetailLogId] = useState<number | null>(null);
   const [pendingUndoId, setPendingUndoId] = useState<number | null>(null);
+
+  // Roving-tabindex refs for the status-filter tablist so keyboard navigation
+  // can move DOM focus to the activated tab (WAI-ARIA tabs pattern).
+  const statusTabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // ArrowLeft/Right (and ArrowUp/Down mirrors) move between tabs (wrapping),
+  // Home/End jump to the ends. Activation is automatic: moving focus also
+  // selects (setStatusFilter), the recommended pattern for tablists whose
+  // panels (here: the history list) render cheaply.
+  const handleStatusTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const last = STATUS_OPTIONS.length - 1;
+      let nextIndex: number | null = null;
+      switch (event.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          nextIndex = index === last ? 0 : index + 1;
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          nextIndex = index === 0 ? last : index - 1;
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        case 'End':
+          nextIndex = last;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      setStatusFilter(STATUS_OPTIONS[nextIndex].value);
+      statusTabRefs.current[nextIndex]?.focus();
+    },
+    [],
+  );
 
   const actionTypesQuery = useActionTypes(activeOntology);
   const historyQuery = useActionHistory(activeOntology, {
@@ -139,13 +182,18 @@ export function ActionHistoryPage() {
             aria-label="Status filter"
             data-testid="filter-status"
           >
-            {STATUS_OPTIONS.map((opt) => (
+            {STATUS_OPTIONS.map((opt, index) => (
               <button
                 key={opt.value}
+                ref={(el) => {
+                  statusTabRefs.current[index] = el;
+                }}
                 type="button"
                 role="tab"
                 aria-selected={statusFilter === opt.value}
+                tabIndex={statusFilter === opt.value ? 0 : -1}
                 onClick={() => setStatusFilter(opt.value)}
+                onKeyDown={(event) => handleStatusTabKeyDown(event, index)}
                 className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                   statusFilter === opt.value
                     ? 'bg-bg-tertiary text-text-primary'
