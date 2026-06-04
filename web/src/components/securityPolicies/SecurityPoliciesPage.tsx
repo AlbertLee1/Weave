@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useParams } from 'react-router';
 import {
   effectiveMaskStrategy,
@@ -65,6 +65,43 @@ export function SecurityPoliciesPage() {
   const activeOntology = ontology ?? '';
   const [tab, setTab] = useState<TabId>('row');
 
+  // Roving-tabindex refs for the Row/Column/Cell tablist so keyboard
+  // navigation can move DOM focus to the activated tab (WAI-ARIA tabs pattern,
+  // same model as AggregationPage / ObjectTypeAdminPage).
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // ArrowRight/Left (+ Down/Up mirror) move between tabs (wrapping), Home/End
+  // jump to the ends. Activation is automatic: moving focus also selects, which
+  // is the recommended pattern for tablists whose panels render cheaply.
+  const handleTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const last = TABS.length - 1;
+      let nextIndex: number | null = null;
+      switch (event.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          nextIndex = index === last ? 0 : index + 1;
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          nextIndex = index === 0 ? last : index - 1;
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        case 'End':
+          nextIndex = last;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      setTab(TABS[nextIndex].id);
+      tabRefs.current[nextIndex]?.focus();
+    },
+    [],
+  );
+
   if (!activeOntology) {
     return (
       <div
@@ -100,16 +137,21 @@ export function SecurityPoliciesPage() {
         aria-label="Security Policies tabs"
         className="flex gap-1 border-b border-border/40"
       >
-        {TABS.map((t) => (
+        {TABS.map((t, index) => (
           <button
             key={t.id}
+            ref={(el) => {
+              tabRefs.current[index] = el;
+            }}
             type="button"
             role="tab"
             aria-selected={tab === t.id}
+            tabIndex={tab === t.id ? 0 : -1}
             data-testid="security-policies-tab"
             data-tab-id={t.id}
             data-active={tab === t.id ? 'true' : 'false'}
             onClick={() => setTab(t.id)}
+            onKeyDown={(event) => handleTabKeyDown(event, index)}
             className={`relative -mb-px rounded-t-md border border-b-0 px-4 py-2 text-sm font-medium transition-colors ${
               tab === t.id
                 ? 'border-amber-500/40 bg-bg-tertiary text-amber-200'
@@ -475,6 +517,43 @@ function RowPolicyEditor({
   const [mode, setMode] = useState<'json' | 'cel'>(
     existingHasCel && !existingHasPredicate ? 'cel' : 'json',
   );
+
+  // WAI-ARIA radio-group keyboard support for the JSON / CEL mode selector.
+  // Arrow keys move focus AND selection (selection-follows-focus), wrapping at
+  // the ends; Space/Enter select the focused radio; roving tabindex keeps only
+  // the checked radio in the tab order. Independent refs/handler from the
+  // page-level tablist so the two widgets never interfere.
+  const MODES: Array<'json' | 'cel'> = ['json', 'cel'];
+  const modeRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const handleModeKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
+    const last = MODES.length - 1;
+    let nextIndex: number | null = null;
+    switch (event.key) {
+      case 'ArrowDown':
+      case 'ArrowRight':
+        nextIndex = index === last ? 0 : index + 1;
+        break;
+      case 'ArrowUp':
+      case 'ArrowLeft':
+        nextIndex = index === 0 ? last : index - 1;
+        break;
+      case ' ':
+      case 'Enter':
+        // Select the currently-focused radio (no movement).
+        event.preventDefault();
+        setMode(MODES[index]);
+        modeRefs.current[index]?.focus();
+        return;
+      default:
+        return;
+    }
+    event.preventDefault();
+    setMode(MODES[nextIndex]);
+    modeRefs.current[nextIndex]?.focus();
+  };
   const [predicateText, setPredicateText] = useState(
     formatPredicate(existing?.predicate),
   );
@@ -698,12 +777,17 @@ function RowPolicyEditor({
           className="inline-flex rounded-md border border-border/60 bg-bg-secondary/40 p-0.5 text-xs"
         >
           <button
+            ref={(el) => {
+              modeRefs.current[0] = el;
+            }}
             type="button"
             role="radio"
             aria-checked={mode === 'json'}
+            tabIndex={mode === 'json' ? 0 : -1}
             data-testid="row-policy-editor-mode-json"
             data-active={mode === 'json' ? 'true' : 'false'}
             onClick={() => setMode('json')}
+            onKeyDown={(event) => handleModeKeyDown(event, 0)}
             className={`rounded px-3 py-1 font-medium transition-colors ${
               mode === 'json'
                 ? 'bg-amber-600 text-white'
@@ -713,12 +797,17 @@ function RowPolicyEditor({
             JSON predicate
           </button>
           <button
+            ref={(el) => {
+              modeRefs.current[1] = el;
+            }}
             type="button"
             role="radio"
             aria-checked={mode === 'cel'}
+            tabIndex={mode === 'cel' ? 0 : -1}
             data-testid="row-policy-editor-mode-cel"
             data-active={mode === 'cel' ? 'true' : 'false'}
             onClick={() => setMode('cel')}
+            onKeyDown={(event) => handleModeKeyDown(event, 1)}
             className={`rounded px-3 py-1 font-medium transition-colors ${
               mode === 'cel'
                 ? 'bg-amber-600 text-white'
