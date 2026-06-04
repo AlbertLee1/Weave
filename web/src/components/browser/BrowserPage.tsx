@@ -122,6 +122,10 @@ function BrowserPageContent({
 
   // Search & filter state
   const [searchText, setSearchText] = useState('');
+  // Fuzzy full-text search toggle. When on, the /search request carries
+  // ?fuzziness= (Bleve Levenshtein matching, max edit distance 2) so typo'd
+  // queries still hit. See pkg/oss/handlers.go:345.
+  const [fuzzy, setFuzzy] = useState(false);
   const [filters, setFilters] = useState<FilterCondition[]>([]);
   const [showFilters, setShowFilters] = useState(false);
   const [sortField, setSortField] = useState<string | undefined>();
@@ -507,6 +511,11 @@ function BrowserPageContent({
       searchText.trim().length > 0 && searchTextField
         ? { fields: [searchTextField] }
         : undefined,
+    // Only request fuzzy matching when the user enabled it AND there is a
+    // free-text term to fuzz; structured filters/facets are exact by design.
+    // MaxFuzziness (2) is the widest edit distance the backend allows.
+    fuzziness:
+      fuzzy && searchText.trim().length > 0 && searchTextField ? 2 : undefined,
     select: selectFields,
     facets: facetFields,
     enabled: hasActiveSearch,
@@ -518,6 +527,14 @@ function BrowserPageContent({
   // Handlers
   const handleSearch = useCallback((text: string) => {
     setSearchText(text);
+    setSelectedRowMap(new Map());
+    setPageTokens([]);
+    setCurrentPage(1);
+    setActiveSavedSearchId(null);
+  }, []);
+
+  const handleFuzzyChange = useCallback((next: boolean) => {
+    setFuzzy(next);
     setSelectedRowMap(new Map());
     setPageTokens([]);
     setCurrentPage(1);
@@ -919,6 +936,8 @@ function BrowserPageContent({
         value={searchText}
         onSearch={handleSearch}
         onToggleFilters={() => setShowFilters((v) => !v)}
+        fuzzy={fuzzy}
+        onFuzzyChange={handleFuzzyChange}
       />
 
       {/* Filter builder */}

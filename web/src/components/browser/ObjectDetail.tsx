@@ -1,6 +1,15 @@
 import { useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
-import type { DataType, ObjectType, WireObject } from '../../api/types';
+import { useQuery } from '@tanstack/react-query';
+import type {
+  DataType,
+  DerivedPropertyDef,
+  LinkType,
+  ObjectType,
+  WireObject,
+  WithPropertiesObjectSet,
+} from '../../api/types';
+import { loadObjectSet } from '../../api/objectsets';
 import { SlidePanel } from '../common/SlidePanel';
 import { useOutgoingLinkTypes } from '../../hooks/useObjectTypes';
 import { useProperties } from '../../hooks/useProperties';
@@ -380,6 +389,19 @@ export function ObjectDetail({
                     </section>
                   ))}
 
+              {/* Derived (withProperties) section — OSv2 cross-link
+                  count/sum/avg/min/max metrics. Issues an isolated
+                  withProperties ObjectSet request scoped to this object so the
+                  raw-object render path above is untouched. */}
+              {linkTypes && linkTypes.length > 0 && (
+                <DerivedPropertiesSection
+                  ontologyApiName={ontologyApiName}
+                  objectType={objectType}
+                  primaryKey={String(object.__primaryKey)}
+                  linkTypes={linkTypes}
+                />
+              )}
+
               {/* Linked objects section */}
               {linkTypes && linkTypes.length > 0 && (
                 <section>
@@ -446,6 +468,131 @@ export function ObjectDetail({
         </CollabPresenceProvider>
       )}
     </SlidePanel>
+  );
+}
+
+// buildDerivedPropertyDefs turns the object's outgoing link types into a
+// `count` metric per link. count is the only metric that needs no field /
+// numeric-type knowledge, so it is the safe universal default for a
+// zero-config "how many objects hang off each relationship" summary. The
+// output name `<link>_count` doubles as the merged property key the backend
+// returns the value under (Result.DerivedValues is flattened into the
+// WireObject by the loadObjects handler).
+function buildDerivedPropertyDefs(linkTypes: LinkType[]): DerivedPropertyDef[] {
+  return linkTypes.map((lt) => ({
+    name: `${lt.apiName}_count`,
+    link: lt.apiName,
+    metric: 'count',
+  }));
+}
+
+interface DerivedPropertiesSectionProps {
+  ontologyApiName: string;
+  objectType: ObjectType;
+  primaryKey: string;
+  linkTypes: LinkType[];
+}
+
+// DerivedPropertiesSection renders the OSv2 `withProperties` derived-property
+// surface for a single object. It issues an isolated loadObjects request for a
+// `withProperties` ObjectSet that wraps a `static` set scoped to this one
+// primary key, asking the executor to compute one cross-link `count` metric
+// per outgoing link type. The derived values come back merged into the
+// object's properties keyed by the derived-property name. This sits entirely
+// alongside the existing raw-object render path (the parent already has the
+// object); nothing here mutates or re-loads the primary object.
+function DerivedPropertiesSection({
+  ontologyApiName,
+  objectType,
+  primaryKey,
+  linkTypes,
+}: DerivedPropertiesSectionProps) {
+  const derivedDefs = useMemo(
+    () => buildDerivedPropertyDefs(linkTypes),
+    [linkTypes],
+  );
+
+  const objectSet = useMemo<WithPropertiesObjectSet>(
+    () => ({
+      type: 'withProperties',
+      objectSet: {
+        type: 'static',
+        objectType: objectType.apiName,
+        primaryKeys: [primaryKey],
+      },
+      derivedProperties: derivedDefs,
+    }),
+    [objectType.apiName, primaryKey, derivedDefs],
+  );
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: [
+      'objectDetailDerivedProperties',
+      ontologyApiName,
+      objectType.apiName,
+      primaryKey,
+      derivedDefs.map((d) => d.name).join(','),
+    ],
+    enabled: derivedDefs.length > 0 && primaryKey !== '',
+    queryFn: () =>
+      loadObjectSet(ontologyApiName, {
+        objectSet,
+        // The executor needs a non-empty select; the primary key is always
+        // present and the derived values are merged in regardless of select.
+        select: [objectType.primaryKey],
+      }),
+    staleTime: 30_000,
+  });
+
+  // No outgoing links → nothing to derive; render nothing so the section
+  // stays absent for object types without relationships.
+  if (derivedDefs.length === 0) return null;
+
+  const row = data?.data?.[0];
+
+  return (
+    <section data-testid="object-detail-derived-properties">
+      <h3 className="text-xs font-sans font-medium text-text-secondary uppercase tracking-wider mb-3">
+        Derived Properties
+      </h3>
+      {isLoading && (
+        <p className="text-xs font-mono text-text-muted py-1">Computing…</p>
+      )}
+      {isError && (
+        <p className="text-xs font-mono text-accent-red py-1">
+          Failed to compute derived properties.
+        </p>
+      )}
+      {!isLoading && !isError && (
+        <dl className="space-y-2">
+          {derivedDefs.map((d) => {
+            const val = row?.[d.name];
+            let display: string;
+            if (val === null || val === undefined) {
+              display = '-';
+            } else if (typeof val === 'object') {
+              display = JSON.stringify(val);
+            } else {
+              display = String(val);
+            }
+            return (
+              <div
+                key={d.name}
+                className="flex items-start gap-3"
+                data-testid={`derived-property-${d.name}`}
+              >
+                <dt className="w-1/3 text-xs font-sans text-text-secondary truncate shrink-0">
+                  {d.name}
+                </dt>
+                <dd className="flex-1 text-xs font-mono text-accent-cyan break-all">
+                  {display}
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+      )}
+    </section>
   );
 }
 

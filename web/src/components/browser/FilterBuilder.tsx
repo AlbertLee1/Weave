@@ -14,6 +14,10 @@ const OPERATORS = [
   { value: 'containsAllTerms', label: 'contains all terms' },
   { value: 'containsAllTermsInOrder', label: 'phrase (in order)' },
   { value: 'startsWith', label: 'starts with' },
+  // regex maps to the backend RegexpQuery path (pkg/oss/where/converter.go
+  // case "regex" → convertRegex). The value is a raw regex pattern string that
+  // must reach the wire untouched, so it stays on the free-text input path.
+  { value: 'regex', label: 'regex' },
 ] as const;
 
 const NUMERIC_OPERATORS = new Set(['gt', 'gte', 'lt', 'lte']);
