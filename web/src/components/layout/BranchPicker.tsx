@@ -5,6 +5,7 @@ import { getBranch, listBranches } from '../../api/ontologies';
 import { useCreateBranch, useDeleteBranch } from '../../hooks/useBranches';
 import type { BranchDetailResponse, OntologyBranch } from '../../api/types';
 import { DEFAULT_BRANCH, useBranchStore } from '../../stores/branchStore';
+import { Modal } from '../common/Modal';
 
 interface BranchPickerProps {
   ontologyApiName: string | null;
@@ -48,6 +49,16 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  // Pending branch-deletion confirmation. null = no dialog open. Holds the
+  // id+name pair the row already has so the confirmation copy can name the
+  // branch even after the dropdown (and its `items`) has closed. This is kept
+  // independent of `open` so the styled Modal — rendered at the component's
+  // top level, NOT inside the `open && (...)` dropdown — survives the dropdown
+  // collapsing. Replaces the previous native window.confirm() (UX consistency
+  // with Threads/LogicFlows/Automation/AipTools/SavedSearches/ActionTemplates).
+  const [pendingDelete, setPendingDelete] = useState<
+    { id: string; name: string } | null
+  >(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const queryClient = useQueryClient();
 
@@ -126,10 +137,22 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
 
   // Accepts the id/name pair the row already has — the synthetic "main" entry
   // in `items` is not a full OntologyBranch, and the delete button only ever
-  // renders for non-default rows anyway.
+  // renders for non-default rows anyway. Opens the styled confirmation Modal;
+  // the actual delete only fires once the user confirms inside the dialog.
   const onDelete = (branchId: string, branchName: string) => {
     if (deleteMutation.isPending) return;
-    if (!window.confirm(t('branch.deleteConfirm', { name: branchName }))) return;
+    setPendingDelete({ id: branchId, name: branchName });
+  };
+
+  const cancelDelete = () => {
+    setPendingDelete(null);
+  };
+
+  const confirmDelete = () => {
+    if (!pendingDelete || deleteMutation.isPending) return;
+    const branchId = pendingDelete.id;
+    // Preserve the original mutate onSuccess logic verbatim; only the closing
+    // of the confirmation Modal is layered on top.
     deleteMutation.mutate(branchId, {
       onSuccess: () => {
         // If the closed branch was the active selection, fall back to main.
@@ -137,11 +160,13 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
           clearBranch(ontologyApiName);
         }
         queryClient.invalidateQueries();
+        setPendingDelete(null);
       },
     });
   };
 
   return (
+    <>
     <div ref={menuRef} className="relative">
       <button
         type="button"
@@ -342,5 +367,44 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
         </div>
       )}
     </div>
+
+      {/* Branch-deletion confirmation. Rendered at the component top level —
+          NOT inside the `open && (...)` dropdown — so the dropdown collapsing
+          (e.g. via the outside-mousedown listener) cannot unmount this Modal.
+          `pendingDelete` is independent of `open`. */}
+      <Modal
+        open={pendingDelete !== null}
+        onClose={cancelDelete}
+        title={t('branch.deleteLabel')}
+        size="md"
+      >
+        <div className="space-y-4" data-testid="branch-picker-delete-confirm">
+          <p className="text-sm text-text-secondary">
+            {t('branch.deleteConfirm', { name: pendingDelete?.name ?? '' })}
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={cancelDelete}
+              data-testid="branch-picker-delete-cancel"
+              className="rounded-md border border-border/60 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-tertiary"
+            >
+              {t('branch.cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={confirmDelete}
+              disabled={deleteMutation.isPending}
+              data-testid="branch-picker-delete-confirm-btn"
+              className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {deleteMutation.isPending
+                ? t('branch.deleting')
+                : t('branch.deleteLabel')}
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </>
   );
 }
