@@ -1,4 +1,10 @@
-import { useMemo, useState } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 import { useParams } from 'react-router';
 import {
   useApproveProposal,
@@ -93,6 +99,42 @@ export function ProposalsPage() {
     [listQuery.data],
   );
 
+  // Roving-tabindex refs for the status-filter tablist so keyboard navigation
+  // can move DOM focus to the activated tab (WAI-ARIA tabs pattern).
+  const filterTabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // ArrowLeft/Right (and Up/Down) move between tabs (wrapping), Home/End jump
+  // to the ends. Activation is automatic: moving focus also selects (setFilter),
+  // which is the recommended pattern for tablists whose panels render cheaply.
+  const handleFilterTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const last = FILTERS.length - 1;
+      let nextIndex: number | null = null;
+      switch (event.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          nextIndex = index === last ? 0 : index + 1;
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          nextIndex = index === 0 ? last : index - 1;
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        case 'End':
+          nextIndex = last;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      setFilter(FILTERS[nextIndex].value);
+      filterTabRefs.current[nextIndex]?.focus();
+    },
+    [],
+  );
+
   if (!activeOntology) {
     return (
       <div
@@ -129,16 +171,21 @@ export function ProposalsPage() {
         role="tablist"
         aria-label="Proposal status filter"
       >
-        {FILTERS.map((f) => (
+        {FILTERS.map((f, index) => (
           <button
             key={f.value}
+            ref={(el) => {
+              filterTabRefs.current[index] = el;
+            }}
             type="button"
             role="tab"
             aria-selected={filter === f.value}
+            tabIndex={filter === f.value ? 0 : -1}
             data-testid="proposals-filter-btn"
             data-filter={f.value}
             data-active={filter === f.value ? 'true' : 'false'}
             onClick={() => setFilter(f.value)}
+            onKeyDown={(event) => handleFilterTabKeyDown(event, index)}
             className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
               filter === f.value
                 ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
