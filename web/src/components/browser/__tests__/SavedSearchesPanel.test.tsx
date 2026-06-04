@@ -167,13 +167,15 @@ describe('SavedSearchesPanel', () => {
     });
   });
 
-  it('delete button calls API after window.confirm true', async () => {
+  it('delete button calls API only after confirming the styled Modal', async () => {
     vi.spyOn(api, 'listSavedSearches').mockResolvedValue({
       savedSearches: [ROW],
     });
     const delSpy = vi
       .spyOn(api, 'deleteSavedSearch')
       .mockResolvedValue(undefined as void);
+    // The native confirm has been retired in favour of the shared Modal —
+    // prove it is never reached.
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderWithProviders(
@@ -190,7 +192,15 @@ describe('SavedSearchesPanel', () => {
     await act(async () => {
       fireEvent.click(delBtn);
     });
-    expect(confirmSpy).toHaveBeenCalled();
+
+    // No native confirm; a styled Modal is shown and nothing deleted yet.
+    expect(confirmSpy).not.toHaveBeenCalled();
+    const confirmBtn = await screen.findByTestId('confirm-delete-saved-search');
+    expect(delSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(confirmBtn);
+    });
     await waitFor(() => expect(delSpy).toHaveBeenCalledWith(ROW.id));
   });
 });
