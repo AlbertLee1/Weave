@@ -296,7 +296,7 @@ export function QuiverPage() {
       <div className="border-b border-border bg-bg-primary p-4 flex flex-col gap-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-sm font-medium text-text-primary">Quiver Workbench</h2>
+            <h1 className="text-sm font-medium text-text-primary">Quiver Workbench</h1>
             <div className="text-xs font-mono text-text-secondary mt-0.5">
               {ontologyApiName}
               {dashboardRID && (
