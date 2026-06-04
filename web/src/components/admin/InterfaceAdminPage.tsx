@@ -725,56 +725,83 @@ function SharedPropertiesEditor({
       {items.map((sp, idx) => (
         <div
           key={idx}
-          className="grid grid-cols-[1fr_10rem_6rem_auto] gap-2 items-center"
+          className="flex flex-col gap-1.5 rounded border p-2"
+          style={{ borderColor: 'rgba(31,41,55,0.5)' }}
         >
+          <div className="grid grid-cols-[1fr_1fr_10rem_6rem_auto] gap-2 items-center">
+            <input
+              aria-label={`Shared property ${idx + 1} api name`}
+              type="text"
+              placeholder="apiName"
+              value={sp.apiName}
+              onChange={(e) => {
+                const next = [...items];
+                next[idx] = { ...sp, apiName: e.target.value };
+                onChange(next);
+              }}
+              className={inputClass + ' font-mono text-xs'}
+            />
+            <input
+              aria-label={`Shared property ${idx + 1} display name`}
+              type="text"
+              placeholder="Display name"
+              value={sp.displayName ?? ''}
+              onChange={(e) => {
+                const next = [...items];
+                next[idx] = { ...sp, displayName: e.target.value };
+                onChange(next);
+              }}
+              className={inputClass + ' text-xs'}
+            />
+            <select
+              aria-label={`Shared property ${idx + 1} base type`}
+              value={sp.baseType}
+              onChange={(e) => {
+                const next = [...items];
+                next[idx] = { ...sp, baseType: e.target.value };
+                onChange(next);
+              }}
+              className={inputClass + ' text-xs'}
+            >
+              {BASE_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+            <label className="flex items-center gap-1 text-[11px] text-text-secondary">
+              <input
+                type="checkbox"
+                checked={!!sp.isArray}
+                onChange={(e) => {
+                  const next = [...items];
+                  next[idx] = { ...sp, isArray: e.target.checked };
+                  onChange(next);
+                }}
+              />
+              Array
+            </label>
+            <button
+              type="button"
+              aria-label={`Remove shared property ${idx + 1}`}
+              onClick={() => onChange(items.filter((_, i) => i !== idx))}
+              className="px-2 py-1 text-[11px] rounded text-accent-error hover:bg-accent-error/10"
+            >
+              Remove
+            </button>
+          </div>
           <input
-            aria-label={`Shared property ${idx + 1} api name`}
+            aria-label={`Shared property ${idx + 1} description`}
             type="text"
-            placeholder="apiName"
-            value={sp.apiName}
+            placeholder="Description (optional)"
+            value={sp.description ?? ''}
             onChange={(e) => {
               const next = [...items];
-              next[idx] = { ...sp, apiName: e.target.value };
-              onChange(next);
-            }}
-            className={inputClass + ' font-mono text-xs'}
-          />
-          <select
-            aria-label={`Shared property ${idx + 1} base type`}
-            value={sp.baseType}
-            onChange={(e) => {
-              const next = [...items];
-              next[idx] = { ...sp, baseType: e.target.value };
+              next[idx] = { ...sp, description: e.target.value };
               onChange(next);
             }}
             className={inputClass + ' text-xs'}
-          >
-            {BASE_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          <label className="flex items-center gap-1 text-[11px] text-text-secondary">
-            <input
-              type="checkbox"
-              checked={!!sp.isArray}
-              onChange={(e) => {
-                const next = [...items];
-                next[idx] = { ...sp, isArray: e.target.checked };
-                onChange(next);
-              }}
-            />
-            Array
-          </label>
-          <button
-            type="button"
-            aria-label={`Remove shared property ${idx + 1}`}
-            onClick={() => onChange(items.filter((_, i) => i !== idx))}
-            className="px-2 py-1 text-[11px] rounded text-accent-error hover:bg-accent-error/10"
-          >
-            Remove
-          </button>
+          />
         </div>
       ))}
     </div>
@@ -801,87 +828,102 @@ function OutgoingLinkTypesEditor({
       {items.map((lt, idx) => (
         <div
           key={idx}
-          className="grid grid-cols-[1fr_1fr_10rem_8rem_auto_auto] gap-2 items-center"
+          className="flex flex-col gap-1.5 rounded border p-2"
+          style={{ borderColor: 'rgba(31,41,55,0.5)' }}
         >
-          <input
-            aria-label={`Link type ${idx + 1} api name`}
-            type="text"
-            placeholder="apiName"
-            value={lt.apiName}
-            onChange={(e) => {
-              const next = [...items];
-              next[idx] = { ...lt, apiName: e.target.value };
-              onChange(next);
-            }}
-            className={inputClass + ' font-mono text-xs'}
-          />
-          <input
-            aria-label={`Link type ${idx + 1} target type`}
-            type="text"
-            placeholder="Target object type"
-            value={lt.linkedEntityTypeApiName}
-            onChange={(e) => {
-              const next = [...items];
-              next[idx] = {
-                ...lt,
-                linkedEntityTypeApiName: e.target.value,
-              };
-              onChange(next);
-            }}
-            className={inputClass + ' font-mono text-xs'}
-          />
-          <input
-            aria-label={`Link type ${idx + 1} display name`}
-            type="text"
-            placeholder="Display name"
-            value={lt.displayName}
-            onChange={(e) => {
-              const next = [...items];
-              next[idx] = { ...lt, displayName: e.target.value };
-              onChange(next);
-            }}
-            className={inputClass + ' text-xs'}
-          />
-          <select
-            aria-label={`Link type ${idx + 1} cardinality`}
-            value={lt.cardinality}
-            onChange={(e) => {
-              const next = [...items];
-              next[idx] = {
-                ...lt,
-                cardinality: e.target.value as 'ONE' | 'MANY',
-              };
-              onChange(next);
-            }}
-            className={inputClass + ' text-xs'}
-          >
-            {LINK_CARDINALITIES.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-          <label className="flex items-center gap-1 text-[11px] text-text-secondary">
+          <div className="grid grid-cols-[1fr_1fr_10rem_8rem_auto_auto] gap-2 items-center">
             <input
-              aria-label={`Link type ${idx + 1} required`}
-              type="checkbox"
-              checked={!!lt.required}
+              aria-label={`Link type ${idx + 1} api name`}
+              type="text"
+              placeholder="apiName"
+              value={lt.apiName}
               onChange={(e) => {
                 const next = [...items];
-                next[idx] = { ...lt, required: e.target.checked };
+                next[idx] = { ...lt, apiName: e.target.value };
                 onChange(next);
               }}
+              className={inputClass + ' font-mono text-xs'}
             />
-            Required
-          </label>
-          <button
-            type="button"
-            aria-label={`Remove link type ${idx + 1}`}
-            onClick={() => onChange(items.filter((_, i) => i !== idx))}
-            className="px-2 py-1 text-[11px] rounded text-accent-error hover:bg-accent-error/10"
-          >
-            Remove
-          </button>
+            <input
+              aria-label={`Link type ${idx + 1} target type`}
+              type="text"
+              placeholder="Target object type"
+              value={lt.linkedEntityTypeApiName}
+              onChange={(e) => {
+                const next = [...items];
+                next[idx] = {
+                  ...lt,
+                  linkedEntityTypeApiName: e.target.value,
+                };
+                onChange(next);
+              }}
+              className={inputClass + ' font-mono text-xs'}
+            />
+            <input
+              aria-label={`Link type ${idx + 1} display name`}
+              type="text"
+              placeholder="Display name"
+              value={lt.displayName}
+              onChange={(e) => {
+                const next = [...items];
+                next[idx] = { ...lt, displayName: e.target.value };
+                onChange(next);
+              }}
+              className={inputClass + ' text-xs'}
+            />
+            <select
+              aria-label={`Link type ${idx + 1} cardinality`}
+              value={lt.cardinality}
+              onChange={(e) => {
+                const next = [...items];
+                next[idx] = {
+                  ...lt,
+                  cardinality: e.target.value as 'ONE' | 'MANY',
+                };
+                onChange(next);
+              }}
+              className={inputClass + ' text-xs'}
+            >
+              {LINK_CARDINALITIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <label className="flex items-center gap-1 text-[11px] text-text-secondary">
+              <input
+                aria-label={`Link type ${idx + 1} required`}
+                type="checkbox"
+                checked={!!lt.required}
+                onChange={(e) => {
+                  const next = [...items];
+                  next[idx] = { ...lt, required: e.target.checked };
+                  onChange(next);
+                }}
+              />
+              Required
+            </label>
+            <button
+              type="button"
+              aria-label={`Remove link type ${idx + 1}`}
+              onClick={() => onChange(items.filter((_, i) => i !== idx))}
+              className="px-2 py-1 text-[11px] rounded text-accent-error hover:bg-accent-error/10"
+            >
+              Remove
+            </button>
+          </div>
+          <input
+            aria-label={`Link type ${idx + 1} description`}
+            type="text"
+            placeholder="Description (optional)"
+            value={lt.description ?? ''}
+            onChange={(e) => {
+              const next = [...items];
+              next[idx] = { ...lt, description: e.target.value };
+              onChange(next);
+            }}
+            className={inputClass + ' text-xs'}
+          />
         </div>
       ))}
     </div>
