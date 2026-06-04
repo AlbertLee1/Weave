@@ -1,9 +1,49 @@
-import type { GroupByClause } from '../../api/types';
+import type { GroupByClause, HavingClause } from '../../api/types';
 
 interface GroupByBuilderProps {
   groupBy: GroupByClause[];
   onChange: (groupBy: GroupByClause[]) => void;
   availableFields: string[];
+}
+
+// HavingDraft is the editor-side row for a post-aggregation HavingClause.
+// `value` is optional while the user is typing — a blank value marks an
+// incomplete clause the page drops before it sends `having` to the backend.
+// `op` mirrors the backend's closed operator set (pkg/oss/aggregation/having.go).
+export interface HavingDraft {
+  metric: string;
+  op: HavingClause['op'];
+  value?: number;
+}
+
+// havingOps is the closed comparison-operator set the backend accepts
+// (pkg/oss/aggregation/having.go havingOps). Labels keep the dropdown readable
+// while the wire value stays the bare op token.
+const havingOps: { value: HavingClause['op']; label: string }[] = [
+  { value: 'eq', label: '= (eq)' },
+  { value: 'ne', label: '≠ (ne)' },
+  { value: 'gt', label: '> (gt)' },
+  { value: 'gte', label: '≥ (gte)' },
+  { value: 'lt', label: '< (lt)' },
+  { value: 'lte', label: '≤ (lte)' },
+];
+
+interface HavingBuilderProps {
+  having: HavingDraft[];
+  onChange: (having: HavingDraft[]) => void;
+  // Metric names already aliased in the request, offered as datalist hints so
+  // a having clause can name the exact metric output it filters on.
+  metricNames: string[];
+}
+
+// toHavingClauses converts editor drafts into the wire `having` array, dropping
+// rows that are still incomplete (no metric name or no numeric value). Returns
+// undefined when nothing valid remains so the request omits `having` entirely.
+export function toHavingClauses(drafts: HavingDraft[]): HavingClause[] | undefined {
+  const clauses = drafts
+    .filter((d) => d.metric.trim() !== '' && typeof d.value === 'number' && Number.isFinite(d.value))
+    .map((d) => ({ metric: d.metric.trim(), op: d.op, value: d.value as number }));
+  return clauses.length > 0 ? clauses : undefined;
 }
 
 type RangeRow = NonNullable<GroupByClause['ranges']>[number];
@@ -296,6 +336,123 @@ export function GroupByBuilder({ groupBy, onChange, availableFields }: GroupByBu
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// HavingBuilder edits post-aggregation row filters (SQL HAVING). Each row names
+// a metric (the metric's output/alias name), a comparison op, and a numeric
+// threshold; the backend drops result rows where any clause fails. Incomplete
+// rows are tolerated in the UI and dropped by `toHavingClauses` at send time.
+export function HavingBuilder({ having, onChange, metricNames }: HavingBuilderProps) {
+  function addClause() {
+    onChange([...having, { metric: metricNames[0] ?? '', op: 'gt' }]);
+  }
+
+  function removeClause(index: number) {
+    onChange(having.filter((_, i) => i !== index));
+  }
+
+  function updateClause(index: number, updates: Partial<HavingDraft>) {
+    onChange(having.map((c, i) => (i === index ? { ...c, ...updates } : c)));
+  }
+
+  const inputClass =
+    'bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-accent-cyan focus:outline-none';
+  const labelClass = 'text-xs text-text-secondary font-sans mb-1';
+  const metricListId = 'having-metric-names';
+
+  return (
+    <div data-testid="having-section" className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <label className={labelClass} title="Filter aggregation result rows by a metric value (SQL HAVING)">
+          Having
+        </label>
+        <button
+          type="button"
+          onClick={addClause}
+          data-testid="having-add"
+          className="bg-bg-tertiary border border-border text-text-primary px-4 py-2 rounded text-sm hover:bg-bg-elevated"
+        >
+          + Add Having
+        </button>
+      </div>
+
+      {having.length === 0 && (
+        <div className="text-xs text-text-secondary">
+          No having clauses. All aggregated rows are returned.
+        </div>
+      )}
+
+      {metricNames.length > 0 && (
+        <datalist id={metricListId}>
+          {metricNames.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+      )}
+
+      {having.map((clause, index) => (
+        <div
+          key={index}
+          data-testid={`having-row-${index}`}
+          className="flex items-center gap-2"
+        >
+          <input
+            type="text"
+            list={metricListId}
+            value={clause.metric}
+            onChange={(e) => updateClause(index, { metric: e.target.value })}
+            placeholder="metric name"
+            aria-label="having metric name"
+            title="Output/alias name of the metric to filter on"
+            data-testid={`having-${index}-metric`}
+            className={`${inputClass} flex-1`}
+          />
+
+          <select
+            value={clause.op}
+            onChange={(e) =>
+              updateClause(index, { op: e.target.value as HavingClause['op'] })
+            }
+            data-testid={`having-${index}-op`}
+            aria-label="having comparison operator"
+            className={`${inputClass} flex-shrink-0`}
+          >
+            {havingOps.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+
+          <input
+            type="number"
+            step="any"
+            value={clause.value ?? ''}
+            onChange={(e) => {
+              const raw = e.target.value;
+              const n = Number(raw);
+              updateClause(index, {
+                value: raw.trim() !== '' && Number.isFinite(n) ? n : undefined,
+              });
+            }}
+            placeholder="value"
+            aria-label="having threshold value"
+            data-testid={`having-${index}-value`}
+            className={`${inputClass} w-28`}
+          />
+
+          <button
+            type="button"
+            onClick={() => removeClause(index)}
+            data-testid={`having-${index}-remove`}
+            className="bg-accent-error/15 text-accent-error border border-accent-error/30 px-4 py-2 rounded text-sm hover:bg-accent-error/25"
+          >
+            Remove
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
