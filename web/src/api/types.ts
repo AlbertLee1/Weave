@@ -212,6 +212,11 @@ export interface AggregationRequest {
   groupBy?: GroupByClause[];
   where?: WhereClause;
   objectType?: string;
+  // Accuracy mode for distinct/percentile metrics. The backend reads
+  // '' / 'ALLOW_APPROXIMATE' (default) vs 'REQUIRE_ACCURATE' (promotes
+  // approximateDistinct→exactDistinct and approximatePercentile→exact
+  // sorted percentile). Omit for the approximate default.
+  accuracy?: 'ALLOW_APPROXIMATE' | 'REQUIRE_ACCURATE';
 }
 
 export interface AggregationMetric {
