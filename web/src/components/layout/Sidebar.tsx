@@ -27,6 +27,8 @@ const iconPaths: Record<string, string> = {
     'M5 5h4v4H5zM15 5h4v4h-4zM5 15h4v4H5zM15 15h4v4h-4zM9 7h6M7 9v6M17 9v6M9 17h6',
   pipeline:
     'M3 7h6M15 7h6M3 17h6M15 17h6M9 7a3 3 0 003 3 3 3 0 003-3M9 17a3 3 0 013-3 3 3 0 013 3M12 10v4',
+  database:
+    'M12 3c4.42 0 8 1.34 8 3s-3.58 3-8 3-8-1.34-8-3 3.58-3 8-3zM4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6',
 };
 
 function SvgIcon({ name }: { name: string }) {
@@ -123,6 +125,7 @@ export function Sidebar() {
     { to: '/pipelines', label: 'Pipelines', icon: 'pipeline' },
     { to: '/developer/playground', label: 'API Playground', icon: 'code' },
     { to: '/developer/metrics', label: 'API Metrics', icon: 'bar-chart' },
+    { to: '/developer/sql', label: 'SQL Sandbox', icon: 'database' },
   ];
 
   if (activeOntology) {
