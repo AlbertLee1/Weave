@@ -85,6 +85,12 @@ export function ExplorerPage() {
 
   return (
     <div className="flex h-full bg-bg-primary" data-testid="explorer-page">
+      {/* Stable page-level heading. Visually hidden so the layout is
+          unchanged, but it gives the standalone Explorer route exactly one
+          <h1> across every main state (Schema Graph and object-type detail),
+          matching the rest of the app's heading structure. */}
+      <h1 className="sr-only">Explorer</h1>
+
       {/* Left sidebar -- type tree */}
       <aside className="w-64 shrink-0 border-r border-border overflow-y-auto bg-bg-secondary">
         <TypeTree
