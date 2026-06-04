@@ -1,13 +1,143 @@
-import { useState } from 'react';
-import { useFormContext } from 'react-hook-form';
+import { useEffect, useRef, useState } from 'react';
+import { useFormContext, useWatch } from 'react-hook-form';
 import type { ActionParameterV2 } from '../../api/types';
 import { uploadAttachment } from '../../api/attachments';
 import { uploadMedia } from '../../api/media';
+import { validateAction } from '../../api/actions';
 import { useMarkings } from '../../hooks/useMarkings';
 import { INTEGER_PARAM_TYPES, isNumericParamType } from './parameterSchema';
 
 interface ParameterFormProps {
   parameters: Record<string, ActionParameterV2>;
+  // When BOTH ontologyApiName and actionApiName are supplied, the form runs
+  // debounced, side-effect-free real-time validation against the dedicated
+  // POST .../actions/{action}/validate surface as the user edits, red-lining
+  // individual fields whose parameters[id].result === 'INVALID' and surfacing
+  // submissionCriteria[].configuredFailureMessage as a form-level banner.
+  // Both are optional so existing callers (and unit harnesses) that only pass
+  // `parameters` keep their current behaviour — validation is strictly opt-in.
+  ontologyApiName?: string;
+  actionApiName?: string;
+}
+
+// Debounce window (ms) between the last keystroke and the validate POST. Long
+// enough to coalesce a burst of typing into a single request, short enough to
+// feel live.
+const VALIDATE_DEBOUNCE_MS = 350;
+
+// RealtimeValidationState is what useRealtimeValidation surfaces to the form:
+// the per-parameter ids the server flagged INVALID (→ inline field errors) and
+// the form-level submission-criteria failure messages (→ banner).
+interface RealtimeValidationState {
+  invalidParamIds: Set<string>;
+  failureMessages: string[];
+}
+
+const EMPTY_VALIDATION: RealtimeValidationState = {
+  invalidParamIds: new Set<string>(),
+  failureMessages: [],
+};
+
+/**
+ * useRealtimeValidation drives the debounced /validate round-trip.
+ *
+ * Design notes (the tricky bits):
+ *   - We watch the live form values via useWatch (a fresh object each render)
+ *     but key the debounce effect on a STABLE JSON projection of those values,
+ *     never the object identity — otherwise the effect would re-fire on every
+ *     render and loop.
+ *   - The validate POST runs inside a debounce timer cleared on each change,
+ *     so a burst of keystrokes collapses to a single request.
+ *   - A monotonically increasing request token guards against out-of-order
+ *     responses (a slow earlier request resolving after a fast later one):
+ *     only the latest token's result is committed to state.
+ *   - We call the bare `validateAction` API function (not the useValidateAction
+ *     mutation) so the form stays agnostic of a QueryClientProvider — the
+ *     validate surface is side-effect-free and has no cache to invalidate, so a
+ *     mutation buys nothing here while forcing every ParameterForm host to wrap
+ *     a provider. The exported useValidateAction hook remains available for
+ *     callers that want a react-query-managed validate.
+ *   - When wiring is absent (no ontology/action) the hook is inert: it issues
+ *     no requests and reports an empty state.
+ */
+function useRealtimeValidation(
+  ontologyApiName: string | undefined,
+  actionApiName: string | undefined,
+): RealtimeValidationState {
+  const { control, formState } = useFormContext();
+  const values = useWatch({ control });
+  // Gate on isDirty so we never validate the pristine/default form on mount —
+  // an untouched required field defaults to '' and would be red-lined (with the
+  // failure banner) before the user types anything. Validation becomes live the
+  // moment the user edits any field (isDirty flips true and stays true).
+  const enabled =
+    !!ontologyApiName && !!actionApiName && formState.isDirty;
+
+  const [state, setState] = useState<RealtimeValidationState>(EMPTY_VALIDATION);
+
+  // Serialize the watched values into a stable dependency. useWatch returns a
+  // new object reference each render, so we must depend on its content, not its
+  // identity.
+  const valuesKey = JSON.stringify(values ?? {});
+
+  const requestToken = useRef(0);
+
+  useEffect(() => {
+    if (!enabled) {
+      // Defensive: if validation was turned off, drop any stale state.
+      setState((prev) => (prev === EMPTY_VALIDATION ? prev : EMPTY_VALIDATION));
+      return;
+    }
+
+    const token = ++requestToken.current;
+    // Guards against committing a resolved fetch after this effect was torn
+    // down (component unmount / re-arm) — the debounce timer is cleared, but an
+    // already-in-flight request can still resolve.
+    let active = true;
+    const timer = setTimeout(() => {
+      // Re-parse from the stable key so the request body matches exactly what
+      // the dependency captured (avoids depending on the live object).
+      const parsed = (JSON.parse(valuesKey) ?? {}) as Record<string, unknown>;
+      // Strip undefined entries so omitted optionals don't surface as
+      // explicit-null on the wire (mirrors the apply path).
+      const cleaned: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (v !== undefined) cleaned[k] = v;
+      }
+      void validateAction(
+        ontologyApiName as string,
+        actionApiName as string,
+        cleaned,
+      )
+        .then((resp) => {
+          // Discard out-of-order / superseded responses, or ones that resolve
+          // after teardown.
+          if (!active || token !== requestToken.current) return;
+          const invalidParamIds = new Set<string>();
+          for (const [id, pr] of Object.entries(resp.parameters ?? {})) {
+            if (pr.result === 'INVALID') invalidParamIds.add(id);
+          }
+          const failureMessages = (resp.submissionCriteria ?? [])
+            .filter((c) => c.result === 'INVALID' && !!c.configuredFailureMessage)
+            .map((c) => c.configuredFailureMessage as string);
+          setState({ invalidParamIds, failureMessages });
+        })
+        .catch(() => {
+          // Transport / non-2xx errors are not validation outcomes; leave the
+          // last good state in place rather than flapping the UI on a blip.
+          if (token !== requestToken.current) return;
+        });
+    }, VALIDATE_DEBOUNCE_MS);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+    // valuesKey captures the form content; enabled/actionApiName/ontologyApiName
+    // re-arm when wiring changes. mutateRef is a ref (intentionally excluded).
+  }, [valuesKey, enabled, actionApiName, ontologyApiName]);
+
+  return state;
 }
 
 type UploadKind = 'attachment' | 'media';
@@ -414,10 +544,19 @@ function MarkingSelectField({ fieldKey, def, multiple }: MarkingSelectFieldProps
   );
 }
 
-export function ParameterForm({ parameters }: ParameterFormProps) {
+export function ParameterForm({
+  parameters,
+  ontologyApiName,
+  actionApiName,
+}: ParameterFormProps) {
   const entries = Object.entries(parameters ?? {});
   const { register, formState, setValue, watch } = useFormContext();
   const { errors } = formState;
+
+  // Debounced, side-effect-free real-time validation. Inert (no requests, empty
+  // state) unless both ontologyApiName and actionApiName are supplied. Hooks
+  // must run unconditionally, so this is called before the early return below.
+  const realtime = useRealtimeValidation(ontologyApiName, actionApiName);
 
   if (entries.length === 0) {
     return (
@@ -435,11 +574,34 @@ export function ParameterForm({ parameters }: ParameterFormProps) {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Form-level banner: submissionCriteria failure messages from the
+          dedicated /validate surface. Rendered above the fields so the user
+          sees the action-wide reason a draft is rejected. */}
+      {realtime.failureMessages.length > 0 && (
+        <div
+          data-testid="action-validate-banner"
+          role="alert"
+          className="border border-accent-error rounded p-3 bg-accent-error/10 flex flex-col gap-1"
+        >
+          {realtime.failureMessages.map((msg, i) => (
+            <span key={i} className="text-xs text-text-primary">
+              {msg}
+            </span>
+          ))}
+        </div>
+      )}
       {entries.map(([key, def]) => {
         const paramType = def.dataType?.type ?? 'string';
         const fieldError = errors[key];
-        const errorMessage =
+        // Combine the client-side (Zod) field error with the server-side
+        // real-time INVALID flag. The Zod message wins for display when both
+        // are present; otherwise a generic "Invalid value" stands in so the
+        // field is still red-lined from the /validate report alone.
+        const zodMessage =
           typeof fieldError?.message === 'string' ? fieldError.message : undefined;
+        const realtimeInvalid = realtime.invalidParamIds.has(key);
+        const errorMessage =
+          zodMessage ?? (realtimeInvalid ? 'Invalid value' : undefined);
         const fieldId = `param-${key}`;
         const errorId = `${fieldId}-error`;
 
@@ -690,6 +852,7 @@ export function ParameterForm({ parameters }: ParameterFormProps) {
             </label>
             <input
               id={fieldId}
+              data-testid={fieldId}
               type="text"
               aria-invalid={errorMessage ? 'true' : 'false'}
               aria-describedby={errorMessage ? errorId : undefined}
@@ -706,7 +869,12 @@ export function ParameterForm({ parameters }: ParameterFormProps) {
               <span className="text-xs text-text-secondary mt-1">{def.description}</span>
             )}
             {errorMessage && (
-              <span id={errorId} role="alert" className="text-xs text-accent-error mt-1">
+              <span
+                id={errorId}
+                role="alert"
+                {...(realtimeInvalid ? { 'data-testid': `${fieldId}-validate-error` } : {})}
+                className="text-xs text-accent-error mt-1"
+              >
                 {errorMessage}
               </span>
             )}

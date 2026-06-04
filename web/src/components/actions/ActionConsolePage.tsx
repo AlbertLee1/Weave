@@ -328,10 +328,17 @@ export function ActionConsolePage() {
                 currentUserId={currentUserId}
               />
 
-              {/* Parameters form */}
+              {/* Parameters form. Passing ontology + action wires the
+                  debounced, side-effect-free real-time /validate surface so
+                  fields red-line as the user types and submission-criteria
+                  failures surface as a form-level banner. */}
               <div>
                 <h3 className="text-xs font-medium text-text-primary mb-3">Parameters</h3>
-                <ParameterForm parameters={selectedAction.parameters} />
+                <ParameterForm
+                  parameters={selectedAction.parameters}
+                  ontologyApiName={ontology}
+                  actionApiName={selectedAction.apiName}
+                />
               </div>
 
               {/* Stale-object conflict banner */}
