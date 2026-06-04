@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  getNotificationsUnreadCount,
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
@@ -28,6 +29,27 @@ export function useNotifications(
         types: normalisedTypes.length > 0 ? normalisedTypes : undefined,
       }),
     enabled,
+    refetchInterval: enabled ? refetchInterval : false,
+  });
+}
+
+/**
+ * Read the caller's unread notification count via the dedicated O(1)
+ * `/notifications/unread-count` endpoint. Used by the navbar badge so it
+ * never has to load the full unread list just to render a number.
+ *
+ * Polls on the same 30s cadence as {@link useNotifications} so the badge
+ * stays roughly in sync with the full page.
+ */
+export function useNotificationsUnreadCount(
+  options: { enabled?: boolean; refetchInterval?: number } = {},
+) {
+  const { enabled = true, refetchInterval = 30_000 } = options;
+  return useQuery({
+    queryKey: ['notifications', 'unread-count'],
+    queryFn: () => getNotificationsUnreadCount(),
+    enabled,
+    staleTime: refetchInterval,
     refetchInterval: enabled ? refetchInterval : false,
   });
 }
