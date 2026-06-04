@@ -342,12 +342,16 @@ export function SavedSearchesPanel({
               }}
               maxLength={128}
               aria-invalid={showDuplicateWarning ? 'true' : undefined}
+              aria-describedby={
+                showDuplicateWarning ? 'saved-search-name-error' : undefined
+              }
               data-testid="saved-searches-name-input"
               className="px-2 py-1 rounded border border-border bg-bg-secondary text-xs font-mono text-text-primary outline-none focus:border-accent-cyan"
             />
           </label>
           {showDuplicateWarning && (
             <p
+              id="saved-search-name-error"
               role="alert"
               data-testid="saved-searches-duplicate-warning"
               className="text-xs font-mono text-accent-error"
