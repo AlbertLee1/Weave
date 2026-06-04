@@ -1,5 +1,6 @@
 import type { DataType, Property } from '../../api/types';
 import { DataTable, type Column } from '../common/DataTable';
+import { Badge } from '../common/Badge';
 
 interface CompactProperty {
   dataType: DataType;
@@ -34,6 +35,11 @@ interface PropertyRow extends Record<string, unknown> {
   isNullable: FlagValue;
   isSearchable: FlagValue;
   isSortable: FlagValue;
+  // Lifecycle metadata sourced from the authoritative detailed Property[].
+  // Undefined when detailed data has not resolved (or did not carry it).
+  status?: string;
+  deprecatedReason?: string;
+  editOnly?: boolean;
 }
 
 type FlagValue = boolean | 'loading' | 'unknown';
@@ -67,6 +73,37 @@ function boolCell(value: unknown): React.ReactNode {
   );
 }
 
+/**
+ * Status cell surfaces the property's lifecycle metadata carried on the
+ * authoritative detailed Property[]: a DEPRECATED badge (with the
+ * deprecatedReason as a hover tooltip so operators see *why* it's gone) and
+ * an explicit edit-only indicator for write-only properties. ACTIVE /
+ * non-deprecated properties render neither, keeping the column quiet.
+ */
+function statusCell(row: PropertyRow): React.ReactNode {
+  const isDeprecated = row.status === 'DEPRECATED';
+  if (!isDeprecated && !row.editOnly) {
+    return <span className="text-text-muted">—</span>;
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {isDeprecated && (
+        <Badge variant="error" className="cursor-help">
+          <span title={row.deprecatedReason || undefined}>DEPRECATED</span>
+        </Badge>
+      )}
+      {row.editOnly && (
+        <span
+          className="text-xs text-accent-warning"
+          title="Property is edit-only (write-only): it can be set by Actions but is not read back from the object."
+        >
+          Edit-only
+        </span>
+      )}
+    </span>
+  );
+}
+
 const columns: Column<PropertyRow>[] = [
   { key: 'apiName', header: 'API Name', sortable: true, frozen: true, width: '200px' },
   { key: 'baseType', header: 'Base Type', sortable: true, width: '120px' },
@@ -74,6 +111,7 @@ const columns: Column<PropertyRow>[] = [
   { key: 'isNullable', header: 'Nullable', render: (row) => flagCell(row.isNullable), width: '80px' },
   { key: 'isSearchable', header: 'Searchable', render: (row) => flagCell(row.isSearchable), width: '90px' },
   { key: 'isSortable', header: 'Sortable', render: (row) => flagCell(row.isSortable), width: '80px' },
+  { key: 'status', header: 'Status', render: (row) => statusCell(row), width: '170px' },
 ];
 
 function fallbackFlag(status: DetailedStatus): FlagValue {
@@ -106,6 +144,9 @@ export function PropertiesTable({
         isNullable: detailed.isNullable,
         isSearchable: detailed.isSearchable,
         isSortable: detailed.isSortable,
+        status: detailed.status,
+        deprecatedReason: detailed.deprecatedReason,
+        editOnly: detailed.editOnly,
       };
     }
     const fallback = fallbackFlag(detailedStatus);
