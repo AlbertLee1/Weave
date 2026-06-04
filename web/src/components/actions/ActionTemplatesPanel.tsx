@@ -79,6 +79,15 @@ export function ActionTemplatesPanel({
   const [name, setName] = useState('');
   const [scope, setScope] = useState<ActionTemplateScope>('PRIVATE');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Deletion is gated by the shared, styled `Modal` rather than a native
+  // `window.confirm` (which can't be themed and clashes with the rest of
+  // the app's dialogs) — see DashboardEditorPage's note. The pending
+  // template (id + name) drives the confirm Modal; the destructive Delete
+  // button inside it is the only path that fires the mutation.
+  const [pendingDelete, setPendingDelete] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   const openSaveDialog = useCallback(() => {
     setName('');
@@ -134,25 +143,27 @@ export function ActionTemplatesPanel({
     [onLoad, pushToast],
   );
 
-  const handleDelete = useCallback(
-    (row: ActionTemplate) => {
-      if (typeof window !== 'undefined' && !window.confirm(
-        `Delete template "${row.name}"?`,
-      )) {
-        return;
-      }
-      deleteMutation.mutate(row.id, {
-        onSuccess: () => {
-          pushToast({
-            message: `Template "${row.name}" deleted`,
-            severity: 'info',
-            ttlMs: 3000,
-          });
-        },
-      });
-    },
-    [deleteMutation, pushToast],
-  );
+  const handleDelete = useCallback((row: ActionTemplate) => {
+    // Open the styled confirmation Modal instead of a native window.confirm.
+    setPendingDelete({ id: row.id, name: row.name });
+  }, []);
+
+  const cancelDelete = useCallback(() => setPendingDelete(null), []);
+
+  const confirmDelete = useCallback(() => {
+    const target = pendingDelete;
+    if (!target) return;
+    setPendingDelete(null);
+    deleteMutation.mutate(target.id, {
+      onSuccess: () => {
+        pushToast({
+          message: `Template "${target.name}" deleted`,
+          severity: 'info',
+          ttlMs: 3000,
+        });
+      },
+    });
+  }, [deleteMutation, pendingDelete, pushToast]);
 
   const handleScopeChange = useCallback(
     (row: ActionTemplate, nextScope: ActionTemplateScope) => {
@@ -365,6 +376,41 @@ export function ActionTemplatesPanel({
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        open={pendingDelete !== null}
+        onClose={cancelDelete}
+        title="Delete action template"
+      >
+        <div data-testid="action-template-delete-confirm" className="space-y-4">
+          <p className="text-sm text-text-secondary">
+            Delete template{' '}
+            <span className="font-medium text-text-primary">
+              "{pendingDelete?.name}"
+            </span>
+            ? This cannot be undone.
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={cancelDelete}
+              data-testid="action-template-delete-cancel-btn"
+              className="rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-bg-tertiary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDelete}
+              disabled={deleteMutation.isPending}
+              data-testid="action-template-delete-confirm-btn"
+              className="rounded-md border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:bg-rose-500/20 disabled:opacity-50"
+            >
+              {deleteMutation.isPending ? 'Deleting…' : 'Delete'}
+            </button>
+          </div>
+        </div>
       </Modal>
     </aside>
   );
