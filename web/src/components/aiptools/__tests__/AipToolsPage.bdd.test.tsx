@@ -155,19 +155,22 @@ describe('BDD: AipToolsPage tool catalog (US-285)', () => {
     expect(capturedCreateBody).toBeNull();
   });
 
-  it('Given a tool exists, When delete is confirmed, Then DELETE is called with the tool name', async () => {
+  it('Given a tool exists, When delete is confirmed in the styled Modal, Then DELETE is called with the tool name', async () => {
     tools = [echoTool];
-    const originalConfirm = window.confirm;
-    window.confirm = () => true;
-    try {
-      renderPage();
-      const row = await screen.findByTestId('aip-tool-row');
-      fireEvent.click(within(row).getByTestId('aip-tool-delete-btn'));
+    renderPage();
+    const row = await screen.findByTestId('aip-tool-row');
+    // Clicking Delete opens the styled confirmation Modal — it must NOT delete
+    // outright, so the destructive DELETE is still pending here.
+    fireEvent.click(within(row).getByTestId('aip-tool-delete-btn'));
 
-      await waitFor(() => expect(capturedDeleteName).toBe('echo_tool'));
-    } finally {
-      window.confirm = originalConfirm;
-    }
+    const dialog = await screen.findByTestId('aip-tool-delete-confirm');
+    expect(capturedDeleteName).toBeNull();
+
+    // Confirming inside the Modal is what actually fires the DELETE.
+    fireEvent.click(
+      within(dialog).getByTestId('aip-tool-delete-confirm-submit'),
+    );
+    await waitFor(() => expect(capturedDeleteName).toBe('echo_tool'));
   });
 });
 

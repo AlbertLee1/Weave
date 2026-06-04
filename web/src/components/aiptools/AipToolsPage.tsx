@@ -109,6 +109,15 @@ export function AipToolsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
 
+  // Destructive-delete confirmation state. We gate DELETE behind a styled
+  // shared Modal (rather than window.confirm) so the prompt matches the dark
+  // theme and is deterministically observable in tests. Holds the name of the
+  // tool awaiting confirmation (the catalog's primary key); null means no
+  // dialog is open.
+  const [pendingDelete, setPendingDelete] = useState<{
+    name: string;
+  } | null>(null);
+
   const isEditing = editingName !== null;
 
   const openCreate = () => {
@@ -193,14 +202,20 @@ export function AipToolsPage() {
     });
   };
 
+  // onDelete no longer deletes immediately — it opens the styled confirmation
+  // Modal. The actual destructive call is deferred to confirmDelete, which only
+  // runs when the user explicitly confirms.
   const onDelete = (tool: ToolRecord) => {
-    if (typeof window !== 'undefined') {
-      const ok = window.confirm(
-        `Delete tool "${tool.name}"? This cannot be undone.`,
-      );
-      if (!ok) return;
-    }
-    deleteMutation.mutate(tool.name);
+    setPendingDelete({ name: tool.name });
+  };
+
+  const cancelDelete = () => setPendingDelete(null);
+
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    const { name } = pendingDelete;
+    deleteMutation.mutate(name);
+    setPendingDelete(null);
   };
 
   const submitting = createMutation.isPending || updateMutation.isPending;
@@ -475,6 +490,41 @@ export function AipToolsPage() {
           loading={detailLoading}
           error={detailError}
         />
+      </Modal>
+
+      <Modal
+        open={pendingDelete !== null}
+        onClose={cancelDelete}
+        title="Delete tool"
+        size="md"
+      >
+        <div className="space-y-5" data-testid="aip-tool-delete-confirm">
+          <p className="text-sm text-text-secondary">
+            Delete tool{' '}
+            <span className="font-mono font-semibold text-text-primary">
+              {pendingDelete?.name}
+            </span>
+            ? This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={cancelDelete}
+              data-testid="aip-tool-delete-confirm-cancel"
+              className="rounded-md border border-border/60 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-tertiary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDelete}
+              data-testid="aip-tool-delete-confirm-submit"
+              className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500"
+            >
+              Delete tool
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );
