@@ -29,6 +29,7 @@ import { LinkTypeAdminPage } from './components/admin/LinkTypeAdminPage';
 import { ActionTypeAdminPage } from './components/admin/ActionTypeAdminPage';
 import { InterfaceAdminPage } from './components/admin/InterfaceAdminPage';
 import { ValueTypeAdminPage } from './components/admin/ValueTypeAdminPage';
+import { QueryTypeAdminPage } from './components/admin/QueryTypeAdminPage';
 import { SchemaGraphPage } from './components/admin/SchemaGraphPage';
 import { DatasetRollbackPage } from './components/admin/DatasetRollbackPage';
 import { AuditHistoryPage } from './components/admin/AuditHistoryPage';
@@ -367,6 +368,14 @@ export default function App() {
                 element={
                   <AdminGuard>
                     <ValueTypeAdminPage />
+                  </AdminGuard>
+                }
+              />
+              <Route
+                path="admin/:ontology/queryTypes"
+                element={
+                  <AdminGuard>
+                    <QueryTypeAdminPage />
                   </AdminGuard>
                 }
               />

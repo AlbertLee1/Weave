@@ -231,6 +231,11 @@ export function Sidebar() {
           icon: 'settings',
         },
         {
+          to: `/admin/${activeOntology}/queryTypes`,
+          label: 'Query Types',
+          icon: 'code',
+        },
+        {
           to: `/admin/${activeOntology}/graph`,
           label: 'Schema Graph',
           icon: 'graph',

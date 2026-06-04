@@ -3878,7 +3878,7 @@ type UpdateQueryTypeRequest struct {
 
 // --- QueryType handlers ---
 
-// CreateQueryType handles POST /api/admin/ontologies/{ontologyApiName}/queryTypes.
+// CreateQueryType handles POST /api/v2/ontologies/{ontologyApiName}/queryTypes.
 func (h *OMSHandler) CreateQueryType(w http.ResponseWriter, r *http.Request) {
 	ontologyRID, err := h.resolveOntologyRID(r.Context(), chi.URLParam(r, "ontologyApiName"))
 	if err != nil {
@@ -3977,7 +3977,7 @@ func (h *OMSHandler) ListQueryTypes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetQueryType handles GET /api/admin/queryTypes/{queryTypeRid}.
+// GetQueryType handles GET /api/v2/ontologies/{ontologyApiName}/queryTypes/byRid/{queryTypeRid}.
 func (h *OMSHandler) GetQueryType(w http.ResponseWriter, r *http.Request) {
 	qtRID := chi.URLParam(r, "queryTypeRid")
 
@@ -3996,7 +3996,7 @@ func (h *OMSHandler) GetQueryType(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, qt)
 }
 
-// UpdateQueryType handles PUT /api/admin/queryTypes/{queryTypeRid}.
+// UpdateQueryType handles PUT /api/v2/ontologies/{ontologyApiName}/queryTypes/byRid/{queryTypeRid}.
 func (h *OMSHandler) UpdateQueryType(w http.ResponseWriter, r *http.Request) {
 	qtRID := chi.URLParam(r, "queryTypeRid")
 
@@ -4051,7 +4051,7 @@ func (h *OMSHandler) UpdateQueryType(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, existing)
 }
 
-// DeleteQueryType handles DELETE /api/admin/queryTypes/{queryTypeRid}.
+// DeleteQueryType handles DELETE /api/v2/ontologies/{ontologyApiName}/queryTypes/byRid/{queryTypeRid}.
 func (h *OMSHandler) DeleteQueryType(w http.ResponseWriter, r *http.Request) {
 	qtRID := chi.URLParam(r, "queryTypeRid")
 
