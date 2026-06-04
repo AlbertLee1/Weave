@@ -197,7 +197,12 @@ export function SettingsPage() {
       </header>
 
       {isLoading && (
-        <div role="status" className="text-sm text-text-secondary">
+        <div
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="text-sm text-text-secondary"
+        >
           {t('settings.loading')}
         </div>
       )}
@@ -227,6 +232,8 @@ export function SettingsPage() {
       {savedFlash && (
         <div
           role="status"
+          aria-live="polite"
+          aria-atomic="true"
           data-testid="settings-saved-flash"
           className="rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-400"
         >
