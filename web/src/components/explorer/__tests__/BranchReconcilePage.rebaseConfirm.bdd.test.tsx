@@ -19,17 +19,19 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import '../../../i18n';
 import { BranchReconcilePage } from '../BranchReconcilePage';
 import { useBranchStore } from '../../../stores/branchStore';
-import type {
-  AnnotatedMergeConflict,
-  BranchDiffPostResponse,
-} from '../../../api/types';
+import type { BranchDiffPostResponse } from '../../../api/types';
 
-// US-383 Rebase button on the reconcile surface. Given an open branch behind
-// main, When the operator confirms a rebase (via the styled confirmation Modal
-// — see BranchReconcilePage.rebaseConfirm.bdd for the UX-consistency contract
-// that replaced the native window.confirm), Then the /rebase endpoint is hit
-// and the rebased base-version is surfaced; a REBASE_CONFLICT 409 surfaces an
-// error banner instead.
+// UX consistency — branch rebase confirm.
+//
+// Rebase rewrites the branch's history, so it is a destructive operation that
+// must be confirmed. The page previously gated the rebase behind a native
+// `window.confirm`, which does not honour the dark theme and clashes visually
+// with the rest of the app's styled Modal dialogs (the codebase has
+// standardised on `common/Modal` — see AutomationRulesPage's note about
+// deliberately avoiding the unstylable window.confirm). This contract pins the
+// styled two-step confirm flow: click Rebase → styled Modal explaining the
+// consequence → Cancel aborts (no /rebase call), confirm Rebase fires the
+// real mutation. The native window.confirm must never be invoked.
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => {
@@ -51,16 +53,6 @@ const branch = {
   createdBy: 'tester',
   createdAt: '2026-05-01T00:00:00Z',
   updatedAt: '2026-05-01T00:00:00Z',
-};
-
-const conflictEntry: AnnotatedMergeConflict = {
-  entityType: 'actionType',
-  entityRid: 'ri.action.x.conflict',
-  apiName: 'updateOrder',
-  resolutionKey: 'actionType:updateOrder',
-  changeType: 'MODIFIED',
-  branchState: { apiName: 'updateOrder', displayName: 'Branch label' },
-  mainState: { apiName: 'updateOrder', displayName: 'Main label' },
 };
 
 function diffResponse(): BranchDiffPostResponse {
@@ -98,8 +90,9 @@ function renderPage() {
   );
 }
 
-describe('BranchReconcilePage rebase (US-383)', () => {
-  it('rebases the branch onto main and shows the new base version', async () => {
+describe('BranchReconcilePage styled rebase-confirm Modal (UX consistency)', () => {
+  it('Given the reconcile page, When Rebase is clicked, Then window.confirm is NOT called and a styled Modal appears (no rebase fired yet)', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
     let rebaseCalled = false;
     server.use(
       http.post(
@@ -114,26 +107,28 @@ describe('BranchReconcilePage rebase (US-383)', () => {
         },
       ),
     );
-    renderPage();
 
-    const rebaseBtn = await screen.findByTestId('branch-reconcile-rebase-button');
+    renderPage();
     const user = userEvent.setup();
+
+    const rebaseBtn = await screen.findByTestId(
+      'branch-reconcile-rebase-button',
+    );
     await user.click(rebaseBtn);
 
-    // Confirm via the styled Modal (the native window.confirm is gone).
-    const dialog = await screen.findByRole('dialog');
-    await user.click(
-      within(dialog).getByTestId('branch-reconcile-rebase-confirm-btn'),
-    );
+    // No native, unstylable confirm.
+    expect(confirmSpy).not.toHaveBeenCalled();
 
-    await waitFor(() => {
-      expect(rebaseCalled).toBe(true);
-      expect(screen.getByTestId('reconcile-rebase-success')).toBeInTheDocument();
-    });
-    expect(screen.getByTestId('reconcile-rebase-success')).toHaveTextContent('7');
+    // A styled shared-Modal dialog appears.
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+
+    // Nothing rebased just by opening the confirm.
+    expect(rebaseCalled).toBe(false);
   });
 
-  it('does not call the endpoint when the confirm Modal is cancelled', async () => {
+  it('Given the confirm Modal is open, When Cancel is clicked, Then the rebase is NOT fired and the Modal closes', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
     let rebaseCalled = false;
     server.use(
       http.post(
@@ -150,26 +145,27 @@ describe('BranchReconcilePage rebase (US-383)', () => {
     );
 
     renderPage();
-
-    const rebaseBtn = await screen.findByTestId('branch-reconcile-rebase-button');
     const user = userEvent.setup();
+
+    const rebaseBtn = await screen.findByTestId(
+      'branch-reconcile-rebase-button',
+    );
     await user.click(rebaseBtn);
 
-    // Dismiss the styled confirm Modal via Cancel.
     const dialog = await screen.findByRole('dialog');
     await user.click(within(dialog).getByRole('button', { name: /cancel/i }));
 
     await waitFor(() =>
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
     );
-
-    // Give any (non-)request a chance to fire.
-    await new Promise((r) => setTimeout(r, 30));
+    expect(confirmSpy).not.toHaveBeenCalled();
     expect(rebaseCalled).toBe(false);
     expect(screen.queryByTestId('reconcile-rebase-success')).toBeNull();
   });
 
-  it('surfaces an error banner on a REBASE_CONFLICT 409', async () => {
+  it('Given the confirm Modal is open, When the destructive Rebase is confirmed, Then the /rebase endpoint fires and the new base version is shown', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    let rebaseCalled = false;
     server.use(
       http.post(
         '/api/v2/ontologies/foundry/branches/br-feature-x/diff',
@@ -177,27 +173,39 @@ describe('BranchReconcilePage rebase (US-383)', () => {
       ),
       http.post(
         '/api/v2/ontologies/foundry/branches/br-feature-x/rebase',
-        () =>
-          HttpResponse.json(
-            { errorCode: 'REBASE_CONFLICT', conflicts: [conflictEntry] },
-            { status: 409 },
-          ),
+        () => {
+          rebaseCalled = true;
+          return HttpResponse.json({ ...branch, baseVersion: 7 });
+        },
       ),
     );
-    renderPage();
 
-    const rebaseBtn = await screen.findByTestId('branch-reconcile-rebase-button');
+    renderPage();
     const user = userEvent.setup();
+
+    const rebaseBtn = await screen.findByTestId(
+      'branch-reconcile-rebase-button',
+    );
     await user.click(rebaseBtn);
 
-    // Confirm via the styled Modal.
     const dialog = await screen.findByRole('dialog');
+    // The destructive confirm button inside the Modal (distinct from Cancel).
     await user.click(
       within(dialog).getByTestId('branch-reconcile-rebase-confirm-btn'),
     );
 
-    expect(
-      await screen.findByTestId('reconcile-rebase-error'),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(rebaseCalled).toBe(true);
+      expect(
+        screen.getByTestId('reconcile-rebase-success'),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('reconcile-rebase-success')).toHaveTextContent(
+      '7',
+    );
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    // Modal closed after a successful rebase.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });
