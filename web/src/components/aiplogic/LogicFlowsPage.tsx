@@ -434,6 +434,11 @@ function LogicFlowsInner() {
   const [newFlowOpen, setNewFlowOpen] = useState(false);
   const [draft, setDraft] = useState<NewFlowDraft>(EMPTY_NEW_FLOW);
   const [draftError, setDraftError] = useState<string | null>(null);
+  // The flow pending a delete-confirmation. Non-null means the styled <Modal>
+  // confirm dialog is open for this flow. We deliberately use the shared
+  // <Modal> rather than the un-stylable, theme-breaking native window.confirm
+  // (see DashboardEditorPage for the same intentional decision).
+  const [pendingDelete, setPendingDelete] = useState<AIPLogicFlow | null>(null);
 
   const createMutation = useCreateAIPLogicFlow();
   const deleteMutation = useDeleteAIPLogicFlow();
@@ -473,16 +478,27 @@ function LogicFlowsInner() {
     );
   };
 
+  // Opening the delete flow no longer mutates anything — it only arms the
+  // styled confirmation Modal. The actual deleteMutation.mutate fires solely
+  // from confirmDeleteFlow, i.e. only when the user clicks the destructive
+  // Delete button inside the dialog.
   const onDeleteFlow = (flowId: string) => {
-    if (typeof window !== 'undefined') {
-      const ok = window.confirm('Delete this flow? This cannot be undone.');
-      if (!ok) return;
-    }
+    const flow = flows.find((f) => f.id === flowId) ?? null;
+    if (!flow) return;
+    setPendingDelete(flow);
+  };
+
+  const cancelDeleteFlow = () => setPendingDelete(null);
+
+  const confirmDeleteFlow = () => {
+    if (!pendingDelete) return;
+    const flowId = pendingDelete.id;
     deleteMutation.mutate(flowId, {
       onSuccess: () => {
         if (activeFlowId === flowId) setActiveFlowId(null);
       },
     });
+    setPendingDelete(null);
   };
 
   return (
@@ -574,6 +590,42 @@ function LogicFlowsInner() {
               className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-500 disabled:opacity-60"
             >
               {createMutation.isPending ? 'Creating…' : 'Create'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={pendingDelete !== null}
+        onClose={cancelDeleteFlow}
+        title="Delete logic flow"
+        size="md"
+      >
+        <div className="space-y-4" data-testid="delete-flow-confirm">
+          <p className="text-sm text-text-secondary">
+            Delete{' '}
+            <span className="font-medium text-text-primary">
+              {pendingDelete?.name || pendingDelete?.id}
+            </span>
+            ? This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={cancelDeleteFlow}
+              data-testid="delete-flow-cancel"
+              className="rounded-md border border-border/60 px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-tertiary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDeleteFlow}
+              disabled={deleteMutation.isPending}
+              data-testid="delete-flow-confirm-btn"
+              className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-60"
+            >
+              Delete
             </button>
           </div>
         </div>

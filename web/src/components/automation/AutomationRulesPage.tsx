@@ -18,6 +18,7 @@ import type {
 import { ApiRequestError } from '../../api/client';
 import { useToastStore } from '../../stores/toastStore';
 import { EmptyState } from '../common/EmptyState';
+import { Modal } from '../common/Modal';
 import { SkeletonTable } from '../common/Skeleton';
 
 // US-039 (PC-A01): Automation Rules management UI.
@@ -187,6 +188,15 @@ export function AutomationRulesPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
   const [executionsForRuleId, setExecutionsForRuleId] = useState<string | null>(null);
+  // Styled, theme-aware delete confirmation. We deliberately avoid the
+  // native `window.confirm` (which can't be styled and clashes with the
+  // rest of the app's Modal dialogs) — see DashboardEditorPage's note. The
+  // pending rule (id + name) drives the shared `Modal`; the destructive
+  // DELETE only fires once the operator confirms.
+  const [pendingDeleteRule, setPendingDeleteRule] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   const rules = useMemo(() => listQuery.data?.data ?? [], [listQuery.data]);
 
@@ -332,13 +342,22 @@ export function AutomationRulesPage() {
   };
 
   const deleteRule = (rule: AutomationRule) => {
-    if (!window.confirm(`Delete automation rule "${rule.name}"?`)) return;
-    setPendingRuleId(rule.id);
-    deleteMutation.mutate(rule.id, {
+    // Open the styled confirmation Modal instead of a native window.confirm.
+    setPendingDeleteRule({ id: rule.id, name: rule.name });
+  };
+
+  const cancelDelete = () => setPendingDeleteRule(null);
+
+  const confirmDelete = () => {
+    const target = pendingDeleteRule;
+    if (!target) return;
+    setPendingDeleteRule(null);
+    setPendingRuleId(target.id);
+    deleteMutation.mutate(target.id, {
       onSettled: () => setPendingRuleId(null),
       onSuccess: () => {
         pushToast({
-          message: `Deleted rule "${rule.name}".`,
+          message: `Deleted rule "${target.name}".`,
           severity: 'info',
         });
       },
@@ -530,6 +549,40 @@ export function AutomationRulesPage() {
           onClose={() => setExecutionsForRuleId(null)}
         />
       )}
+
+      <Modal
+        open={pendingDeleteRule !== null}
+        onClose={cancelDelete}
+        title="Delete automation rule"
+      >
+        <div data-testid="automation-rule-delete-confirm" className="space-y-4">
+          <p className="text-sm text-text-secondary">
+            Delete automation rule{' '}
+            <span className="font-medium text-text-primary">
+              "{pendingDeleteRule?.name}"
+            </span>
+            ? This cannot be undone.
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={cancelDelete}
+              data-testid="automation-rule-delete-cancel-btn"
+              className="rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-bg-tertiary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDelete}
+              data-testid="automation-rule-delete-confirm-btn"
+              className="rounded-md border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:bg-rose-500/20"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
