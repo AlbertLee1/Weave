@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { FormProvider, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -178,6 +185,44 @@ export function QueryTypesSandboxPage() {
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [resultView, setResultView] = useState<'table' | 'json'>('table');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Roving-tabindex refs for the result-view tablist so keyboard navigation
+  // can move DOM focus to the activated tab (WAI-ARIA tabs pattern).
+  const resultTabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // ArrowLeft/Right (with Down/Up mirrors) move between the Table/JSON tabs
+  // with wrap-around; Home/End jump to the ends. Activation is automatic:
+  // moving focus also selects (setResultView), which is the recommended
+  // pattern for tablists whose panels render cheaply.
+  const handleResultTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const views: Array<'table' | 'json'> = ['table', 'json'];
+      const last = views.length - 1;
+      let nextIndex: number | null = null;
+      switch (event.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          nextIndex = index === last ? 0 : index + 1;
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          nextIndex = index === 0 ? last : index - 1;
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        case 'End':
+          nextIndex = last;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      setResultView(views[nextIndex]);
+      resultTabRefs.current[nextIndex]?.focus();
+    },
+    [],
+  );
 
   const selectedQueryType = useMemo<QueryType | null>(() => {
     if (!selectedApiName) return null;
@@ -456,12 +501,17 @@ export function QueryTypesSandboxPage() {
                     className="flex border-b border-border text-xs"
                   >
                     <button
+                      ref={(el) => {
+                        resultTabRefs.current[0] = el;
+                      }}
                       type="button"
                       role="tab"
                       aria-selected={resultView === 'table'}
+                      tabIndex={resultView === 'table' ? 0 : -1}
                       data-testid="query-result-tab-table"
                       data-active={resultView === 'table' ? 'true' : 'false'}
                       onClick={() => setResultView('table')}
+                      onKeyDown={(event) => handleResultTabKeyDown(event, 0)}
                       className={`px-3 py-2 ${
                         resultView === 'table'
                           ? 'text-text-primary border-b-2 border-accent-cyan'
@@ -471,12 +521,17 @@ export function QueryTypesSandboxPage() {
                       Table
                     </button>
                     <button
+                      ref={(el) => {
+                        resultTabRefs.current[1] = el;
+                      }}
                       type="button"
                       role="tab"
                       aria-selected={resultView === 'json'}
+                      tabIndex={resultView === 'json' ? 0 : -1}
                       data-testid="query-result-tab-json"
                       data-active={resultView === 'json' ? 'true' : 'false'}
                       onClick={() => setResultView('json')}
+                      onKeyDown={(event) => handleResultTabKeyDown(event, 1)}
                       className={`px-3 py-2 ${
                         resultView === 'json'
                           ? 'text-text-primary border-b-2 border-accent-cyan'
