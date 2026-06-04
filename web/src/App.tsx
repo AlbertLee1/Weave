@@ -59,6 +59,7 @@ import { FunctionDiffPage } from './components/functions/FunctionDiffPage';
 import { FunctionCodePage } from './components/functions/FunctionCodePage';
 import { FunctionRepoPage } from './components/functions/FunctionRepoPage';
 import { QueryTypesSandboxPage } from './components/queries/QueryTypesSandboxPage';
+import { SqlSandboxPage } from './components/queries/SqlSandboxPage';
 import { SettingsPage } from './components/settings/SettingsPage';
 import { AutomationRulesPage } from './components/automation/AutomationRulesPage';
 import { ProposalsPage } from './components/proposals/ProposalsPage';
@@ -331,6 +332,8 @@ export default function App() {
               <Route path="api-playground" element={<Navigate to="/developer/playground" replace />} />
               <Route path="developer/metrics" element={<MetricsPage />} />
               <Route path="api-metrics" element={<Navigate to="/developer/metrics" replace />} />
+              <Route path="developer/sql" element={<SqlSandboxPage />} />
+              <Route path="sql-sandbox" element={<Navigate to="/developer/sql" replace />} />
               <Route
                 path="admin/:ontology/objectTypes"
                 element={

@@ -3288,6 +3288,13 @@ components:
         because queries run synchronously on the request goroutine; the
         "running" / "canceled" Foundry variants are documented for SDK
         compatibility but never returned by this implementation.
+
+        Because Weave executes synchronously, a "succeeded" status inlines
+        the result set: `columns` carries the SELECT-list column names and
+        `rows` carries one array of cell values per result row, positionally
+        aligned with `columns`. A zero-row SELECT still returns `columns`
+        plus an empty `rows` array so a client can render the result header.
+        On a "failed" status `columns` and `rows` are null.
       required: [type, queryId]
       properties:
         type:
@@ -3308,6 +3315,26 @@ components:
             "SystemTableAccess" (query references pg_* / information_schema.*),
             "QueryTimeout" (query exceeded the configured timeout — US-468),
             "MaxRowsExceeded" (query streamed more than the configured row cap — US-468).
+        columns:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: |
+            Result column names, in SELECT-list order. Present (possibly an
+            empty array) on a "succeeded" status; null on "failed".
+        rows:
+          type: array
+          nullable: true
+          description: |
+            Result rows. Each element is an array of cell values positionally
+            aligned with `columns`. Cell values are JSON scalars (number,
+            string, boolean, null) or nested JSON for composite/array columns.
+            Present (possibly empty) on "succeeded"; null on "failed". The row
+            count never exceeds the engine's configured MaxRows cap.
+          items:
+            type: array
+            items: {}
     AdminIndexRebuildRequest:
       type: object
       description: |

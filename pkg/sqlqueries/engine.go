@@ -81,8 +81,31 @@ func (c Config) resolve() Config {
 // at the wire layer, but engine implementations should still treat the
 // call as read-only and run inside a read-only transaction when the
 // backend supports it.
+//
+// Execute is retained for backward compatibility (it discards the result
+// payload). New callers should prefer the optional ResultEngine
+// interface, which returns the column names and row values so the wire
+// layer can inline them on the succeeded QueryStatus.
 type Engine interface {
 	Execute(ctx context.Context, query string) error
+}
+
+// ResultEngine is an optional extension of Engine that returns the
+// query result (column names + row values) in addition to enforcing the
+// read-only / timeout / row-cap quotas. The handler type-asserts the
+// configured Engine to ResultEngine; when the assertion succeeds the
+// succeeded QueryStatus carries the columns + rows payload, otherwise it
+// falls back to the result-less Execute path.
+//
+// Implementations MUST preserve the same safety guarantees as Execute:
+// validate the query, run inside a read-only transaction, honour the
+// configured per-query timeout, and abort with ErrMaxRowsExceeded once
+// Config.MaxRows rows have been streamed. On any error the returned
+// columns / rows MUST be nil so a failed envelope never leaks a partial
+// result set.
+type ResultEngine interface {
+	Engine
+	ExecuteWithResult(ctx context.Context, query string) (columns []string, rows [][]any, err error)
 }
 
 // PGEngine is a pgxpool-backed Engine. Each Execute call runs the given
@@ -111,36 +134,92 @@ func NewPGEngineWithConfig(pool *pgxpool.Pool, cfg Config) *PGEngine {
 // Config returns the resolved sandbox config the engine is enforcing.
 func (e *PGEngine) Config() Config { return e.cfg }
 
-// Execute runs the query inside a read-only transaction. The caller's
-// context is wrapped with the configured timeout, and the result stream
-// is aborted with ErrMaxRowsExceeded once Config.MaxRows is reached.
+// Execute runs the query inside a read-only transaction and discards the
+// result rows. The caller's context is wrapped with the configured
+// timeout, and the result stream is aborted with ErrMaxRowsExceeded once
+// Config.MaxRows is reached. It delegates to ExecuteWithResult so the
+// safety / quota enforcement lives in exactly one place.
 func (e *PGEngine) Execute(ctx context.Context, query string) error {
+	_, _, err := e.ExecuteWithResult(ctx, query)
+	return err
+}
+
+// ExecuteWithResult runs the query inside a read-only transaction and
+// returns the column names plus the materialised row values. The same
+// read-only / timeout / row-cap guarantees as Execute apply:
+//
+//   - ValidateQuery gates the statement before it reaches the planner.
+//   - The transaction is opened with pgx.ReadOnly so any accidental
+//     side-effect rolls back.
+//   - execCtx carries the per-query timeout; a deadline maps to
+//     ErrQueryTimeout.
+//   - The row scan aborts with ErrMaxRowsExceeded the moment the stream
+//     produces more than Config.MaxRows rows, so a runaway result set is
+//     never fully buffered into memory.
+//
+// On any error the returned columns / rows are nil — the handler relies
+// on this so a failed envelope never leaks a partial result set.
+func (e *PGEngine) ExecuteWithResult(ctx context.Context, query string) ([]string, [][]any, error) {
 	if err := ValidateQuery(query); err != nil {
-		return err
+		return nil, nil, err
 	}
 	execCtx, cancel := context.WithTimeout(ctx, e.cfg.Timeout)
 	defer cancel()
 	tx, err := e.pool.BeginTx(execCtx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
-		return mapContextError(execCtx, err)
+		return nil, nil, mapContextError(execCtx, err)
 	}
 	defer tx.Rollback(execCtx)
 	rows, err := tx.Query(execCtx, query)
 	if err != nil {
-		return mapContextError(execCtx, err)
+		return nil, nil, mapContextError(execCtx, err)
 	}
 	defer rows.Close()
+
+	fieldDescs := rows.FieldDescriptions()
+	columns := make([]string, len(fieldDescs))
+	for i, fd := range fieldDescs {
+		columns[i] = string(fd.Name)
+	}
+
+	// Materialise rows up to the cap. We pre-allocate an empty (non-nil)
+	// slice so a zero-row SELECT still serialises as [] rather than null.
+	out := make([][]any, 0)
 	count := 0
 	for rows.Next() {
 		count++
 		if count > e.cfg.MaxRows {
-			return ErrMaxRowsExceeded
+			return nil, nil, ErrMaxRowsExceeded
 		}
+		vals, scanErr := rows.Values()
+		if scanErr != nil {
+			return nil, nil, mapContextError(execCtx, scanErr)
+		}
+		out = append(out, normalizeRow(vals))
 	}
 	if err := rows.Err(); err != nil {
-		return mapContextError(execCtx, err)
+		return nil, nil, mapContextError(execCtx, err)
 	}
-	return nil
+	return columns, out, nil
+}
+
+// normalizeRow converts pgx-scanned column values into JSON-friendly
+// shapes. pgx returns most scalars (int / float / string / bool /
+// time.Time) directly, but a few PG types decode to []byte (e.g. bytea)
+// which would otherwise serialise as a base64 string with no type hint.
+// We coerce []byte to a string so the wire payload is readable; all other
+// values are passed through unchanged and left to encoding/json.
+func normalizeRow(vals []any) []any {
+	out := make([]any, len(vals))
+	for i, v := range vals {
+		switch b := v.(type) {
+		case []byte:
+			out[i] = string(b)
+		default:
+			out[i] = v
+		}
+	}
+	return out
 }
 
 // mapContextError rewrites a pgx error caused by the per-query timeout
