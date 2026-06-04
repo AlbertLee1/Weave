@@ -80,6 +80,8 @@ const en = {
     deleteConfirm: 'Close branch "{{name}}"? This cannot be undone.',
     deleting: 'Closing…',
     deleteError: 'Could not close branch: {{message}}',
+    pendingChanges: '{{n}} pending',
+    pendingChangesTitle: '{{n}} pending change(s) on this branch',
   },
   branchReconcile: {
     title: 'Branch Reconcile',
