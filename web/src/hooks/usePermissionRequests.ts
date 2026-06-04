@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import {
   approvePermissionRequest,
   cancelPermissionRequest,
@@ -24,11 +29,14 @@ const EMPTY: ListPermissionRequestsResponse = {
 // list so the inbox UI can render a "feature unavailable" placeholder
 // instead of failing. Non-approver callers automatically receive only
 // their own rows server-side; the `mine` flag opts the approver into
-// the same scoped view.
+// the same scoped view. keepPreviousData holds the current page on screen
+// while the next limit/offset page loads, so paging doesn't flash the
+// loading skeleton and the pagination controls stay mounted.
 export function usePermissionRequests(query: ListPermissionRequestsQuery = {}) {
   const cacheKey = ['permission-requests', 'list', JSON.stringify(query)];
   return useQuery<ListPermissionRequestsResponse & { available: boolean }>({
     queryKey: cacheKey,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       try {
         const resp = await listPermissionRequests(query);
