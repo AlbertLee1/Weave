@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import type { RouteStat, UsageSummary } from '../../api/developer';
 import {
@@ -125,6 +125,46 @@ function WindowTabs({
   selected: WindowLabel;
   onSelect: (w: WindowLabel) => void;
 }) {
+  // Roving-tabindex refs: the newly selected tab receives DOM focus after
+  // keyboard navigation so screen readers and sighted keyboard users stay
+  // in sync (WAI-ARIA tabs pattern, automatic activation).
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // Automatic activation: activate the target tab AND move focus to it.
+  const activate = (index: number) => {
+    const target = WINDOW_LABELS[index];
+    onSelect(target);
+    tabRefs.current[index]?.focus();
+  };
+
+  const handleKeyDown = (
+    e: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
+    const count = WINDOW_LABELS.length;
+    let next: number | null = null;
+    switch (e.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        next = (index + 1) % count;
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        next = (index - 1 + count) % count;
+        break;
+      case 'Home':
+        next = 0;
+        break;
+      case 'End':
+        next = count - 1;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    activate(next);
+  };
+
   return (
     <div
       role="tablist"
@@ -132,14 +172,19 @@ function WindowTabs({
       className="inline-flex rounded border overflow-hidden"
       style={{ borderColor: 'rgba(31,41,55,0.5)' }}
     >
-      {WINDOW_LABELS.map((w) => {
+      {WINDOW_LABELS.map((w, index) => {
         const active = w === selected;
         return (
           <button
             key={w}
+            ref={(el) => {
+              tabRefs.current[index] = el;
+            }}
             role="tab"
             aria-selected={active}
+            tabIndex={active ? 0 : -1}
             onClick={() => onSelect(w)}
+            onKeyDown={(e) => handleKeyDown(e, index)}
             className={`px-3 py-1 text-xs uppercase tracking-widest transition-colors ${
               active
                 ? 'bg-bg-tertiary text-text-primary'
