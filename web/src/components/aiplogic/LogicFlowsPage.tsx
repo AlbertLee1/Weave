@@ -733,11 +733,18 @@ function FlowEditor({ flow, loading }: FlowEditorProps) {
   const [dryRunError, setDryRunError] = useState<string | null>(null);
   const [fallbackModel, setFallbackModel] = useState('');
   const [maxRetries, setMaxRetries] = useState<number>(0);
+  // runsLimit === undefined means "use the backend default" (no ?limit= is
+  // sent, server applies 50). A defined value is clamped to the handler's
+  // accepted window (1..499) before it reaches the API.
+  const [runsLimit, setRunsLimit] = useState<number | undefined>(undefined);
 
   const updateMutation = useUpdateAIPLogicFlow();
   const executeMutation = useExecuteAIPLogicFlow(flow?.id ?? '');
   const dryRunMutation = useDryRunAIPLogicNode(flow?.id ?? '');
-  const runsQuery = useAIPLogicRuns(flow?.id ?? null);
+  const runsQuery = useAIPLogicRuns(
+    flow?.id ?? null,
+    runsLimit === undefined ? undefined : { limit: runsLimit },
+  );
 
   const validation = useMemo(
     () => validateGraph(nodes, edges),
@@ -1144,7 +1151,11 @@ function FlowEditor({ flow, loading }: FlowEditorProps) {
             </button>
           </div>
           {lastRun && <RunPanel run={lastRun} />}
-          <RunsHistory runs={runsQuery.data?.runs ?? []} />
+          <RunsHistory
+            runs={runsQuery.data?.runs ?? []}
+            limit={runsLimit}
+            onChangeLimit={setRunsLimit}
+          />
         </div>
       )}
 
@@ -1840,36 +1851,75 @@ function RunPanel({ run }: { run: AIPLogicRun }) {
   );
 }
 
-function RunsHistory({ runs }: { runs: AIPLogicRun[] }) {
-  if (!runs || runs.length === 0) return null;
+// RUNS_LIMIT_MIN / MAX mirror the ListRuns handler window: it only honors a
+// parsed ?limit= when 0 < limit < 500 (pkg/aip/logic/handlers.go).
+const RUNS_LIMIT_MIN = 1;
+const RUNS_LIMIT_MAX = 499;
+
+interface RunsHistoryProps {
+  runs: AIPLogicRun[];
+  limit: number | undefined;
+  onChangeLimit: (limit: number | undefined) => void;
+}
+
+function RunsHistory({ runs, limit, onChangeLimit }: RunsHistoryProps) {
   return (
-    <details
+    <div
       className="rounded-md border border-border/50 bg-bg-primary/40 px-2 py-1 text-[11px] text-text-secondary"
       data-testid="runs-history"
     >
-      <summary className="cursor-pointer text-text-secondary">
-        Recent runs ({runs.length})
-      </summary>
-      <ul className="mt-1 space-y-0.5">
-        {runs.map((r) => (
-          <li
-            key={r.id}
-            className="flex items-center gap-2 text-[10px] text-text-muted"
-          >
-            <span className="font-mono">#{r.id}</span>
-            <span
-              className={
-                r.status === 'success' ? 'text-teal-300' : 'text-rose-300'
+      <div className="flex items-center justify-between gap-2 py-0.5">
+        <span className="text-text-secondary">
+          Recent runs ({runs.length})
+        </span>
+        <label className="flex items-center gap-1 text-[10px] text-text-muted">
+          Limit
+          <input
+            type="number"
+            min={RUNS_LIMIT_MIN}
+            max={RUNS_LIMIT_MAX}
+            value={limit ?? ''}
+            placeholder="50"
+            onChange={(e) => {
+              const raw = e.target.value.trim();
+              if (raw === '') {
+                onChangeLimit(undefined);
+                return;
               }
+              const n = Number.parseInt(raw, 10);
+              if (Number.isNaN(n)) return;
+              onChangeLimit(
+                Math.max(RUNS_LIMIT_MIN, Math.min(RUNS_LIMIT_MAX, n)),
+              );
+            }}
+            data-testid="runs-limit-input"
+            title="Max runs to fetch (1–499); leave blank for the server default (50)."
+            className="w-16 rounded-md border border-border/50 bg-bg-primary px-1.5 py-0.5 font-mono text-[10px] text-text-primary outline-none focus:border-amber-500/60"
+          />
+        </label>
+      </div>
+      {runs.length > 0 && (
+        <ul className="mt-1 space-y-0.5" data-testid="runs-history-list">
+          {runs.map((r) => (
+            <li
+              key={r.id}
+              className="flex items-center gap-2 text-[10px] text-text-muted"
             >
-              {r.status}
-            </span>
-            <span className="ml-auto">
-              {new Date(r.createdAt).toLocaleTimeString()}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </details>
+              <span className="font-mono">#{r.id}</span>
+              <span
+                className={
+                  r.status === 'success' ? 'text-teal-300' : 'text-rose-300'
+                }
+              >
+                {r.status}
+              </span>
+              <span className="ml-auto">
+                {new Date(r.createdAt).toLocaleTimeString()}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
