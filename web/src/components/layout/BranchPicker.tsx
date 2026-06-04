@@ -60,6 +60,11 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
   const [pendingDelete, setPendingDelete] = useState<
     { id: string; name: string } | null
   >(null);
+  // Inline error for a failed branch deletion, shown inside the confirmation
+  // Modal. The useDeleteBranch hook only exposes an onSuccess path, so the
+  // failure is captured here via the per-call mutate onError instead of reading
+  // deleteMutation.error — mirroring the create form's inline error feedback.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   // The dropdown panel (role="menu"). Used to query the branch-item buttons
   // for roving focus and to move focus onto the first/active item on open.
@@ -222,18 +227,25 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
   // the actual delete only fires once the user confirms inside the dialog.
   const onDelete = (branchId: string, branchName: string) => {
     if (deleteMutation.isPending) return;
+    // Clear any error left over from a previous (cancelled) deletion so the
+    // freshly-opened dialog starts clean.
+    setDeleteError(null);
     setPendingDelete({ id: branchId, name: branchName });
   };
 
   const cancelDelete = () => {
     setPendingDelete(null);
+    setDeleteError(null);
   };
 
   const confirmDelete = () => {
     if (!pendingDelete || deleteMutation.isPending) return;
     const branchId = pendingDelete.id;
+    setDeleteError(null);
     // Preserve the original mutate onSuccess logic verbatim; only the closing
-    // of the confirmation Modal is layered on top.
+    // of the confirmation Modal and the per-call onError feedback are layered
+    // on top. On failure the Modal is kept open (pendingDelete untouched) so
+    // the user can read the error and retry.
     deleteMutation.mutate(branchId, {
       onSuccess: () => {
         // If the closed branch was the active selection, fall back to main.
@@ -242,6 +254,10 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
         }
         queryClient.invalidateQueries();
         setPendingDelete(null);
+        setDeleteError(null);
+      },
+      onError: (err) => {
+        setDeleteError(String(err));
       },
     });
   };
@@ -466,6 +482,14 @@ export function BranchPicker({ ontologyApiName }: BranchPickerProps) {
           <p className="text-sm text-text-secondary">
             {t('branch.deleteConfirm', { name: pendingDelete?.name ?? '' })}
           </p>
+          {deleteError ? (
+            <p
+              data-testid="branch-picker-delete-error"
+              className="text-xs text-red-400"
+            >
+              {t('branch.deleteError', { message: deleteError })}
+            </p>
+          ) : null}
           <div className="flex justify-end gap-2">
             <button
               type="button"
