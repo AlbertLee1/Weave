@@ -801,7 +801,7 @@ function OutgoingLinkTypesEditor({
       {items.map((lt, idx) => (
         <div
           key={idx}
-          className="grid grid-cols-[1fr_1fr_10rem_8rem_auto] gap-2 items-center"
+          className="grid grid-cols-[1fr_1fr_10rem_8rem_auto_auto] gap-2 items-center"
         >
           <input
             aria-label={`Link type ${idx + 1} api name`}
@@ -861,6 +861,19 @@ function OutgoingLinkTypesEditor({
               </option>
             ))}
           </select>
+          <label className="flex items-center gap-1 text-[11px] text-text-secondary">
+            <input
+              aria-label={`Link type ${idx + 1} required`}
+              type="checkbox"
+              checked={!!lt.required}
+              onChange={(e) => {
+                const next = [...items];
+                next[idx] = { ...lt, required: e.target.checked };
+                onChange(next);
+              }}
+            />
+            Required
+          </label>
           <button
             type="button"
             aria-label={`Remove link type ${idx + 1}`}
