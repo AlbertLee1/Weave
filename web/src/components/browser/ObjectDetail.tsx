@@ -10,6 +10,10 @@ import type {
   WithPropertiesObjectSet,
 } from '../../api/types';
 import { loadObjectSet } from '../../api/objectsets';
+import {
+  fetchGeotemporalHistoricValues,
+  describePosition,
+} from '../../api/geotemporal';
 import { SlidePanel } from '../common/SlidePanel';
 import { useOutgoingLinkTypes } from '../../hooks/useObjectTypes';
 import { useProperties } from '../../hooks/useProperties';
@@ -269,6 +273,7 @@ export function ObjectDetail({
                       .filter(
                         ([, prop]) =>
                           baseTypeOf(prop.dataType) !== 'timeseries' &&
+                          baseTypeOf(prop.dataType) !== 'geotimeseries' &&
                           baseTypeOf(prop.dataType) !== 'media' &&
                           baseTypeOf(prop.dataType) !== 'attachment',
                       )
@@ -349,6 +354,26 @@ export function ObjectDetail({
                         label={name}
                       />
                     </section>
+                  ))}
+
+              {/* Geotemporal (GeoTimeSeries) properties: list the historic
+                  (time, position) readings. US-039 / Foundry
+                  GeotemporalSeriesProperty. Pure data listing — no map canvas
+                  — so the raw-object render path stays untouched. */}
+              {objectType.properties &&
+                Object.entries(objectType.properties)
+                  .filter(
+                    ([, prop]) =>
+                      baseTypeOf(prop.dataType) === 'geotimeseries',
+                  )
+                  .map(([name]) => (
+                    <GeotemporalSection
+                      key={`geo-${name}`}
+                      ontologyApiName={ontologyApiName}
+                      objectType={objectType.apiName}
+                      primaryKey={String(object.__primaryKey)}
+                      property={name}
+                    />
                   ))}
 
               {/* Media properties: dropzone upload + thumbnails + delete */}
@@ -591,6 +616,90 @@ function DerivedPropertiesSection({
             );
           })}
         </dl>
+      )}
+    </section>
+  );
+}
+
+interface GeotemporalSectionProps {
+  ontologyApiName: string;
+  objectType: string;
+  primaryKey: string;
+  property: string;
+}
+
+// GeotemporalSection renders the historic (time, position) readings for a
+// single GeotemporalSeriesProperty. It POSTs the streamHistoricValues endpoint
+// (ordered time-ascending) and lists each reading as a timestamp + a plain-text
+// position (lat, lng for GeoJSON Points). Deliberately map-free: this is a data
+// surface, not a Leaflet canvas, so it sits alongside the raw-object render
+// path without pulling heavy geo dependencies.
+function GeotemporalSection({
+  ontologyApiName,
+  objectType,
+  primaryKey,
+  property,
+}: GeotemporalSectionProps) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: [
+      'objectDetailGeotemporal',
+      ontologyApiName,
+      objectType,
+      primaryKey,
+      property,
+    ],
+    enabled: primaryKey !== '',
+    queryFn: () =>
+      fetchGeotemporalHistoricValues({
+        ontologyApiName,
+        objectType,
+        primaryKey,
+        property,
+      }),
+    staleTime: 30_000,
+  });
+
+  const values = data ?? [];
+
+  return (
+    <section
+      data-testid="object-detail-geotemporal"
+      data-property={property}
+    >
+      <h3 className="text-xs font-sans font-medium text-text-secondary uppercase tracking-wider mb-3">
+        {property} (Geotemporal)
+      </h3>
+      {isLoading && (
+        <p className="text-xs font-mono text-text-muted py-1">Loading…</p>
+      )}
+      {isError && (
+        <p className="text-xs font-mono text-accent-red py-1">
+          Failed to load geotemporal series.
+        </p>
+      )}
+      {!isLoading && !isError && values.length === 0 && (
+        <p className="text-xs font-mono text-text-muted py-1">No readings.</p>
+      )}
+      {!isLoading && !isError && values.length > 0 && (
+        <ol
+          className="space-y-1"
+          data-testid={`geotemporal-series-${property}`}
+        >
+          {values.map((v, i) => (
+            <li
+              key={`${v.time}-${i}`}
+              className="flex items-start gap-3"
+              data-testid={`geotemporal-reading-${property}-${i}`}
+            >
+              <span className="w-1/2 text-xs font-mono text-accent-cyan break-all shrink-0">
+                {v.time}
+              </span>
+              <span className="flex-1 text-xs font-mono text-text-primary break-all">
+                {describePosition(v.position)}
+              </span>
+            </li>
+          ))}
+        </ol>
       )}
     </section>
   );
