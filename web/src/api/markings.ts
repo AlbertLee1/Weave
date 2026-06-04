@@ -5,6 +5,7 @@ export interface Marking {
   displayName: string;
   description: string;
   color: string;
+  createdAt?: string;
 }
 
 export interface MarkingGrant {
