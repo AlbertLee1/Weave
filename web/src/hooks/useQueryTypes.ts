@@ -1,9 +1,16 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  createQueryType,
+  deleteQueryType,
   executeQueryType,
   getQueryType,
   listQueryTypes,
+  updateQueryType,
 } from '../api/ontologies';
+import type {
+  CreateQueryTypeRequest,
+  UpdateQueryTypeRequest,
+} from '../api/types';
 
 export function useQueryTypes(ontologyApiName: string) {
   return useQuery({
@@ -31,5 +38,40 @@ export function useExecuteQueryType(ontologyApiName: string) {
       queryApiName: string;
       parameters: Record<string, unknown>;
     }) => executeQueryType(ontologyApiName, vars.queryApiName, vars.parameters),
+  });
+}
+
+// --- QueryType admin CRUD mutations ---
+
+export function useCreateQueryType(ontologyApiName: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateQueryTypeRequest) =>
+      createQueryType(ontologyApiName, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['queryTypes', ontologyApiName] });
+    },
+  });
+}
+
+export function useUpdateQueryType(ontologyApiName: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { rid: string; body: UpdateQueryTypeRequest }) =>
+      updateQueryType(ontologyApiName, vars.rid, vars.body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['queryTypes', ontologyApiName] });
+      qc.invalidateQueries({ queryKey: ['queryType', ontologyApiName] });
+    },
+  });
+}
+
+export function useDeleteQueryType(ontologyApiName: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rid: string) => deleteQueryType(ontologyApiName, rid),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['queryTypes', ontologyApiName] });
+    },
   });
 }

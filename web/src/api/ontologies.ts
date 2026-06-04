@@ -13,6 +13,8 @@ import type {
   ObjectTypeInterface,
   ValueType,
   QueryType,
+  CreateQueryTypeRequest,
+  UpdateQueryTypeRequest,
   BranchDetailResponse,
   BranchDiffEntry,
   BranchDiffPostResponse,
@@ -960,6 +962,44 @@ export function executeQueryType(
     'POST',
     `/api/v2/ontologies/${ontologyApiName}/queries/${queryApiName}/execute`,
     { parameters },
+  );
+}
+
+// createQueryType POSTs a new QueryType. Mirrors the ActionType admin-CRUD
+// shape: the server resolves the ontology from the path and assigns the RID.
+export function createQueryType(
+  ontologyApiName: string,
+  body: CreateQueryTypeRequest,
+): Promise<QueryType> {
+  return request<QueryType>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/queryTypes`,
+    body,
+  );
+}
+
+// updateQueryType PUTs a partial update keyed on the QueryType's RID
+// (apiName is immutable). Empty fields are left unchanged server-side.
+export function updateQueryType(
+  ontologyApiName: string,
+  queryTypeRid: string,
+  body: UpdateQueryTypeRequest,
+): Promise<QueryType> {
+  return request<QueryType>(
+    'PUT',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/queryTypes/byRid/${encodeURIComponent(queryTypeRid)}`,
+    body,
+  );
+}
+
+// deleteQueryType DELETEs a QueryType by RID. 204 No Content on success.
+export function deleteQueryType(
+  ontologyApiName: string,
+  queryTypeRid: string,
+): Promise<void> {
+  return request<void>(
+    'DELETE',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/queryTypes/byRid/${encodeURIComponent(queryTypeRid)}`,
   );
 }
 

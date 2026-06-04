@@ -139,6 +139,18 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	r.Put("/api/v2/ontologies/{ontologyApiName}/datasourceBindings/byRid/{datasourceBindingRid}", omsHandler.UpdateDatasourceBinding)
 	r.Delete("/api/v2/ontologies/{ontologyApiName}/datasourceBindings/byRid/{datasourceBindingRid}", omsHandler.DeleteDatasourceBinding)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/queryTypes", omsHandler.ListQueryTypesV2)
+	// QueryType admin CRUD: QueryType is a first-class ontology entity but was
+	// the only metadata kind without mounted Create/Update/Delete routes — the
+	// handlers (CreateQueryType / UpdateQueryType / DeleteQueryType) and repo
+	// methods were already written. These follow the ActionType byRid admin
+	// style (see actionTypes above). The Create handler resolves the ontology
+	// from {ontologyApiName}; Get/Update/Delete key on {queryTypeRid}. Declared
+	// BEFORE the parameterised /{queryApiName} getter so the literal `byRid`
+	// segment cannot be captured as a queryApiName.
+	r.Post("/api/v2/ontologies/{ontologyApiName}/queryTypes", omsHandler.CreateQueryType)
+	r.Get("/api/v2/ontologies/{ontologyApiName}/queryTypes/byRid/{queryTypeRid}", omsHandler.GetQueryType)
+	r.Put("/api/v2/ontologies/{ontologyApiName}/queryTypes/byRid/{queryTypeRid}", omsHandler.UpdateQueryType)
+	r.Delete("/api/v2/ontologies/{ontologyApiName}/queryTypes/byRid/{queryTypeRid}", omsHandler.DeleteQueryType)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/queryTypes/{queryApiName}", omsHandler.GetQueryTypeV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/fullMetadata", omsHandler.GetFullMetadata)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/export", omsHandler.ExportOntologyV2)
