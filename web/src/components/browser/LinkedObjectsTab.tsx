@@ -180,18 +180,32 @@ function LinkedObjectGroup({
   primaryKey: string;
   linkType: LinkType;
 }) {
+  // Traversal direction toggle. "forward" walks the link source -> target
+  // (its declared direction); "reverse" walks target -> source so the user
+  // can discover incoming/reverse links. The backend reads this off the
+  // `?direction=` query param (pkg/oss/handlers.go) and the hook re-fetches
+  // whenever it changes because direction is part of the query key.
+  const [direction, setDirection] = useState<'forward' | 'reverse'>('forward');
   const { data, isLoading } = useLinkedObjects({
     ontologyApiName,
     objectType,
     primaryKey,
     linkType: linkType.apiName,
     pageSize: 10,
+    direction,
   });
   // US-497 — only MANY_TO_MANY links carry edge_properties in
   // link_edges; ONE_TO_* edges have nowhere to store them so the edit
   // affordance is gated on cardinality, matching the backend resolver
   // at cmd/server/edge_properties_resolver.go:71.
-  const supportsEdgeProperties = linkType.cardinality === 'MANY_TO_MANY';
+  //
+  // Edge-property edits PUT to /edges/{sourcePk}/{targetPk}/properties with
+  // sourcePk=this object and targetPk=the row. That mapping only holds while
+  // walking forward; in reverse the rows are incoming objects (the real edge
+  // is row -> this object), so we suppress the edit affordance rather than
+  // write to an inverted/nonexistent edge.
+  const supportsEdgeProperties =
+    linkType.cardinality === 'MANY_TO_MANY' && direction === 'forward';
   const [editingTargetPk, setEditingTargetPk] = useState<string | null>(null);
 
   const visibleKeys = useMemo(() => {
@@ -215,6 +229,31 @@ function LinkedObjectGroup({
             ({data.totalCount})
           </span>
         )}
+        <div
+          role="group"
+          aria-label={`Traversal direction for ${linkType.displayName}`}
+          className="ml-auto inline-flex overflow-hidden rounded border border-border"
+        >
+          {(['forward', 'reverse'] as const).map((dir) => {
+            const active = direction === dir;
+            return (
+              <button
+                key={dir}
+                type="button"
+                data-testid={`link-direction-${dir}-${linkType.apiName}`}
+                aria-pressed={active}
+                onClick={() => setDirection(dir)}
+                className={`text-xs font-sans px-2 py-0.5 ${
+                  active
+                    ? 'bg-accent-cyan text-bg-primary'
+                    : 'bg-bg-tertiary text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                {dir === 'forward' ? 'Forward' : 'Reverse'}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {isLoading && <LoadingSpinner size="sm" />}
