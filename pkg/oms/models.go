@@ -170,6 +170,19 @@ func (ot *ObjectType) ToWireJSON() ([]byte, error) {
 		wire["properties"] = props
 	}
 
+	// VTX-077: surface the timeline event metadata so the Vertex Timeline and
+	// admin UI can read back what was configured. Mirror the model's
+	// `omitempty` tags — non-event types stay silent on the wire.
+	if ot.IsEvent {
+		wire["isEvent"] = true
+	}
+	if ot.EventStartProp != "" {
+		wire["eventStartProp"] = ot.EventStartProp
+	}
+	if ot.EventEndProp != "" {
+		wire["eventEndProp"] = ot.EventEndProp
+	}
+
 	return json.Marshal(wire)
 }
 
@@ -211,6 +224,17 @@ func (ot *ObjectType) ToFullMetadataJSON() ([]byte, error) {
 	}
 	if ot.AuditDataAccess {
 		wire["auditDataAccess"] = true
+	}
+	// VTX-077: mirror ToWireJSON so the /fullMetadata read surface (used by the
+	// Vertex Timeline and the SDK) also exposes the timeline event metadata.
+	if ot.IsEvent {
+		wire["isEvent"] = true
+	}
+	if ot.EventStartProp != "" {
+		wire["eventStartProp"] = ot.EventStartProp
+	}
+	if ot.EventEndProp != "" {
+		wire["eventEndProp"] = ot.EventEndProp
 	}
 
 	if len(ot.Properties) > 0 {

@@ -34,6 +34,11 @@ export interface ObjectType {
   extendsRid?: string;
   // US-264: opts the ObjectType into per-read data-access audit logging.
   auditDataAccess?: boolean;
+  // VTX-077: timeline event metadata. isEvent marks the ObjectType as an event
+  // the Vertex Timeline renders as a bar from eventStartProp to eventEndProp.
+  isEvent?: boolean;
+  eventStartProp?: string;
+  eventEndProp?: string;
   properties?: Record<string, { dataType: DataType; rid: string }>;
 }
 

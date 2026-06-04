@@ -121,6 +121,12 @@ type CreateObjectTypeRequest struct {
 	// audit_events row (action = "data.access") for every successful OSS
 	// read against this type.
 	AuditDataAccess bool `json:"auditDataAccess,omitempty"`
+	// IsEvent / EventStartProp / EventEndProp (VTX-077) flag the ObjectType as
+	// a timeline event so the Vertex Timeline can render each row as a bar from
+	// EventStartProp to EventEndProp. Defaults to a non-event type.
+	IsEvent        bool   `json:"isEvent,omitempty"`
+	EventStartProp string `json:"eventStartProp,omitempty"`
+	EventEndProp   string `json:"eventEndProp,omitempty"`
 }
 
 // UpdateObjectTypeRequest is the request body for updating an object type.
@@ -149,6 +155,13 @@ type UpdateObjectTypeRequest struct {
 	// the field preserve the current setting so admins can edit other
 	// attributes without accidentally disabling audit.
 	AuditDataAccess *bool `json:"auditDataAccess,omitempty"`
+	// IsEvent / EventStartProp / EventEndProp (VTX-077) are tri-state pointers
+	// so a partial update that omits them preserves the existing timeline
+	// configuration. nil = leave unchanged; an explicit value overwrites (an
+	// empty-string prop clears the placement).
+	IsEvent        *bool   `json:"isEvent,omitempty"`
+	EventStartProp *string `json:"eventStartProp,omitempty"`
+	EventEndProp   *string `json:"eventEndProp,omitempty"`
 }
 
 // UpdateOntologyRequest is the request body for updating an ontology.
@@ -455,6 +468,9 @@ func (h *OMSHandler) CreateObjectType(w http.ResponseWriter, r *http.Request) {
 		ExtendsRID:        req.ExtendsRID,
 		Classification:    req.Classification,
 		AuditDataAccess:   req.AuditDataAccess,
+		IsEvent:           req.IsEvent,
+		EventStartProp:    req.EventStartProp,
+		EventEndProp:      req.EventEndProp,
 	}
 
 	// US-212: validate inheritance candidate. The parent must exist, live in the
@@ -597,6 +613,18 @@ func (h *OMSHandler) UpdateObjectType(w http.ResponseWriter, r *http.Request) {
 	// overwrite. No additional validation — the column is a plain flag.
 	if req.AuditDataAccess != nil {
 		updated.AuditDataAccess = *req.AuditDataAccess
+	}
+	// VTX-077 timeline event tri-state: nil = preserve, explicit value =
+	// overwrite. Each field is independent so an admin can flip the isEvent
+	// flag or re-point a start/end prop without touching the others.
+	if req.IsEvent != nil {
+		updated.IsEvent = *req.IsEvent
+	}
+	if req.EventStartProp != nil {
+		updated.EventStartProp = *req.EventStartProp
+	}
+	if req.EventEndProp != nil {
+		updated.EventEndProp = *req.EventEndProp
 	}
 	// US-212: ExtendsRID tri-state — nil pointer leaves unchanged, "" clears,
 	// non-empty rewrites and is validated against the same rules as Create
