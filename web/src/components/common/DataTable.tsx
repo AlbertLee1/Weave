@@ -21,6 +21,7 @@ interface DataTableProps<T> {
   hasNextPage?: boolean;
   hasPrevPage?: boolean;
   currentPage?: number;
+  emptyMessage?: React.ReactNode;
 }
 
 export function DataTable<T extends Record<string, unknown>>({
@@ -35,6 +36,7 @@ export function DataTable<T extends Record<string, unknown>>({
   hasNextPage,
   hasPrevPage,
   currentPage = 1,
+  emptyMessage = 'No data',
 }: DataTableProps<T>) {
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -96,6 +98,16 @@ export function DataTable<T extends Record<string, unknown>>({
             </tr>
           </thead>
           <tbody>
+            {data.length === 0 && (
+              <tr>
+                <td
+                  colSpan={columns.length}
+                  className="px-3 py-6 text-center font-mono text-xs text-text-secondary"
+                >
+                  {emptyMessage}
+                </td>
+              </tr>
+            )}
             {data.map((row, i) => (
               <tr
                 key={i}
