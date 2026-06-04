@@ -32,6 +32,11 @@ const STATUS_BADGE_STYLE: Record<PermissionRequestStatus, string> = {
   CANCELLED: 'bg-slate-500/10 text-slate-400 border border-slate-500/30',
 };
 
+// PAGE_SIZE bounds each list page. The backend clamps limit to
+// [1, MaxPageLimit=200]; 25 keeps the inbox scannable while exercising
+// the limit/offset paging the API exposes.
+const PAGE_SIZE = 25;
+
 // PermissionRequestsPage renders the share-link permission inbox
 // (US-339). Approvers see every PENDING request; non-approvers see only
 // their own. Both can submit a new request via the "Request access"
@@ -40,6 +45,8 @@ const STATUS_BADGE_STYLE: Record<PermissionRequestStatus, string> = {
 export function PermissionRequestsPage() {
   const [status, setStatus] = useState<StatusFilter>('PENDING');
   const [mineOnly, setMineOnly] = useState(false);
+  const [targetRid, setTargetRid] = useState('');
+  const [offset, setOffset] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [createTarget, setCreateTarget] = useState('');
   const [createReason, setCreateReason] = useState('');
@@ -50,9 +57,31 @@ export function PermissionRequestsPage() {
   const [reviewNote, setReviewNote] = useState('');
   const [reviewError, setReviewError] = useState<string | null>(null);
 
+  const trimmedTargetRid = targetRid.trim();
+
+  // Changing any server-side filter invalidates the current page window,
+  // so snap back to the first page to avoid landing on an empty offset.
+  // Resetting in the setter (rather than a post-render effect) keeps the
+  // offset and the filter that produced it in a single render pass.
+  const changeStatus = (next: StatusFilter) => {
+    setStatus(next);
+    setOffset(0);
+  };
+  const changeMineOnly = (next: boolean) => {
+    setMineOnly(next);
+    setOffset(0);
+  };
+  const changeTargetRid = (next: string) => {
+    setTargetRid(next);
+    setOffset(0);
+  };
+
   const listQuery = usePermissionRequests({
     status: status === 'ALL' ? undefined : status,
     mine: mineOnly || undefined,
+    targetRid: trimmedTargetRid || undefined,
+    limit: PAGE_SIZE,
+    offset,
   });
   const createMutation = useCreatePermissionRequest();
   const approveMutation = useApprovePermissionRequest();
@@ -64,6 +93,11 @@ export function PermissionRequestsPage() {
     [listQuery.data?.requests],
   );
   const available = listQuery.data?.available ?? true;
+  const total = listQuery.data?.total ?? 0;
+  const hasPrev = offset > 0;
+  const hasNext = offset + requests.length < total;
+  const pageStart = total === 0 ? 0 : offset + 1;
+  const pageEnd = offset + requests.length;
 
   const openCreate = () => {
     setCreateTarget('');
@@ -179,7 +213,7 @@ export function PermissionRequestsPage() {
               type="button"
               role="tab"
               aria-selected={status === opt.value}
-              onClick={() => setStatus(opt.value)}
+              onClick={() => changeStatus(opt.value)}
               className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                 status === opt.value
                   ? 'bg-bg-tertiary text-text-primary'
@@ -190,11 +224,33 @@ export function PermissionRequestsPage() {
             </button>
           ))}
         </div>
+        <label className="flex items-center gap-2 text-xs text-text-secondary">
+          <span className="sr-only">Filter by target RID</span>
+          <input
+            type="text"
+            value={targetRid}
+            onChange={(e) => changeTargetRid(e.target.value)}
+            placeholder="Filter by target RID…"
+            aria-label="Filter by target RID"
+            data-testid="permission-requests-targetrid-input"
+            className="w-64 rounded-md border border-border/50 bg-bg-primary px-2.5 py-1.5 font-mono text-xs text-text-primary outline-none focus:border-amber-500/60"
+          />
+          {trimmedTargetRid && (
+            <button
+              type="button"
+              onClick={() => changeTargetRid('')}
+              data-testid="permission-requests-targetrid-clear"
+              className="rounded-md border border-border/60 px-2 py-1 text-[11px] text-text-secondary hover:bg-bg-tertiary"
+            >
+              Clear
+            </button>
+          )}
+        </label>
         <label className="ml-auto flex items-center gap-2 text-xs text-text-secondary">
           <input
             type="checkbox"
             checked={mineOnly}
-            onChange={(e) => setMineOnly(e.target.checked)}
+            onChange={(e) => changeMineOnly(e.target.checked)}
             data-testid="permission-requests-mine-toggle"
             className="h-3.5 w-3.5 rounded border-border/60 bg-bg-primary text-amber-500"
           />
@@ -245,6 +301,40 @@ export function PermissionRequestsPage() {
             />
           ))}
         </ul>
+      )}
+
+      {!listQuery.isLoading && !listQuery.isError && (hasPrev || hasNext) && (
+        <nav
+          className="flex items-center justify-between gap-3 rounded-lg border border-border/50 bg-bg-secondary/60 px-3 py-2 text-xs text-text-secondary"
+          data-testid="permission-requests-pagination"
+          aria-label="Pagination"
+        >
+          <span data-testid="permission-requests-page-range">
+            {total > 0
+              ? `Showing ${pageStart}–${pageEnd} of ${total}`
+              : 'No results'}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
+              disabled={!hasPrev}
+              data-testid="permission-requests-prev-page"
+              className="rounded-md border border-border/60 px-3 py-1.5 font-medium text-text-secondary hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              onClick={() => setOffset((o) => o + PAGE_SIZE)}
+              disabled={!hasNext}
+              data-testid="permission-requests-next-page"
+              className="rounded-md border border-border/60 px-3 py-1.5 font-medium text-text-secondary hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        </nav>
       )}
 
       <Modal open={createOpen} onClose={closeCreate} title="Request access">
