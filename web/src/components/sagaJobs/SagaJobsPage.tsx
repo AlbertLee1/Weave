@@ -1,4 +1,10 @@
-import { useMemo, useState } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 import { useParams } from 'react-router';
 import { ApiRequestError } from '../../api/client';
 import {
@@ -33,6 +39,11 @@ import { SkeletonTable } from '../common/Skeleton';
 // Reachable via `/actions/:ontology/jobs` (App.tsx); the Sidebar
 // "Saga Jobs" entry surfaces once an active ontology is selected.
 
+// Ordered options for the status-filter tablist: "All" first, then the
+// five saga statuses. Drives both rendering and the roving-tabindex
+// keyboard navigation index math.
+const STATUS_FILTER_OPTIONS: (SagaStatus | 'ALL')[] = ['ALL', ...SAGA_STATUSES];
+
 const STATUS_BADGE_STYLE: Record<SagaStatus, string> = {
   RUNNING: 'bg-sky-500/10 text-sky-300 border border-sky-500/30',
   SUCCESS: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30',
@@ -49,6 +60,14 @@ const STEP_STATUS_BADGE_STYLE: Record<SagaStepStatus, string> = {
   COMPENSATION_FAILED:
     'bg-orange-500/10 text-orange-300 border border-orange-500/30',
 };
+
+// Ordered options for the DLQ status-filter tablist. Drives both
+// rendering and roving-tabindex keyboard navigation index math.
+const DLQ_STATUS_OPTIONS: SagaDLQEntry['status'][] = [
+  'PENDING',
+  'RESOLVED',
+  'DROPPED',
+];
 
 const DLQ_STATUS_BADGE_STYLE: Record<SagaDLQEntry['status'], string> = {
   PENDING: 'bg-amber-500/10 text-amber-400 border border-amber-500/30',
@@ -100,6 +119,43 @@ export function SagaJobsPage() {
     [listQuery.data],
   );
 
+  // Roving-tabindex refs for the status-filter tablist so keyboard
+  // navigation can move DOM focus to the activated tab (WAI-ARIA tabs).
+  const statusTabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // ArrowLeft/Right (and Up/Down mirror) move between status tabs with
+  // wrap-around, Home/End jump to the ends. Activation follows focus:
+  // moving focus also updates the filter, the recommended pattern for
+  // tablists whose result panel re-renders cheaply.
+  const handleStatusTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const last = STATUS_FILTER_OPTIONS.length - 1;
+      let nextIndex: number | null = null;
+      switch (event.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          nextIndex = index === last ? 0 : index + 1;
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          nextIndex = index === 0 ? last : index - 1;
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        case 'End':
+          nextIndex = last;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      setStatusFilter(STATUS_FILTER_OPTIONS[nextIndex]);
+      statusTabRefs.current[nextIndex]?.focus();
+    },
+    [],
+  );
+
   if (!activeOntology) {
     return (
       <div
@@ -149,19 +205,18 @@ export function SagaJobsPage() {
           role="tablist"
           aria-label="Saga status filter"
         >
-          <FilterTab
-            value="ALL"
-            label="All"
-            current={statusFilter}
-            onSelect={setStatusFilter}
-          />
-          {SAGA_STATUSES.map((s) => (
+          {STATUS_FILTER_OPTIONS.map((opt, index) => (
             <FilterTab
-              key={s}
-              value={s}
-              label={s}
+              key={opt}
+              value={opt}
+              label={opt === 'ALL' ? 'All' : opt}
               current={statusFilter}
+              index={index}
+              tabRef={(el) => {
+                statusTabRefs.current[index] = el;
+              }}
               onSelect={setStatusFilter}
+              onKeyDown={handleStatusTabKeyDown}
             />
           ))}
         </div>
@@ -232,18 +287,32 @@ interface FilterTabProps {
   value: SagaStatus | 'ALL';
   label: string;
   current: SagaStatus | 'ALL';
+  index: number;
+  tabRef: (el: HTMLButtonElement | null) => void;
   onSelect: (v: SagaStatus | 'ALL') => void;
+  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>, index: number) => void;
 }
 
-function FilterTab({ value, label, current, onSelect }: FilterTabProps) {
+function FilterTab({
+  value,
+  label,
+  current,
+  index,
+  tabRef,
+  onSelect,
+  onKeyDown,
+}: FilterTabProps) {
   const selected = current === value;
   return (
     <button
+      ref={tabRef}
       type="button"
       role="tab"
       aria-selected={selected}
+      tabIndex={selected ? 0 : -1}
       data-testid={`saga-jobs-filter-${value.toLowerCase()}`}
       onClick={() => onSelect(value)}
+      onKeyDown={(event) => onKeyDown(event, index)}
       className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
         selected
           ? 'bg-bg-tertiary text-text-primary'
@@ -613,6 +682,39 @@ function DLQDrawer({ ontology, onClose }: DLQDrawerProps) {
     [query.data],
   );
 
+  // Roving-tabindex refs + handler for the DLQ status-filter tablist.
+  // Kept independent from the page's status tablist so arrow keys here
+  // never move focus or selection over there (WAI-ARIA tabs pattern).
+  const dlqTabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const handleDlqTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const last = DLQ_STATUS_OPTIONS.length - 1;
+      let nextIndex: number | null = null;
+      switch (event.key) {
+        case 'ArrowRight':
+        case 'ArrowDown':
+          nextIndex = index === last ? 0 : index + 1;
+          break;
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          nextIndex = index === 0 ? last : index - 1;
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        case 'End':
+          nextIndex = last;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      setStatus(DLQ_STATUS_OPTIONS[nextIndex]);
+      dlqTabRefs.current[nextIndex]?.focus();
+    },
+    [],
+  );
+
   const closeConfirm = () => {
     setConfirmKind(null);
     setConfirmDlqId(null);
@@ -664,16 +766,19 @@ function DLQDrawer({ ontology, onClose }: DLQDrawerProps) {
           aria-label="DLQ status filter"
           data-testid="saga-dlq-drawer-filters"
         >
-          {(
-            ['PENDING', 'RESOLVED', 'DROPPED'] as SagaDLQEntry['status'][]
-          ).map((opt) => (
+          {DLQ_STATUS_OPTIONS.map((opt, index) => (
             <button
               key={opt}
+              ref={(el) => {
+                dlqTabRefs.current[index] = el;
+              }}
               type="button"
               role="tab"
               aria-selected={status === opt}
+              tabIndex={status === opt ? 0 : -1}
               data-testid={`saga-dlq-drawer-filter-${opt.toLowerCase()}`}
               onClick={() => setStatus(opt)}
+              onKeyDown={(event) => handleDlqTabKeyDown(event, index)}
               className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
                 status === opt
                   ? 'bg-bg-tertiary text-text-primary'
