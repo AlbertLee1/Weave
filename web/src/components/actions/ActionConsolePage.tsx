@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router';
 import { FormProvider, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -14,8 +14,10 @@ import type {
   ActionApplyOptions,
 } from '../../api/types';
 import { ApiRequestError } from '../../api/client';
+import { applyActionAsync } from '../../api/actions';
 import { ParameterForm } from './ParameterForm';
 import { ActionResult } from './ActionResult';
+import { AsyncJobProgressPanel } from './AsyncJobProgressPanel';
 import { ActionTemplatesPanel } from './ActionTemplatesPanel';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 import { EmptyState } from '../common/EmptyState';
@@ -43,6 +45,10 @@ export function ActionConsolePage() {
   const currentUserId = authCtx?.user?.id;
 
   const [selectedAction, setSelectedAction] = useState<ActionType | null>(null);
+  // Mirror of selectedAction read inside async callbacks to detect when the
+  // user has moved on before an in-flight apply resolves (staleness guard).
+  const selectedActionRef = useRef<ActionType | null>(selectedAction);
+  selectedActionRef.current = selectedAction;
   const [result, setResult] = useState<ActionApplyResponse | null>(null);
   const [targetObjectType, setTargetObjectType] = useState('');
   const [targetPrimaryKey, setTargetPrimaryKey] = useState('');
@@ -53,6 +59,13 @@ export function ActionConsolePage() {
     useState<NonNullable<ActionApplyOptions['mode']>>('VALIDATE_AND_EXECUTE');
   const [returnEdits, setReturnEdits] =
     useState<NonNullable<ActionApplyOptions['returnEdits']>>('ALL');
+  // US-240: opt-in async single-apply. When enabled, Execute hits
+  // /apply?async=true, captures the 202 {jobId}, and the AsyncJobProgressPanel
+  // polls GET /actions/jobs/{jobId} until the job settles.
+  const [asyncMode, setAsyncMode] = useState(false);
+  const [asyncJobId, setAsyncJobId] = useState<string | null>(null);
+  const [asyncSubmitting, setAsyncSubmitting] = useState(false);
+  const [asyncError, setAsyncError] = useState<string | null>(null);
   const [staleConflict, setStaleConflict] = useState<null | {
     currentVersion?: string;
   }>(null);
@@ -94,6 +107,8 @@ export function ActionConsolePage() {
     setSelectedAction(action);
     setResult(null);
     setStaleConflict(null);
+    setAsyncJobId(null);
+    setAsyncError(null);
   }
 
   function executeWithValues(paramValues: Record<string, unknown>) {
@@ -112,6 +127,57 @@ export function ActionConsolePage() {
     if (applyMode !== 'VALIDATE_AND_EXECUTE') options.mode = applyMode;
     if (returnEdits !== 'ALL') options.returnEdits = returnEdits;
     if (expectedVersion !== undefined) options.expectedVersion = expectedVersion;
+
+    // Async path: POST /apply?async=true, capture the 202 {jobId}, and let the
+    // AsyncJobProgressPanel poll the job-status endpoint to completion. The
+    // synchronous result panel + Undo toast are skipped — the polled job's
+    // result payload carries the same edit summary.
+    if (asyncMode) {
+      // Capture the action so a late-resolving promise that lands after the
+      // user picked a different action (or toggled async off) is ignored.
+      const submittedAction = selectedAction;
+      setResult(null);
+      setAsyncJobId(null);
+      setAsyncError(null);
+      setAsyncSubmitting(true);
+      applyActionAsync(ontology ?? '', submittedAction.apiName, {
+        parameters: cleanedParams,
+        ...(Object.keys(options).length > 0 ? { options } : {}),
+      })
+        .then((resp) => {
+          // Staleness guard: drop the response if the user moved on.
+          if (selectedActionRef.current !== submittedAction) return;
+          if (resp.jobId) {
+            setAsyncJobId(resp.jobId);
+            return;
+          }
+          // Degraded-mode fallthrough: when no ActionJobStore is wired the
+          // server ignores ?async=true and returns the synchronous
+          // SyncApplyActionResponseV2 envelope (no jobId) at HTTP 200. Surface
+          // it like a sync result rather than mounting a poll panel that would
+          // hang on "Pending" with no job to poll.
+          const syncResult = resp as unknown as ActionApplyResponse;
+          setResult(syncResult);
+          if (syncResult.actionLogId) {
+            pushUndoToast(
+              syncResult.actionLogId,
+              submittedAction.displayName ?? submittedAction.apiName,
+            );
+          }
+        })
+        .catch((err) => {
+          if (selectedActionRef.current !== submittedAction) return;
+          setAsyncError(
+            err instanceof Error ? err.message : 'Async apply failed',
+          );
+        })
+        .finally(() => {
+          if (selectedActionRef.current !== submittedAction) return;
+          setAsyncSubmitting(false);
+        });
+      return;
+    }
+
     applyMutation.mutate(
       {
         action: selectedAction.apiName,
@@ -417,25 +483,60 @@ export function ActionConsolePage() {
                     </select>
                   </div>
                 </div>
+                {/* Async toggle — when on, Execute runs the action in the
+                    background and the job-status panel polls to completion. */}
+                <label className="flex items-center gap-2 mt-3 text-xs text-text-secondary font-sans cursor-pointer">
+                  <input
+                    type="checkbox"
+                    data-testid="async-apply-toggle"
+                    checked={asyncMode}
+                    onChange={(e) => {
+                      setAsyncMode(e.target.checked);
+                      // Clear any prior job state when the mode flips so the
+                      // panel doesn't show a stale run.
+                      setAsyncJobId(null);
+                      setAsyncError(null);
+                    }}
+                    className="accent-accent-cyan"
+                  />
+                  Run asynchronously (background job)
+                </label>
               </div>
 
               {/* Execute button */}
               <div>
                 <button
                   type="submit"
-                  disabled={applyMutation.isPending}
+                  disabled={applyMutation.isPending || asyncSubmitting}
                   className="bg-accent-cyan text-bg-primary px-4 py-2 rounded text-sm font-medium hover:bg-accent-cyan/80 disabled:opacity-50"
                 >
-                  {applyMutation.isPending ? 'Executing...' : 'Execute Action'}
+                  {applyMutation.isPending || asyncSubmitting
+                    ? 'Executing...'
+                    : 'Execute Action'}
                 </button>
                 {applyMutation.isError && !staleConflict && (
                   <div className="mt-2 text-xs text-accent-error">
                     Error: {applyMutation.error instanceof Error ? applyMutation.error.message : 'Action failed'}
                   </div>
                 )}
+                {asyncError && (
+                  <div className="mt-2 text-xs text-accent-error" role="alert">
+                    Error: {asyncError}
+                  </div>
+                )}
               </div>
 
-              {/* Result */}
+              {/* Async job progress — only mounts once an async apply has been
+                  scheduled. Polls GET /actions/jobs/{jobId} to completion. */}
+              {asyncMode && (asyncJobId !== null || asyncSubmitting) && (
+                <AsyncJobProgressPanel
+                  ontologyApiName={ontology}
+                  jobId={asyncJobId}
+                />
+              )}
+
+              {/* Sync result — also covers the async degraded-mode fallthrough
+                  where the server returns a synchronous envelope (no jobId). */}
               <ActionResult result={result} />
             </form>
           </FormProvider>

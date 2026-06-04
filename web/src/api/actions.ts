@@ -26,6 +26,26 @@ export function applyAction(
   );
 }
 
+// applyActionAsync POSTs to /apply?async=true and returns the new job's id.
+// The server (pkg/actions/handlers.go US-240) persists a PENDING action_jobs
+// row, returns 202 {jobId, status}, and runs the Apply in a detached
+// goroutine. When no ActionJobStore is wired the query param is silently
+// ignored and the call falls through to the sync envelope — callers must
+// therefore tolerate a body that may be either AsyncApplyResponse (has jobId)
+// or the plain ActionApplyResponse. The hook layer branches on `jobId`.
+// Caller polls GET /actions/jobs/{jobId} until a terminal status.
+export function applyActionAsync(
+  ontologyApiName: string,
+  actionApiName: string,
+  actionRequest: ActionApplyRequest,
+): Promise<AsyncApplyResponse> {
+  return request<AsyncApplyResponse>(
+    'POST',
+    `/api/v2/ontologies/${encodeURIComponent(ontologyApiName)}/actions/${encodeURIComponent(actionApiName)}/apply?async=true`,
+    actionRequest,
+  );
+}
+
 // Foundry OSv2 batch apply.
 export function applyBatch(
   ontologyApiName: string,
@@ -108,7 +128,7 @@ export function validateAction(
 }
 
 // AsyncApplyResponse mirrors the server's actions.AsyncApplyResponse — the
-// 202 envelope returned by ?async=true on /apply or /applyBatch. US-318.
+// 202 envelope returned by ?async=true on /apply or /applyBatch. US-240/US-318.
 export interface AsyncApplyResponse {
   jobId: string;
   status: string;
