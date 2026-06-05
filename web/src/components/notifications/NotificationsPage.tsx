@@ -12,23 +12,10 @@ import {
   useNotifications,
 } from '../../hooks/useNotifications';
 import type { Notification } from '../../api/notifications';
-import { ApiRequestError } from '../../api/client';
+import { describeApiError } from '../../api/describeError';
 import { useToastStore } from '../../stores/toastStore';
 import { EmptyState } from '../common/EmptyState';
 import { formatRelativeTime } from '../../lib/formatters';
-
-// describeNotificationError turns a failed mark-read mutation into a short
-// user-facing string. Mirrors WatchButton.describeWatchError /
-// ReactionBar.describeReactionError so the toast reads "<ErrorName>: <reason>"
-// for structured API errors and falls back to the raw message otherwise.
-function describeNotificationError(err: unknown): string {
-  if (err instanceof ApiRequestError) {
-    const reason = err.parameters?.reason ?? err.parameters?.error;
-    return reason ? `${err.errorName}: ${reason}` : err.errorName;
-  }
-  if (err instanceof Error) return err.message;
-  return 'Mark-read update failed.';
-}
 
 // US-050 (PC-A15): Notifications & Mentions Centre — full page at /notifications.
 //
@@ -293,7 +280,7 @@ export function NotificationsPage() {
     markAll.mutate(tab.types ?? [], {
       onError: (err) =>
         pushToast({
-          message: `Failed to mark notifications read: ${describeNotificationError(err)}`,
+          message: `Failed to mark notifications read: ${describeApiError(err, 'Mark-read update failed.')}`,
           severity: 'error',
         }),
     });
@@ -303,7 +290,7 @@ export function NotificationsPage() {
       markRead.mutate(n.id, {
         onError: (err) =>
           pushToast({
-            message: `Failed to mark notification read: ${describeNotificationError(err)}`,
+            message: `Failed to mark notification read: ${describeApiError(err, 'Mark-read update failed.')}`,
             severity: 'error',
           }),
       });
