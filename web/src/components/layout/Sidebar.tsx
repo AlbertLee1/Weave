@@ -334,7 +334,7 @@ export function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 py-2 overflow-y-auto">
+      <nav aria-label="Main navigation" className="flex-1 py-2 overflow-y-auto">
         {navItems.map((item) => (
           <SidebarLink key={item.label} item={item} collapsed={collapsed} />
         ))}
