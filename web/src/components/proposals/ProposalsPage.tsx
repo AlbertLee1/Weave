@@ -22,7 +22,7 @@ import type {
   OntologyProposal,
   ProposalReview,
 } from '../../api/proposals';
-import { ApiRequestError } from '../../api/client';
+import { describeApiError } from '../../api/describeError';
 import { useToastStore } from '../../stores/toastStore';
 import { EmptyState } from '../common/EmptyState';
 import { SkeletonTable } from '../common/Skeleton';
@@ -64,15 +64,6 @@ const FILTERS: Array<{ value: FilterStatus; label: string }> = [
   { value: 'rejected', label: 'Rejected' },
   { value: 'merged', label: 'Merged' },
 ];
-
-function describeApiError(err: unknown): string {
-  if (err instanceof ApiRequestError) {
-    const reason = err.parameters?.reason ?? err.parameters?.error;
-    return reason ? `${err.errorName}: ${reason}` : err.errorName;
-  }
-  if (err instanceof Error) return err.message;
-  return 'Operation failed.';
-}
 
 function formatTimestamp(value: string | undefined): string {
   if (!value) return '';
@@ -387,7 +378,7 @@ function ProposalDetail({
           setReviewReason('');
         },
         onError: (err) =>
-          pushToast({ message: describeApiError(err), severity: 'error' }),
+          pushToast({ message: describeApiError(err, 'Operation failed.'), severity: 'error' }),
       },
     );
   };
@@ -414,7 +405,7 @@ function ProposalDetail({
           setReviewReason('');
         },
         onError: (err) =>
-          pushToast({ message: describeApiError(err), severity: 'error' }),
+          pushToast({ message: describeApiError(err, 'Operation failed.'), severity: 'error' }),
       },
     );
   };
@@ -433,7 +424,7 @@ function ProposalDetail({
         onCloseAfterMerge();
       },
       onError: (err) => {
-        pushToast({ message: describeApiError(err), severity: 'error' });
+        pushToast({ message: describeApiError(err, 'Operation failed.'), severity: 'error' });
       },
     });
   };

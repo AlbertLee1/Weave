@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { useParams } from 'react-router';
-import { ApiRequestError } from '../../api/client';
+import { describeApiError } from '../../api/describeError';
 import {
   SAGA_STATUSES,
   type Saga,
@@ -75,15 +75,6 @@ const DLQ_STATUS_BADGE_STYLE: Record<SagaDLQEntry['status'], string> = {
   RESOLVED: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30',
   DROPPED: 'bg-slate-500/10 text-slate-400 border border-slate-500/30',
 };
-
-function describeApiError(err: unknown): string {
-  if (err instanceof ApiRequestError) {
-    const reason = err.parameters?.reason ?? err.parameters?.error;
-    return reason ? `${err.errorName}: ${reason}` : err.errorName;
-  }
-  if (err instanceof Error) return err.message;
-  return 'Operation failed.';
-}
 
 function formatTimestamp(value: string): string {
   try {
@@ -832,7 +823,7 @@ function DLQDrawer({ ontology, onClose }: DLQDrawerProps) {
       closeConfirm();
     };
     const onError = (err: unknown) => {
-      const msg = describeApiError(err);
+      const msg = describeApiError(err, 'Operation failed.');
       setActionError(msg);
       pushToast({ message: msg, severity: 'error' });
     };

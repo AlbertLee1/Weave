@@ -38,7 +38,7 @@ import {
   useUpdateRowPolicy,
 } from '../../hooks/useSecurityPolicies';
 import { useObjectType, useObjectTypes } from '../../hooks/useObjectTypes';
-import { ApiRequestError } from '../../api/client';
+import { describeApiError } from '../../api/describeError';
 import { useToastStore } from '../../stores/toastStore';
 import { EmptyState } from '../common/EmptyState';
 import { SkeletonTable } from '../common/Skeleton';
@@ -325,7 +325,7 @@ function RowPoliciesTab({ activeOntology }: RowPoliciesTabProps) {
         setPendingDelete(null);
       },
       onError: (err) =>
-        pushToast({ message: describeApiError(err), severity: 'error' }),
+        pushToast({ message: describeApiError(err, 'Operation failed.'), severity: 'error' }),
     });
   };
 
@@ -781,7 +781,7 @@ function RowPolicyEditor({
             onClose();
           },
           onError: (err) => {
-            const msg = describeApiError(err);
+            const msg = describeApiError(err, 'Operation failed.');
             setSubmitError(msg);
             pushToast({ message: msg, severity: 'error' });
           },
@@ -811,7 +811,7 @@ function RowPolicyEditor({
             onClose();
           },
           onError: (err) => {
-            const msg = describeApiError(err);
+            const msg = describeApiError(err, 'Operation failed.');
             setSubmitError(msg);
             pushToast({ message: msg, severity: 'error' });
           },
@@ -1328,15 +1328,6 @@ function formatPredicate(predicate: unknown): string {
   }
 }
 
-function describeApiError(err: unknown): string {
-  if (err instanceof ApiRequestError) {
-    const reason = err.parameters?.reason ?? err.parameters?.error;
-    return reason ? `${err.errorName}: ${reason}` : err.errorName;
-  }
-  if (err instanceof Error) return err.message;
-  return 'Operation failed.';
-}
-
 // ===========================================================================
 // US-042 (PC-A07b): Column Masks tab.
 //
@@ -1395,7 +1386,7 @@ function ColumnMasksTab({ activeOntology }: ColumnMasksTabProps) {
         setPendingDelete(null);
       },
       onError: (err) =>
-        pushToast({ message: describeApiError(err), severity: 'error' }),
+        pushToast({ message: describeApiError(err, 'Operation failed.'), severity: 'error' }),
     });
   };
 
@@ -1703,7 +1694,7 @@ function ColumnMaskEditor({
             onClose();
           },
           onError: (err) => {
-            const msg = describeApiError(err);
+            const msg = describeApiError(err, 'Operation failed.');
             setSubmitError(msg);
             pushToast({ message: msg, severity: 'error' });
           },
@@ -1727,7 +1718,7 @@ function ColumnMaskEditor({
             onClose();
           },
           onError: (err) => {
-            const msg = describeApiError(err);
+            const msg = describeApiError(err, 'Operation failed.');
             setSubmitError(msg);
             pushToast({ message: msg, severity: 'error' });
           },
@@ -2252,7 +2243,7 @@ function CellMasksTab({ activeOntology }: CellMasksTabProps) {
         setPendingDelete(null);
       },
       onError: (err) =>
-        pushToast({ message: describeApiError(err), severity: 'error' }),
+        pushToast({ message: describeApiError(err, 'Operation failed.'), severity: 'error' }),
     });
   };
 
@@ -2602,7 +2593,7 @@ function CellMaskEditor({
             onClose();
           },
           onError: (err) => {
-            const msg = describeApiError(err);
+            const msg = describeApiError(err, 'Operation failed.');
             setSubmitError(msg);
             pushToast({ message: msg, severity: 'error' });
           },
@@ -2628,7 +2619,7 @@ function CellMaskEditor({
             onClose();
           },
           onError: (err) => {
-            const msg = describeApiError(err);
+            const msg = describeApiError(err, 'Operation failed.');
             setSubmitError(msg);
             pushToast({ message: msg, severity: 'error' });
           },
