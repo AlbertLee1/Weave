@@ -115,6 +115,10 @@ export function QuiverViewPage() {
   if (!rid) {
     return (
       <div className="flex items-center justify-center h-full">
+        {/* Stable page-level heading, visually hidden so the layout is
+            unchanged. Repeated in every state branch so the standalone
+            Quiver Dashboard route always exposes exactly one <h1>. */}
+        <h1 className="sr-only">Quiver Dashboard</h1>
         <EmptyState
           title="Missing dashboard"
           description="No dashboard RID supplied in the URL."
@@ -129,6 +133,7 @@ export function QuiverViewPage() {
         className="flex items-center justify-center h-full text-xs text-text-muted"
         data-testid="quiver-view-loading"
       >
+        <h1 className="sr-only">Quiver Dashboard</h1>
         Loading dashboard…
       </div>
     );
@@ -148,6 +153,7 @@ export function QuiverViewPage() {
         className="flex items-center justify-center h-full"
         data-testid="quiver-view-error"
       >
+        <h1 className="sr-only">Quiver Dashboard</h1>
         <EmptyState title={title} description={description} />
       </div>
     );
@@ -160,6 +166,7 @@ export function QuiverViewPage() {
       className="flex flex-col h-full overflow-hidden"
       data-testid="quiver-view-page"
     >
+      <h1 className="sr-only">Quiver Dashboard</h1>
       <div className="border-b border-border bg-bg-primary p-4 flex items-start justify-between gap-4">
         <div>
           <h2
