@@ -39,10 +39,12 @@ import { GroupsAdminPage } from './components/admin/GroupsAdminPage';
 import { ServiceAccountsAdminPage } from './components/admin/ServiceAccountsAdminPage';
 import { RolesAdminPage } from './components/admin/RolesAdminPage';
 import { TenantQuotasAdminPage } from './components/admin/TenantQuotasAdminPage';
+import { IndexManagementAdminPage } from './components/admin/IndexManagementAdminPage';
 import { SideEffectDLQAdminPage } from './components/admin/SideEffectDLQAdminPage';
 import { ComplianceReportsPage } from './components/admin/ComplianceReportsPage';
 import { PerformanceDashboardPage } from './components/admin/PerformanceDashboardPage';
 import { FunnelDLQAdminPage } from './components/admin/FunnelDLQAdminPage';
+import { AuthSecurityAdminPage } from './components/admin/AuthSecurityAdminPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
 import { SchemaInferencePage } from './components/import/SchemaInferencePage';
 import { ApprovalsPage } from './components/approvals/ApprovalsPage';
@@ -455,6 +457,14 @@ export default function App() {
                 }
               />
               <Route
+                path="admin/indexes"
+                element={
+                  <PermissionRoute permission="user.manage">
+                    <IndexManagementAdminPage />
+                  </PermissionRoute>
+                }
+              />
+              <Route
                 path="admin/side-effect-dlq"
                 element={
                   <PermissionRoute permission="user.manage">
@@ -493,6 +503,14 @@ export default function App() {
                 element={
                   <PermissionRoute permission="user.manage">
                     <FunnelDLQAdminPage />
+                  </PermissionRoute>
+                }
+              />
+              <Route
+                path="admin/auth-security"
+                element={
+                  <PermissionRoute permission="user.manage">
+                    <AuthSecurityAdminPage />
                   </PermissionRoute>
                 }
               />
