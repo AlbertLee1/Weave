@@ -5,7 +5,7 @@ import {
   useDeleteReaction,
   useReactionSummary,
 } from '../../hooks/useReactions';
-import { ApiRequestError } from '../../api/client';
+import { describeApiError } from '../../api/describeError';
 import { useToastStore } from '../../stores/toastStore';
 
 // Elements that can receive keyboard focus, used by the picker's focus trap.
@@ -17,19 +17,6 @@ const FOCUSABLE_SELECTOR = [
   'select:not([disabled])',
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
-
-// describeReactionError turns a failed reaction toggle into a short
-// user-facing string. Mirrors WatchButton.describeWatchError so the toast
-// reads "<ErrorName>: <reason>" for structured API errors and falls back to
-// the raw message otherwise.
-function describeReactionError(err: unknown): string {
-  if (err instanceof ApiRequestError) {
-    const reason = err.parameters?.reason ?? err.parameters?.error;
-    return reason ? `${err.errorName}: ${reason}` : err.errorName;
-  }
-  if (err instanceof Error) return err.message;
-  return 'Reaction update failed.';
-}
 
 // DEFAULT_EMOJIS is the small palette offered by the picker. Keep it
 // short so the bar doesn't dominate the panel — most reactions converge
@@ -216,7 +203,7 @@ export function ReactionBar({ targetRid }: ReactionBarProps) {
         {
           onError: (err) =>
             pushToast({
-              message: `Failed to remove ${emoji} reaction: ${describeReactionError(err)}`,
+              message: `Failed to remove ${emoji} reaction: ${describeApiError(err, 'Reaction update failed.')}`,
               severity: 'error',
             }),
         },
@@ -227,7 +214,7 @@ export function ReactionBar({ targetRid }: ReactionBarProps) {
         {
           onError: (err) =>
             pushToast({
-              message: `Failed to add ${emoji} reaction: ${describeReactionError(err)}`,
+              message: `Failed to add ${emoji} reaction: ${describeApiError(err, 'Reaction update failed.')}`,
               severity: 'error',
             }),
         },
@@ -246,7 +233,7 @@ export function ReactionBar({ targetRid }: ReactionBarProps) {
         {
           onError: (err) =>
             pushToast({
-              message: `Failed to remove ${trimmed} reaction: ${describeReactionError(err)}`,
+              message: `Failed to remove ${trimmed} reaction: ${describeApiError(err, 'Reaction update failed.')}`,
               severity: 'error',
             }),
         },
@@ -257,7 +244,7 @@ export function ReactionBar({ targetRid }: ReactionBarProps) {
         {
           onError: (err) =>
             pushToast({
-              message: `Failed to add ${trimmed} reaction: ${describeReactionError(err)}`,
+              message: `Failed to add ${trimmed} reaction: ${describeApiError(err, 'Reaction update failed.')}`,
               severity: 'error',
             }),
         },

@@ -22,7 +22,7 @@ import type {
   CreateAutomationRuleRequest,
   UpdateAutomationRuleRequest,
 } from '../../api/automationRules';
-import { ApiRequestError } from '../../api/client';
+import { describeApiError } from '../../api/describeError';
 import { useToastStore } from '../../stores/toastStore';
 import { EmptyState } from '../common/EmptyState';
 import { Modal } from '../common/Modal';
@@ -81,15 +81,6 @@ const STATUS_BADGE_STYLE: Record<AutomationRule['status'], string> = {
   paused: 'bg-amber-500/10 text-amber-400 border border-amber-500/30',
   disabled: 'bg-slate-500/10 text-slate-400 border border-slate-500/30',
 };
-
-function describeApiError(err: unknown): string {
-  if (err instanceof ApiRequestError) {
-    const reason = err.parameters?.reason ?? err.parameters?.error;
-    return reason ? `${err.errorName}: ${reason}` : err.errorName;
-  }
-  if (err instanceof Error) return err.message;
-  return 'Operation failed.';
-}
 
 function parseJson(value: string, fallback: unknown): unknown {
   if (value.trim() === '') return fallback;
@@ -280,7 +271,7 @@ export function AutomationRulesPage() {
             closeEditor();
           },
           onError: (err) => {
-            const msg = describeApiError(err);
+            const msg = describeApiError(err, 'Operation failed.');
             setFormError(msg);
             pushToast({ message: msg, severity: 'error' });
           },
@@ -306,7 +297,7 @@ export function AutomationRulesPage() {
         closeEditor();
       },
       onError: (err) => {
-        const msg = describeApiError(err);
+        const msg = describeApiError(err, 'Operation failed.');
         setFormError(msg);
         pushToast({ message: msg, severity: 'error' });
       },
@@ -331,7 +322,7 @@ export function AutomationRulesPage() {
           });
         },
         onError: (err) =>
-          pushToast({ message: describeApiError(err), severity: 'error' }),
+          pushToast({ message: describeApiError(err, 'Operation failed.'), severity: 'error' }),
       });
     } else {
       resumeMutation.mutate(rule.id, {
@@ -343,7 +334,7 @@ export function AutomationRulesPage() {
           });
         },
         onError: (err) =>
-          pushToast({ message: describeApiError(err), severity: 'error' }),
+          pushToast({ message: describeApiError(err, 'Operation failed.'), severity: 'error' }),
       });
     }
   };
@@ -369,7 +360,7 @@ export function AutomationRulesPage() {
         });
       },
       onError: (err) =>
-        pushToast({ message: describeApiError(err), severity: 'error' }),
+        pushToast({ message: describeApiError(err, 'Operation failed.'), severity: 'error' }),
     });
   };
 
