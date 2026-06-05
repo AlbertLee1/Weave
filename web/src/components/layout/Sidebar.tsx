@@ -264,6 +264,11 @@ export function Sidebar() {
           icon: 'shield',
         },
         {
+          to: `/admin/${activeOntology}/export`,
+          label: 'Export & SDK',
+          icon: 'database',
+        },
+        {
           to: '/admin/markings',
           label: 'Markings',
           icon: 'shield',
