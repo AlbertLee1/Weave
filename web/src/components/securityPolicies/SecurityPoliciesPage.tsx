@@ -1,4 +1,11 @@
-import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 import { useParams } from 'react-router';
 import {
   effectiveMaskStrategy,
@@ -51,6 +58,100 @@ import { SkeletonTable } from '../common/Skeleton';
 // and JSON.parse-driven lint, mirroring the actual wire contract. If the
 // repo ever swaps the predicate format to CEL, the editor swaps in place
 // and the BDD spec keeps working — only the lint backend changes.
+
+// Elements that can receive keyboard focus — drives the dialog focus trap.
+const DIALOG_FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+// a11y focus management for the six self-drawn `role="dialog"` overlays in this
+// page (RowPolicy/Column/Cell editors + their three delete confirmations).
+// These are NOT the shared common/Modal (which already traps + restores focus);
+// each is a `fixed inset-0` overlay rendered conditionally by its parent tab
+// (mount == open, unmount == close). Mirrors the wiring shipped in
+// marketplace/MarketplacePage.tsx (#252) / vertex/VertexShareLinkPanel.tsx
+// (#229): on mount it records the trigger element, moves focus inside the
+// dialog, closes on Escape, and on unmount restores focus to the trigger. The
+// returned `onKeyDown` is a Tab focus trap to spread onto the dialog root.
+// Each dialog gets its own hook instance (independent refs/handlers) so they
+// never interfere, and the trap only acts on Tab — it leaves the existing
+// tablist / radiogroup Arrow-key handlers (#208) untouched.
+function useDialogFocus<T extends HTMLElement>(onClose: () => void) {
+  const dialogRef = useRef<T>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
+  // Record the previously-focused (trigger) element, move focus inside the
+  // dialog, and restore focus on unmount. Runs once per mount.
+  useEffect(() => {
+    triggerRef.current = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    if (dialog) {
+      const first = dialog.querySelector<HTMLElement>(
+        DIALOG_FOCUSABLE_SELECTOR,
+      );
+      // Prefer the first focusable child; fall back to the dialog itself
+      // (focusable via tabIndex={-1}) so focus never sits on the page behind.
+      if (first) first.focus();
+      else dialog.focus();
+    }
+    return () => {
+      const trigger = triggerRef.current;
+      if (trigger && typeof trigger.focus === 'function') trigger.focus();
+    };
+  }, []);
+
+  // Escape closes the dialog via the existing close callback.
+  useEffect(() => {
+    function handleKey(e: globalThis.KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  // Focus trap: keep Tab / Shift+Tab cycling among the dialog's focusable
+  // elements instead of escaping to the background page.
+  const onKeyDown = useCallback((e: KeyboardEvent<T>) => {
+    if (e.key !== 'Tab') return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusables = Array.from(
+      dialog.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE_SELECTOR),
+    );
+
+    // Degenerate case: nothing focusable inside — keep focus on the dialog.
+    if (focusables.length === 0) {
+      e.preventDefault();
+      dialog.focus();
+      return;
+    }
+
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+
+    if (e.shiftKey) {
+      // Shift+Tab on the first element (or focus already outside) wraps to last.
+      if (active === first || !dialog.contains(active)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      // Tab on the last element (or focus already outside) wraps to first.
+      if (active === last || !dialog.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, []);
+
+  return { dialogRef, onKeyDown };
+}
 
 type TabId = 'row' | 'column' | 'cell';
 
@@ -499,6 +600,7 @@ function RowPolicyEditor({
   objectTypes,
   onClose,
 }: RowPolicyEditorProps) {
+  const { dialogRef, onKeyDown } = useDialogFocus<HTMLDivElement>(onClose);
   const isEdit = existing !== null;
   const createMutation = useCreateRowPolicy();
   const updateMutation = useUpdateRowPolicy();
@@ -724,6 +826,9 @@ function RowPolicyEditor({
 
   return (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
       data-testid="row-policy-editor"
       data-mode={isEdit ? 'edit' : 'create'}
       role="dialog"
@@ -991,8 +1096,12 @@ function DeleteConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { dialogRef, onKeyDown } = useDialogFocus<HTMLDivElement>(onCancel);
   return (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
       data-testid="row-policy-delete-dialog"
       role="dialog"
       aria-modal="true"
@@ -1513,6 +1622,7 @@ function ColumnMaskEditor({
   activeOntology,
   onClose,
 }: ColumnMaskEditorProps) {
+  const { dialogRef, onKeyDown } = useDialogFocus<HTMLDivElement>(onClose);
   const isEdit = existing !== null;
   const createMutation = useCreateColumnMask();
   const updateMutation = useUpdateColumnMask();
@@ -1632,6 +1742,9 @@ function ColumnMaskEditor({
 
   return (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
       data-testid="column-mask-editor"
       data-mode={isEdit ? 'edit' : 'create'}
       role="dialog"
@@ -1835,8 +1948,12 @@ function ColumnMaskDeleteDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { dialogRef, onKeyDown } = useDialogFocus<HTMLDivElement>(onCancel);
   return (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
       data-testid="column-mask-delete-dialog"
       role="dialog"
       aria-modal="true"
@@ -2380,6 +2497,7 @@ function CellMaskEditor({
   activeOntology,
   onClose,
 }: CellMaskEditorProps) {
+  const { dialogRef, onKeyDown } = useDialogFocus<HTMLDivElement>(onClose);
   const isEdit = existing !== null;
   const createMutation = useCreateCellMask();
   const updateMutation = useUpdateCellMask();
@@ -2529,6 +2647,9 @@ function CellMaskEditor({
 
   return (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
       data-testid="cell-mask-editor"
       data-mode={isEdit ? 'edit' : 'create'}
       role="dialog"
@@ -2822,8 +2943,12 @@ function CellMaskDeleteDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { dialogRef, onKeyDown } = useDialogFocus<HTMLDivElement>(onCancel);
   return (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
       data-testid="cell-mask-delete-dialog"
       role="dialog"
       aria-modal="true"
