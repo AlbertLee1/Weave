@@ -284,6 +284,11 @@ export function Sidebar() {
           icon: 'clock',
         },
         {
+          to: '/admin/tenant-quotas',
+          label: 'Tenant Quotas',
+          icon: 'database',
+        },
+        {
           to: '/admin/funnel-dlq',
           label: 'Funnel DLQ',
           icon: 'bolt',
@@ -324,6 +329,11 @@ export function Sidebar() {
           to: '/audit',
           label: 'Audit Report',
           icon: 'clock',
+        },
+        {
+          to: '/admin/tenant-quotas',
+          label: 'Tenant Quotas',
+          icon: 'database',
         },
         {
           to: '/admin/funnel-dlq',
