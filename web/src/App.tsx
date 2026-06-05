@@ -36,6 +36,7 @@ import { AuditHistoryPage } from './components/admin/AuditHistoryPage';
 import { AuditReportPage } from './components/audit/AuditReportPage';
 import { MarkingAdminPage } from './components/admin/MarkingAdminPage';
 import { ServiceAccountsAdminPage } from './components/admin/ServiceAccountsAdminPage';
+import { RolesAdminPage } from './components/admin/RolesAdminPage';
 import { ComplianceReportsPage } from './components/admin/ComplianceReportsPage';
 import { PerformanceDashboardPage } from './components/admin/PerformanceDashboardPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
@@ -422,6 +423,14 @@ export default function App() {
                 element={
                   <PermissionRoute permission="user.manage">
                     <ServiceAccountsAdminPage />
+                  </PermissionRoute>
+                }
+              />
+              <Route
+                path="admin/roles"
+                element={
+                  <PermissionRoute permission="user.manage">
+                    <RolesAdminPage />
                   </PermissionRoute>
                 }
               />
