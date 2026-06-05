@@ -1,4 +1,12 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import { useParams } from 'react-router';
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
 import {
@@ -487,6 +495,17 @@ function VersionsRail({
   );
 }
 
+// Elements that can receive keyboard focus, used by the replay drawer's
+// focus trap. Mirrors VertexShareLinkPanel (#229).
+const REPLAY_FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
 interface ReplayDrawerProps {
   ontologyApiName: string;
   functionRid: string;
@@ -511,6 +530,83 @@ function ReplayDrawer({
   const [version, setVersion] = useState(fallbackVersion);
   const [inputDraft, setInputDraft] = useState('{}');
   const [parseError, setParseError] = useState<string | null>(null);
+
+  // Focus management for this self-drawn drawer (it is NOT the shared
+  // common/Modal, which already traps + restores focus). On open we move focus
+  // inside, keep Tab/Shift+Tab cycling within, close on Escape, and restore
+  // focus to whatever element opened the drawer (the "Replay this commit"
+  // button) when it unmounts — so keyboard users never end up behind the
+  // overlay. Mirrors VertexShareLinkPanel (#229).
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
+  // Record the element that had focus when the drawer mounted, move focus into
+  // the drawer, and restore focus to the trigger on unmount. Runs once per
+  // mount — the parent conditionally mounts/unmounts this component on
+  // open/close, so mount == open and unmount == close.
+  useEffect(() => {
+    triggerRef.current = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    if (dialog) {
+      const first = dialog.querySelector<HTMLElement>(REPLAY_FOCUSABLE_SELECTOR);
+      // Prefer the first focusable child; fall back to the dialog itself
+      // (focusable via tabIndex={-1}) so focus never sits on the page behind.
+      if (first) first.focus();
+      else dialog.focus();
+    }
+    return () => {
+      const trigger = triggerRef.current;
+      if (trigger && typeof trigger.focus === 'function') trigger.focus();
+    };
+  }, []);
+
+  // Escape closes the drawer.
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  // Focus trap: keep Tab / Shift+Tab cycling among the drawer's focusable
+  // elements instead of escaping to the background page.
+  const handleTrapKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (e.key !== 'Tab') return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusables = Array.from(
+        dialog.querySelectorAll<HTMLElement>(REPLAY_FOCUSABLE_SELECTOR),
+      );
+
+      // Degenerate case: nothing focusable inside — keep focus on the dialog.
+      if (focusables.length === 0) {
+        e.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+
+      if (e.shiftKey) {
+        // Shift+Tab on the first element (or focus already outside) wraps to last.
+        if (active === first || !dialog.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        // Tab on the last element (or focus already outside) wraps to first.
+        if (active === last || !dialog.contains(active)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    },
+    [],
+  );
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -547,9 +643,13 @@ function ReplayDrawer({
 
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-50 flex items-stretch justify-end"
       role="dialog"
       aria-modal="true"
+      aria-label="Replay function"
+      tabIndex={-1}
+      onKeyDown={handleTrapKeyDown}
       data-testid="function-repo-replay-drawer"
     >
       <div
