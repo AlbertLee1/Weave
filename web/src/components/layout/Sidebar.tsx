@@ -284,6 +284,11 @@ export function Sidebar() {
           icon: 'clock',
         },
         {
+          to: '/admin/auth-security',
+          label: 'Auth Security',
+          icon: 'shield',
+        },
+        {
           to: '/admin/indexes',
           label: 'Index Management',
           icon: 'database',
@@ -334,6 +339,11 @@ export function Sidebar() {
           to: '/audit',
           label: 'Audit Report',
           icon: 'clock',
+        },
+        {
+          to: '/admin/auth-security',
+          label: 'Auth Security',
+          icon: 'shield',
         },
         {
           to: '/admin/indexes',

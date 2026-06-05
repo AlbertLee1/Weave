@@ -44,6 +44,7 @@ import { SideEffectDLQAdminPage } from './components/admin/SideEffectDLQAdminPag
 import { ComplianceReportsPage } from './components/admin/ComplianceReportsPage';
 import { PerformanceDashboardPage } from './components/admin/PerformanceDashboardPage';
 import { FunnelDLQAdminPage } from './components/admin/FunnelDLQAdminPage';
+import { AuthSecurityAdminPage } from './components/admin/AuthSecurityAdminPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
 import { SchemaInferencePage } from './components/import/SchemaInferencePage';
 import { ApprovalsPage } from './components/approvals/ApprovalsPage';
@@ -502,6 +503,14 @@ export default function App() {
                 element={
                   <PermissionRoute permission="user.manage">
                     <FunnelDLQAdminPage />
+                  </PermissionRoute>
+                }
+              />
+              <Route
+                path="admin/auth-security"
+                element={
+                  <PermissionRoute permission="user.manage">
+                    <AuthSecurityAdminPage />
                   </PermissionRoute>
                 }
               />
