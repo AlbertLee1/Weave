@@ -17,11 +17,22 @@
 // since the rest of the workspace uses raw Tailwind for popovers
 // (LayoutMenu, VertexNodeContextMenu).
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as React from 'react';
 
 import { useObjectTypes } from '../hooks/useObjectTypes';
 import { useSearchObjects } from '../hooks/useObjects';
 import type { WireObject } from '../api/types';
+
+// Elements that can receive keyboard focus, used by the dialog's focus trap.
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
 
 export interface VertexAddObjectsDialogProps {
   open: boolean;
@@ -104,6 +115,82 @@ export function VertexAddObjectsDialog({
     enabled: open && type !== '',
   });
 
+  // Focus management for this self-drawn dialog (it is NOT the shared
+  // common/Modal, which already traps + restores focus). While open we move
+  // focus inside, keep Tab/Shift+Tab cycling within, close on Escape, and
+  // restore focus to whatever element opened the dialog (typically the
+  // "+ Add objects" button) on close — so keyboard users never end up behind
+  // the overlay. Effects key on `open` because the dialog renders `null` when
+  // closed (rather than unmounting), so open == focus-trap active.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
+  // Record the element that had focus when the dialog opened, move focus into
+  // the dialog, and restore focus to the trigger on close. Keyed on `open` so
+  // it runs on each open/close transition.
+  useEffect(() => {
+    if (!open) return;
+    triggerRef.current = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    if (dialog) {
+      const first = dialog.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+      // Prefer the first focusable child; fall back to the dialog itself
+      // (focusable via tabIndex={-1}) so focus never sits on the page behind.
+      if (first) first.focus();
+      else dialog.focus();
+    }
+    return () => {
+      const trigger = triggerRef.current;
+      if (trigger && typeof trigger.focus === 'function') trigger.focus();
+    };
+  }, [open]);
+
+  // Escape closes the dialog.
+  useEffect(() => {
+    if (!open) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [open, onClose]);
+
+  // Focus trap: keep Tab / Shift+Tab cycling among the dialog's focusable
+  // elements instead of escaping to the background page.
+  const handleTrapKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusables = Array.from(
+      dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+    );
+
+    // Degenerate case: nothing focusable inside — keep focus on the dialog.
+    if (focusables.length === 0) {
+      e.preventDefault();
+      dialog.focus();
+      return;
+    }
+
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+
+    if (e.shiftKey) {
+      // Shift+Tab on the first element (or focus already outside) wraps to last.
+      if (active === first || !dialog.contains(active)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      // Tab on the last element (or focus already outside) wraps to first.
+      if (active === last || !dialog.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, []);
+
   if (!open) return null;
 
   const results = searchQ.data?.data ?? [];
@@ -132,9 +219,13 @@ export function VertexAddObjectsDialog({
 
   return (
     <div
+      ref={dialogRef}
       data-testid="vertex-add-objects-dialog"
       role="dialog"
+      aria-modal="true"
       aria-label="Add objects"
+      tabIndex={-1}
+      onKeyDown={handleTrapKeyDown}
       className="absolute inset-0 z-40 flex items-center justify-center bg-black/40"
     >
       <div className="flex w-[420px] max-h-[80vh] flex-col rounded border border-zinc-700 bg-zinc-950 p-4 text-xs text-zinc-100 shadow-2xl">
