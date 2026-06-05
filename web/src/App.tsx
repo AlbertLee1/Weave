@@ -38,6 +38,7 @@ import { MarkingAdminPage } from './components/admin/MarkingAdminPage';
 import { GroupsAdminPage } from './components/admin/GroupsAdminPage';
 import { ServiceAccountsAdminPage } from './components/admin/ServiceAccountsAdminPage';
 import { RolesAdminPage } from './components/admin/RolesAdminPage';
+import { SideEffectDLQAdminPage } from './components/admin/SideEffectDLQAdminPage';
 import { ComplianceReportsPage } from './components/admin/ComplianceReportsPage';
 import { PerformanceDashboardPage } from './components/admin/PerformanceDashboardPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
@@ -440,6 +441,14 @@ export default function App() {
                 element={
                   <PermissionRoute permission="user.manage">
                     <RolesAdminPage />
+                  </PermissionRoute>
+                }
+              />
+              <Route
+                path="admin/side-effect-dlq"
+                element={
+                  <PermissionRoute permission="user.manage">
+                    <SideEffectDLQAdminPage />
                   </PermissionRoute>
                 }
               />
