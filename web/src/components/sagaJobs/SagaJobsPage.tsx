@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -390,13 +391,103 @@ interface DrawerShellProps {
   children: React.ReactNode;
 }
 
+// Elements that can receive keyboard focus, used by the drawer's focus trap.
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
 function DrawerShell({ testId, title, onClose, children }: DrawerShellProps) {
+  // Focus management for this self-drawn drawer (it is NOT the shared
+  // common/Modal, which already traps + restores focus). On open we move focus
+  // inside, keep Tab/Shift+Tab cycling within, close on Escape, and restore
+  // focus to whatever element opened the drawer (typically the Inspect / DLQ
+  // trigger) when it unmounts — so keyboard users never end up behind the
+  // overlay. Mirrors VertexShareLinkPanel (#229).
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
+  // Record the element that had focus when the drawer mounted, move focus into
+  // the dialog, and restore focus to the trigger on unmount. Runs once per
+  // mount — the parent conditionally mounts/unmounts this drawer on
+  // open/close, so mount == open and unmount == close.
+  useEffect(() => {
+    triggerRef.current = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    if (dialog) {
+      const first = dialog.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+      // Prefer the first focusable child; fall back to the dialog itself
+      // (focusable via tabIndex={-1}) so focus never sits on the page behind.
+      if (first) first.focus();
+      else dialog.focus();
+    }
+    return () => {
+      const trigger = triggerRef.current;
+      if (trigger && typeof trigger.focus === 'function') trigger.focus();
+    };
+  }, []);
+
+  // Escape closes the drawer.
+  useEffect(() => {
+    function handleKey(e: globalThis.KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  // Focus trap: keep Tab / Shift+Tab cycling among the dialog's focusable
+  // elements instead of escaping to the background page.
+  const handleTrapKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      if (e.key !== 'Tab') return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusables = Array.from(
+        dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      );
+
+      // Degenerate case: nothing focusable inside — keep focus on the dialog.
+      if (focusables.length === 0) {
+        e.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+
+      if (e.shiftKey) {
+        // Shift+Tab on the first element (or focus already outside) wraps to last.
+        if (active === first || !dialog.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        // Tab on the last element (or focus already outside) wraps to first.
+        if (active === last || !dialog.contains(active)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    },
+    [],
+  );
+
   return (
     <div
+      ref={dialogRef}
       data-testid={testId}
       role="dialog"
       aria-modal="true"
       aria-label={title}
+      tabIndex={-1}
+      onKeyDown={handleTrapKeyDown}
       className="fixed inset-0 z-40 flex"
     >
       <div
