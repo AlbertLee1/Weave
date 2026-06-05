@@ -40,6 +40,7 @@ import { ServiceAccountsAdminPage } from './components/admin/ServiceAccountsAdmi
 import { RolesAdminPage } from './components/admin/RolesAdminPage';
 import { ComplianceReportsPage } from './components/admin/ComplianceReportsPage';
 import { PerformanceDashboardPage } from './components/admin/PerformanceDashboardPage';
+import { FunnelDLQAdminPage } from './components/admin/FunnelDLQAdminPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
 import { SchemaInferencePage } from './components/import/SchemaInferencePage';
 import { ApprovalsPage } from './components/approvals/ApprovalsPage';
@@ -469,6 +470,14 @@ export default function App() {
                 }
               />
               <Route path="admin/audit" element={<Navigate to="/audit" replace />} />
+              <Route
+                path="admin/funnel-dlq"
+                element={
+                  <PermissionRoute permission="user.manage">
+                    <FunnelDLQAdminPage />
+                  </PermissionRoute>
+                }
+              />
               <Route path="vertex/:rid/diagramming" element={<VertexDiagrammingRedirect />} />
               <Route
                 path="vertex/:rid"
