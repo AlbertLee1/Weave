@@ -8,6 +8,12 @@ export function NotFoundPage() {
   const { pathname } = useLocation();
   return (
     <div className="p-8" data-testid="not-found-page">
+      {/* Page-level <h1> so the catch-all 404 page has the same single
+          top-level heading structure as every other page (a11y). Kept
+          visually hidden because EmptyState already shows the visible
+          "Page not found" title; this avoids duplicating that text while
+          still giving the page one programmatic main heading. */}
+      <h1 className="sr-only">Page not found</h1>
       <EmptyState
         title="Page not found"
         description={`No page is registered at ${pathname}. Use the sidebar to navigate, or jump back to the Dashboard.`}
