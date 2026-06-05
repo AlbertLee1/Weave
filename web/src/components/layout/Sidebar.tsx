@@ -288,6 +288,11 @@ export function Sidebar() {
           label: 'Roles',
           icon: 'shield',
         },
+        {
+          to: '/admin/service-accounts',
+          label: 'Service Accounts',
+          icon: 'settings',
+        },
       ]
     : [
         {
@@ -309,6 +314,11 @@ export function Sidebar() {
           to: '/admin/roles',
           label: 'Roles',
           icon: 'shield',
+        },
+        {
+          to: '/admin/service-accounts',
+          label: 'Service Accounts',
+          icon: 'settings',
         },
       ];
 
