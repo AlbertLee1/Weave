@@ -283,6 +283,21 @@ export function Sidebar() {
           label: 'Audit Report',
           icon: 'clock',
         },
+        {
+          to: '/admin/groups',
+          label: 'Groups',
+          icon: 'shield',
+        },
+        {
+          to: '/admin/roles',
+          label: 'Roles',
+          icon: 'shield',
+        },
+        {
+          to: '/admin/service-accounts',
+          label: 'Service Accounts',
+          icon: 'settings',
+        },
       ]
     : [
         {
@@ -299,6 +314,21 @@ export function Sidebar() {
           to: '/audit',
           label: 'Audit Report',
           icon: 'clock',
+        },
+        {
+          to: '/admin/groups',
+          label: 'Groups',
+          icon: 'shield',
+        },
+        {
+          to: '/admin/roles',
+          label: 'Roles',
+          icon: 'shield',
+        },
+        {
+          to: '/admin/service-accounts',
+          label: 'Service Accounts',
+          icon: 'settings',
         },
       ];
 
