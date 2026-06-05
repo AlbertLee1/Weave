@@ -152,3 +152,21 @@ body {
     background-position: 200% 0;
   }
 }
+
+/* ─── Reduced motion ────────────────────────────────────────────
+ * a11y / WCAG 2.3.3 (Animation from Interactions): when the user has
+ * enabled "reduce motion" at the OS level, neutralize all animations and
+ * transitions site-wide so vestibular-disorder users aren't subjected to
+ * motion. This is the community-standard global fallback used by Tailwind
+ * and most design systems. It only activates under the media query, so
+ * normal environments are unaffected. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
