@@ -35,6 +35,7 @@ import { DatasetRollbackPage } from './components/admin/DatasetRollbackPage';
 import { AuditHistoryPage } from './components/admin/AuditHistoryPage';
 import { AuditReportPage } from './components/audit/AuditReportPage';
 import { MarkingAdminPage } from './components/admin/MarkingAdminPage';
+import { ServiceAccountsAdminPage } from './components/admin/ServiceAccountsAdminPage';
 import { ComplianceReportsPage } from './components/admin/ComplianceReportsPage';
 import { PerformanceDashboardPage } from './components/admin/PerformanceDashboardPage';
 import { ImportWizardPage } from './components/import/ImportWizardPage';
@@ -413,6 +414,14 @@ export default function App() {
                 element={
                   <PermissionRoute permission="user.manage">
                     <MarkingAdminPage />
+                  </PermissionRoute>
+                }
+              />
+              <Route
+                path="admin/service-accounts"
+                element={
+                  <PermissionRoute permission="user.manage">
+                    <ServiceAccountsAdminPage />
                   </PermissionRoute>
                 }
               />
