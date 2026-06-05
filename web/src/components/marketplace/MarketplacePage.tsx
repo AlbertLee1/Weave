@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { EmptyState } from '../common/EmptyState';
 import { useToastStore } from '../../stores/toastStore';
@@ -16,6 +17,98 @@ import {
   type PackageManifest,
 } from '../../api/packages';
 import { ApiRequestError } from '../../api/client';
+
+// Elements that can receive keyboard focus — drives the dialog focus trap.
+const DIALOG_FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+// a11y focus management for the two self-drawn dialogs below
+// (UninstallConfirmDialog / PackageDetailsDrawer) — these are NOT the shared
+// common/Modal (which already traps + restores focus). Mirrors the wiring
+// shipped in vertex/VertexShareLinkPanel.tsx (#229): on mount it records the
+// trigger element, moves focus inside the dialog, closes on Escape, and on
+// unmount restores focus to the trigger. The returned `onKeyDown` is a Tab
+// focus trap to spread onto the dialog root. Both dialogs are conditionally
+// mounted by the parent (mount == open, unmount == close), so the mount
+// effect doubles as open/close handling. Each dialog gets its own hook
+// instance (independent refs/handlers) so they never interfere.
+function useDialogFocus<T extends HTMLElement>(onClose: () => void) {
+  const dialogRef = useRef<T>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
+  // Record the previously-focused (trigger) element, move focus inside the
+  // dialog, and restore focus on unmount. Runs once per mount.
+  useEffect(() => {
+    triggerRef.current = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    if (dialog) {
+      const first = dialog.querySelector<HTMLElement>(
+        DIALOG_FOCUSABLE_SELECTOR,
+      );
+      // Prefer the first focusable child; fall back to the dialog itself
+      // (focusable via tabIndex={-1}) so focus never sits on the page behind.
+      if (first) first.focus();
+      else dialog.focus();
+    }
+    return () => {
+      const trigger = triggerRef.current;
+      if (trigger && typeof trigger.focus === 'function') trigger.focus();
+    };
+  }, []);
+
+  // Escape closes the dialog via the existing close callback.
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  // Focus trap: keep Tab / Shift+Tab cycling among the dialog's focusable
+  // elements instead of escaping to the background page.
+  const onKeyDown = useCallback((e: ReactKeyboardEvent<T>) => {
+    if (e.key !== 'Tab') return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusables = Array.from(
+      dialog.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE_SELECTOR),
+    );
+
+    // Degenerate case: nothing focusable inside — keep focus on the dialog.
+    if (focusables.length === 0) {
+      e.preventDefault();
+      dialog.focus();
+      return;
+    }
+
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+
+    if (e.shiftKey) {
+      // Shift+Tab on the first element (or focus already outside) wraps to last.
+      if (active === first || !dialog.contains(active)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      // Tab on the last element (or focus already outside) wraps to first.
+      if (active === last || !dialog.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, []);
+
+  return { dialogRef, onKeyDown };
+}
 
 const PACKAGES_KEY = ['marketplace', 'installed-packages'] as const;
 const BUILTIN_KEY = ['marketplace', 'builtin-packages'] as const;
@@ -1469,12 +1562,16 @@ function UninstallConfirmDialog({
   onCancel,
   onConfirm,
 }: UninstallConfirmDialogProps) {
+  const { dialogRef, onKeyDown } = useDialogFocus<HTMLDivElement>(onCancel);
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label={`Uninstall ${name}`}
       data-testid="marketplace-uninstall-dialog"
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
     >
       <div className="w-full max-w-md bg-bg-secondary border border-border rounded-lg p-5 shadow-xl">
@@ -1638,14 +1735,19 @@ function PackageDetailsDrawer({ content, onClose }: PackageDetailsDrawerProps) {
     return '';
   })();
 
+  const { dialogRef, onKeyDown } = useDialogFocus<HTMLDivElement>(onClose);
+
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label={`Package details for ${content.name}`}
       data-testid="marketplace-details-drawer"
       data-package-name={content.name}
       data-source={content.kind}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
       className="fixed inset-0 z-50 flex justify-end bg-black/40"
       onClick={(e) => {
         // Click outside the drawer panel closes the drawer.
