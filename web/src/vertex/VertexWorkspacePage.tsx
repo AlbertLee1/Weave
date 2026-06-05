@@ -12,7 +12,14 @@
 // so the heavy logic stays pure + Vitest-friendly. Zoom/pan come for free
 // from Sigma's default camera controls — no custom event wiring needed.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import { Link, useParams } from 'react-router';
 import Graph, { MultiGraph } from 'graphology';
 import { SigmaContainer, useLoadGraph, useSigma } from '@react-sigma/core';
@@ -275,11 +282,101 @@ const LAYOUT_KINDS: Array<{ id: LayoutKind; label: string }> = [
   { id: 'auto', label: 'Auto' },
 ];
 
-function LayoutMenu({ onApply }: { onApply: (spec: LayoutSpec) => void }) {
-  const [open, setOpen] = useState(false);
+// Elements that can receive keyboard focus, used by LayoutPopover's focus trap.
+const LAYOUT_FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+// LayoutPopover — the self-drawn "Layout options" dialog. It is a plain
+// Tailwind popover with role="dialog" (NOT the shared common/Modal, and NOT
+// the sibling VertexAddObjectsDialog / VertexShareLinkPanel which manage their
+// own focus). Focus management mirrors VertexShareLinkPanel: on open we move
+// focus inside, keep Tab/Shift+Tab cycling within, close on Escape, and restore
+// focus to the trigger (the TopBar "Layout" button) when it unmounts — so
+// keyboard users never end up behind the popover. The parent LayoutMenu
+// conditionally mounts/unmounts this on open/close, so mount == open and
+// unmount == close (same contract as VertexShareLinkPanel).
+function LayoutPopover({
+  onApply,
+  onClose,
+}: {
+  onApply: (spec: LayoutSpec) => void;
+  onClose: () => void;
+}) {
   const [kind, setKind] = useState<LayoutKind>('hierarchical');
   const [reverse, setReverse] = useState(false);
   const [rootsText, setRootsText] = useState('');
+
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
+  // Record the element that had focus when the popover mounted, move focus into
+  // the dialog, and restore focus to the trigger on unmount.
+  useEffect(() => {
+    triggerRef.current = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    if (dialog) {
+      const first = dialog.querySelector<HTMLElement>(LAYOUT_FOCUSABLE_SELECTOR);
+      // Prefer the first focusable child; fall back to the dialog itself
+      // (focusable via tabIndex={-1}) so focus never sits on the page behind.
+      if (first) first.focus();
+      else dialog.focus();
+    }
+    return () => {
+      const trigger = triggerRef.current;
+      if (trigger && typeof trigger.focus === 'function') trigger.focus();
+    };
+  }, []);
+
+  // Escape closes the popover.
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  // Focus trap: keep Tab / Shift+Tab cycling among the dialog's focusable
+  // elements instead of escaping to the background page.
+  const handleTrapKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusables = Array.from(
+      dialog.querySelectorAll<HTMLElement>(LAYOUT_FOCUSABLE_SELECTOR),
+    );
+
+    // Degenerate case: nothing focusable inside — keep focus on the dialog.
+    if (focusables.length === 0) {
+      e.preventDefault();
+      dialog.focus();
+      return;
+    }
+
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+
+    if (e.shiftKey) {
+      // Shift+Tab on the first element (or focus already outside) wraps to last.
+      if (active === first || !dialog.contains(active)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      // Tab on the last element (or focus already outside) wraps to first.
+      if (active === last || !dialog.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, []);
 
   const apply = () => {
     if (kind === 'hierarchical') {
@@ -295,8 +392,83 @@ function LayoutMenu({ onApply }: { onApply: (spec: LayoutSpec) => void }) {
     } else {
       onApply({ kind: 'auto' });
     }
-    setOpen(false);
+    onClose();
   };
+
+  return (
+    <div
+      ref={dialogRef}
+      data-testid="vertex-layout-popover"
+      className="absolute right-0 top-full z-20 mt-1 w-64 rounded border border-zinc-700 bg-zinc-950 p-3 shadow-lg"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Layout options"
+      tabIndex={-1}
+      onKeyDown={handleTrapKeyDown}
+    >
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-300">
+        Algorithm
+      </div>
+      <div className="mb-2 flex flex-col gap-1" role="radiogroup">
+        {LAYOUT_KINDS.map((opt) => (
+          <label key={opt.id} className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="vertex-layout-kind"
+              value={opt.id}
+              data-testid={`vertex-layout-kind-${opt.id}`}
+              checked={kind === opt.id}
+              onChange={() => setKind(opt.id)}
+            />
+            <span>{opt.label}</span>
+          </label>
+        ))}
+      </div>
+      {kind === 'hierarchical' && (
+        <div data-testid="vertex-layout-hierarchical-controls">
+          <label className="mb-2 flex items-center gap-2">
+            <input
+              type="checkbox"
+              data-testid="vertex-layout-hierarchical-reverse"
+              checked={reverse}
+              onChange={(e) => setReverse(e.target.checked)}
+            />
+            <span>Reverse direction</span>
+          </label>
+          <label className="mb-2 block">
+            <span className="mb-1 block text-zinc-400">Root nodes</span>
+            <input
+              type="text"
+              data-testid="vertex-layout-hierarchical-roots"
+              value={rootsText}
+              onChange={(e) => setRootsText(e.target.value)}
+              placeholder="objectRid, objectRid, …"
+              className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-100"
+            />
+          </label>
+        </div>
+      )}
+      <div className="flex justify-end">
+        <button
+          type="button"
+          data-testid={
+            kind === 'hierarchical'
+              ? 'vertex-layout-hierarchical-apply'
+              : `vertex-layout-${kind}-apply`
+          }
+          onClick={apply}
+          className="rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-500"
+        >
+          Apply
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LayoutMenu({ onApply }: { onApply: (spec: LayoutSpec) => void }) {
+  const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
 
   return (
     <div className="relative" data-testid="vertex-topbar-layout-wrap">
@@ -309,71 +481,7 @@ function LayoutMenu({ onApply }: { onApply: (spec: LayoutSpec) => void }) {
       >
         Layout
       </button>
-      {open && (
-        <div
-          data-testid="vertex-layout-popover"
-          className="absolute right-0 top-full z-20 mt-1 w-64 rounded border border-zinc-700 bg-zinc-950 p-3 shadow-lg"
-          role="dialog"
-          aria-label="Layout options"
-        >
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-300">
-            Algorithm
-          </div>
-          <div className="mb-2 flex flex-col gap-1" role="radiogroup">
-            {LAYOUT_KINDS.map((opt) => (
-              <label key={opt.id} className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="vertex-layout-kind"
-                  value={opt.id}
-                  data-testid={`vertex-layout-kind-${opt.id}`}
-                  checked={kind === opt.id}
-                  onChange={() => setKind(opt.id)}
-                />
-                <span>{opt.label}</span>
-              </label>
-            ))}
-          </div>
-          {kind === 'hierarchical' && (
-            <div data-testid="vertex-layout-hierarchical-controls">
-              <label className="mb-2 flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  data-testid="vertex-layout-hierarchical-reverse"
-                  checked={reverse}
-                  onChange={(e) => setReverse(e.target.checked)}
-                />
-                <span>Reverse direction</span>
-              </label>
-              <label className="mb-2 block">
-                <span className="mb-1 block text-zinc-400">Root nodes</span>
-                <input
-                  type="text"
-                  data-testid="vertex-layout-hierarchical-roots"
-                  value={rootsText}
-                  onChange={(e) => setRootsText(e.target.value)}
-                  placeholder="objectRid, objectRid, …"
-                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-100"
-                />
-              </label>
-            </div>
-          )}
-          <div className="flex justify-end">
-            <button
-              type="button"
-              data-testid={
-                kind === 'hierarchical'
-                  ? 'vertex-layout-hierarchical-apply'
-                  : `vertex-layout-${kind}-apply`
-              }
-              onClick={apply}
-              className="rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-500"
-            >
-              Apply
-            </button>
-          </div>
-        </div>
-      )}
+      {open && <LayoutPopover onApply={onApply} onClose={close} />}
     </div>
   );
 }
