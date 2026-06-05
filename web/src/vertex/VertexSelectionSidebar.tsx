@@ -106,6 +106,7 @@ function SingleObjectPanel({
       </header>
       <nav
         data-testid="vertex-sidebar-tabs"
+        aria-label="Selection tabs"
         className="flex border-b border-zinc-800"
       >
         {TABS.map((t) => (
