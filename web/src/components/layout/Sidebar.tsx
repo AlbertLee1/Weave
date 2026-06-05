@@ -283,6 +283,11 @@ export function Sidebar() {
           label: 'Audit Report',
           icon: 'clock',
         },
+        {
+          to: '/admin/groups',
+          label: 'Groups',
+          icon: 'shield',
+        },
       ]
     : [
         {
@@ -299,6 +304,11 @@ export function Sidebar() {
           to: '/audit',
           label: 'Audit Report',
           icon: 'clock',
+        },
+        {
+          to: '/admin/groups',
+          label: 'Groups',
+          icon: 'shield',
         },
       ];
 
