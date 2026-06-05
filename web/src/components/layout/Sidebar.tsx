@@ -289,6 +289,11 @@ export function Sidebar() {
           icon: 'bolt',
         },
         {
+          to: '/admin/side-effect-dlq',
+          label: 'Side-Effect DLQ',
+          icon: 'bolt',
+        },
+        {
           to: '/admin/groups',
           label: 'Groups',
           icon: 'shield',
@@ -323,6 +328,11 @@ export function Sidebar() {
         {
           to: '/admin/funnel-dlq',
           label: 'Funnel DLQ',
+          icon: 'bolt',
+        },
+        {
+          to: '/admin/side-effect-dlq',
+          label: 'Side-Effect DLQ',
           icon: 'bolt',
         },
         {
