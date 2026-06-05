@@ -284,6 +284,11 @@ export function Sidebar() {
           icon: 'clock',
         },
         {
+          to: '/admin/feature-flags',
+          label: 'Feature Flags',
+          icon: 'bolt',
+        },
+        {
           to: '/admin/auth-security',
           label: 'Auth Security',
           icon: 'shield',
@@ -339,6 +344,11 @@ export function Sidebar() {
           to: '/audit',
           label: 'Audit Report',
           icon: 'clock',
+        },
+        {
+          to: '/admin/feature-flags',
+          label: 'Feature Flags',
+          icon: 'bolt',
         },
         {
           to: '/admin/auth-security',

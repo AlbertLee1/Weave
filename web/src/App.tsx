@@ -40,6 +40,7 @@ import { ServiceAccountsAdminPage } from './components/admin/ServiceAccountsAdmi
 import { RolesAdminPage } from './components/admin/RolesAdminPage';
 import { TenantQuotasAdminPage } from './components/admin/TenantQuotasAdminPage';
 import { IndexManagementAdminPage } from './components/admin/IndexManagementAdminPage';
+import { FeatureFlagsAdminPage } from './components/admin/FeatureFlagsAdminPage';
 import { SideEffectDLQAdminPage } from './components/admin/SideEffectDLQAdminPage';
 import { ComplianceReportsPage } from './components/admin/ComplianceReportsPage';
 import { PerformanceDashboardPage } from './components/admin/PerformanceDashboardPage';
@@ -461,6 +462,14 @@ export default function App() {
                 element={
                   <PermissionRoute permission="user.manage">
                     <IndexManagementAdminPage />
+                  </PermissionRoute>
+                }
+              />
+              <Route
+                path="admin/feature-flags"
+                element={
+                  <PermissionRoute permission="user.manage">
+                    <FeatureFlagsAdminPage />
                   </PermissionRoute>
                 }
               />
