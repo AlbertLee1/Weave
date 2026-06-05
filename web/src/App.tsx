@@ -39,6 +39,7 @@ import { GroupsAdminPage } from './components/admin/GroupsAdminPage';
 import { ServiceAccountsAdminPage } from './components/admin/ServiceAccountsAdminPage';
 import { RolesAdminPage } from './components/admin/RolesAdminPage';
 import { TenantQuotasAdminPage } from './components/admin/TenantQuotasAdminPage';
+import { IndexManagementAdminPage } from './components/admin/IndexManagementAdminPage';
 import { SideEffectDLQAdminPage } from './components/admin/SideEffectDLQAdminPage';
 import { ComplianceReportsPage } from './components/admin/ComplianceReportsPage';
 import { PerformanceDashboardPage } from './components/admin/PerformanceDashboardPage';
@@ -451,6 +452,14 @@ export default function App() {
                 element={
                   <PermissionRoute permission="user.manage">
                     <TenantQuotasAdminPage />
+                  </PermissionRoute>
+                }
+              />
+              <Route
+                path="admin/indexes"
+                element={
+                  <PermissionRoute permission="user.manage">
+                    <IndexManagementAdminPage />
                   </PermissionRoute>
                 }
               />
