@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -825,6 +826,17 @@ interface MergeConfirmDialogProps {
   merging: boolean;
 }
 
+// Elements that can receive keyboard focus, used by the merge dialog's focus
+// trap (mirrors VertexShareLinkPanel — see its FOCUSABLE_SELECTOR).
+const MERGE_DIALOG_FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
 function MergeConfirmDialog({
   proposalTitle,
   inputValue,
@@ -838,12 +850,94 @@ function MergeConfirmDialog({
   // comparison) matches GitHub's typed-confirm UX — the wrong case stays
   // disabled to keep the gesture deliberate.
   const matches = inputValue === proposalTitle;
+
+  // Focus management for this self-drawn dialog (it is NOT the shared
+  // common/Modal, which already traps + restores focus). Mirrors
+  // VertexShareLinkPanel (#229): on open we restore focus to the trigger on
+  // close, keep Tab/Shift+Tab cycling within the dialog (degrades safely), and
+  // close on Escape via the existing cancel callback. The input's existing
+  // autoFocus still provides the initial focus inside the dialog.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // Record the element that opened the dialog (typically the Merge button) so
+  // we can restore focus to it on close. We capture it lazily during the first
+  // render — before the dialog's children commit — because the title input's
+  // autoFocus steals document.activeElement by the time a mount effect runs,
+  // which would otherwise leave us pointing at the input instead of the
+  // trigger. useRef's initializer runs exactly once.
+  const triggerRef = useRef<HTMLElement | null>(
+    typeof document !== 'undefined'
+      ? (document.activeElement as HTMLElement | null)
+      : null,
+  );
+  // Keep the latest onCancel in a ref so the Escape listener (registered once)
+  // always invokes the current callback without re-subscribing.
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+
+  // Restore focus to the trigger when the dialog unmounts. The parent
+  // conditionally mounts/unmounts this component on open/close, so
+  // mount == open and unmount == close.
+  useEffect(() => {
+    return () => {
+      const trigger = triggerRef.current;
+      if (trigger && typeof trigger.focus === 'function') trigger.focus();
+    };
+  }, []);
+
+  // Escape closes the dialog through the existing cancel path.
+  useEffect(() => {
+    function handleKey(e: globalThis.KeyboardEvent) {
+      if (e.key === 'Escape') onCancelRef.current();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, []);
+
+  // Focus trap: keep Tab / Shift+Tab cycling among the dialog's focusable
+  // elements instead of escaping to the background page.
+  const handleTrapKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusables = Array.from(
+      dialog.querySelectorAll<HTMLElement>(MERGE_DIALOG_FOCUSABLE_SELECTOR),
+    );
+
+    // Degenerate case: nothing focusable inside — keep focus on the dialog.
+    if (focusables.length === 0) {
+      e.preventDefault();
+      dialog.focus();
+      return;
+    }
+
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+
+    if (e.shiftKey) {
+      // Shift+Tab on the first element (or focus already outside) wraps to last.
+      if (active === first || !dialog.contains(active)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      // Tab on the last element (or focus already outside) wraps to first.
+      if (active === last || !dialog.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, []);
+
   return (
     <div
+      ref={dialogRef}
       data-testid="proposals-merge-dialog"
       role="dialog"
       aria-modal="true"
       aria-label="Confirm merge"
+      tabIndex={-1}
+      onKeyDown={handleTrapKeyDown}
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/60"
     >
       <div className="w-[28rem] max-w-full space-y-4 rounded-lg border border-border/60 bg-bg-primary p-5 shadow-xl">

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as React from 'react';
 import {
   createDashboard,
   deleteDashboard,
@@ -185,6 +186,24 @@ export function DashboardEditorPage({
   // inline in the toolbar (rather than window.confirm, which can't be
   // observed deterministically in tests).
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Focus restore for the confirm dialog (a11y): the Delete button swaps
+  // itself out for the dialog when opened, so the dialog can't capture it as
+  // a stable trigger on mount. Instead the parent — which owns the button's
+  // lifecycle — restores focus to the freshly re-rendered Delete button when
+  // the dialog closes (confirmingDelete true → false), so keyboard users land
+  // back on the control they activated.
+  const deleteButtonRef = useRef<HTMLButtonElement>(null);
+  const prevConfirmingDelete = useRef(confirmingDelete);
+  useEffect(() => {
+    const closed = prevConfirmingDelete.current && !confirmingDelete;
+    prevConfirmingDelete.current = confirmingDelete;
+    // Only restore focus while the editor still shows a Delete button. After a
+    // successful delete the editor resets to an unsaved state (no savedId →
+    // no Delete button), so there is nothing to focus.
+    if (closed && savedId) {
+      deleteButtonRef.current?.focus();
+    }
+  }, [confirmingDelete, savedId]);
 
   // Load on mount when an id was passed in (the SPA's /dashboards/:id
   // route wrapper supplies it). Failures fall back to the empty editor
@@ -559,6 +578,7 @@ export function DashboardEditorPage({
         )}
         {savedId && !confirmingDelete && (
           <button
+            ref={deleteButtonRef}
             type="button"
             data-testid="dashboard-delete"
             onClick={() => setConfirmingDelete(true)}
@@ -570,36 +590,13 @@ export function DashboardEditorPage({
           </button>
         )}
         {savedId && confirmingDelete && (
-          <span
-            role="dialog"
-            aria-label="Confirm delete dashboard"
-            data-testid="dashboard-delete-confirm-dialog"
-            className="inline-flex items-center gap-2 px-2 py-1 rounded border border-accent-error/60 bg-accent-error/10"
-          >
-            <span className="text-xs font-mono text-text-primary">
-              Delete this dashboard?
-            </span>
-            <button
-              type="button"
-              data-testid="dashboard-delete-confirm"
-              onClick={() => {
-                void handleDelete();
-              }}
-              disabled={deleteStatus === 'deleting'}
-              className="px-2 py-0.5 rounded border border-accent-error text-xs text-accent-error hover:bg-accent-error/20 disabled:opacity-60"
-            >
-              {deleteStatus === 'deleting' ? 'Deleting…' : 'Confirm Delete'}
-            </button>
-            <button
-              type="button"
-              data-testid="dashboard-delete-cancel"
-              onClick={() => setConfirmingDelete(false)}
-              disabled={deleteStatus === 'deleting'}
-              className="px-2 py-0.5 rounded border border-border text-xs text-text-secondary hover:text-text-primary disabled:opacity-60"
-            >
-              Cancel
-            </button>
-          </span>
+          <DeleteConfirmDialog
+            deleting={deleteStatus === 'deleting'}
+            onConfirm={() => {
+              void handleDelete();
+            }}
+            onCancel={() => setConfirmingDelete(false)}
+          />
         )}
         {deleteStatus === 'error' && (
           <span
@@ -672,6 +669,136 @@ export function DashboardEditorPage({
         ))}
       </div>
     </div>
+  );
+}
+
+// Elements that can receive keyboard focus, used by the dialog's focus trap.
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+interface DeleteConfirmDialogProps {
+  deleting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+// Self-drawn confirm popover for the destructive Delete action. It is NOT the
+// shared common/Modal (which already traps + restores focus), so it carries
+// its own focus management, mirroring VertexShareLinkPanel (#229): on open we
+// move focus inside, keep Tab/Shift+Tab cycling within (focus trap, degenerate
+// -safe), and close on Escape via the existing cancel callback — so keyboard
+// users never end up stranded behind the popover. The parent conditionally
+// mounts/unmounts this on open/close (mount == open, unmount == close) and
+// owns focus *restore*: the Delete button swaps itself out for this dialog, so
+// the parent re-focuses the freshly re-rendered Delete button on close.
+function DeleteConfirmDialog({
+  deleting,
+  onConfirm,
+  onCancel,
+}: DeleteConfirmDialogProps) {
+  const dialogRef = useRef<HTMLSpanElement>(null);
+
+  // Move focus inside on mount so it never sits on the page behind the dialog.
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const first = dialog.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+    // Prefer the first focusable child; fall back to the dialog itself
+    // (focusable via tabIndex={-1}).
+    if (first) first.focus();
+    else dialog.focus();
+  }, []);
+
+  // Escape closes the dialog through the existing cancel callback. While a
+  // delete is in flight the Cancel button is disabled to keep the dialog up
+  // until the request settles; Escape honours the same guard so the two paths
+  // can't diverge.
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !deleting) onCancel();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onCancel, deleting]);
+
+  // Focus trap: keep Tab / Shift+Tab cycling among the dialog's focusable
+  // elements instead of escaping to the toolbar behind it.
+  const handleTrapKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLSpanElement>) => {
+      if (e.key !== 'Tab') return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusables = Array.from(
+        dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      );
+
+      // Degenerate case: nothing focusable inside — keep focus on the dialog.
+      if (focusables.length === 0) {
+        e.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+
+      if (e.shiftKey) {
+        // Shift+Tab on the first element (or focus outside) wraps to last.
+        if (active === first || !dialog.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        // Tab on the last element (or focus outside) wraps to first.
+        if (active === last || !dialog.contains(active)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    },
+    [],
+  );
+
+  return (
+    <span
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Confirm delete dashboard"
+      data-testid="dashboard-delete-confirm-dialog"
+      tabIndex={-1}
+      onKeyDown={handleTrapKeyDown}
+      className="inline-flex items-center gap-2 px-2 py-1 rounded border border-accent-error/60 bg-accent-error/10"
+    >
+      <span className="text-xs font-mono text-text-primary">
+        Delete this dashboard?
+      </span>
+      <button
+        type="button"
+        data-testid="dashboard-delete-confirm"
+        onClick={onConfirm}
+        disabled={deleting}
+        className="px-2 py-0.5 rounded border border-accent-error text-xs text-accent-error hover:bg-accent-error/20 disabled:opacity-60"
+      >
+        {deleting ? 'Deleting…' : 'Confirm Delete'}
+      </button>
+      <button
+        type="button"
+        data-testid="dashboard-delete-cancel"
+        onClick={onCancel}
+        disabled={deleting}
+        className="px-2 py-0.5 rounded border border-border text-xs text-text-secondary hover:text-text-primary disabled:opacity-60"
+      >
+        Cancel
+      </button>
+    </span>
   );
 }
 
