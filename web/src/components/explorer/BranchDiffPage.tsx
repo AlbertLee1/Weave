@@ -131,6 +131,10 @@ export function BranchDiffPage() {
   if (!ontologyApiName || !branchId) {
     return (
       <div className="flex items-center justify-center h-full">
+        {/* Stable page-level heading -- see the main return below. Visually
+            hidden so every render state of this standalone route exposes
+            exactly one <h1> named "Branch Diff". */}
+        <h1 className="sr-only">Branch Diff</h1>
         <EmptyState
           title="Missing parameters"
           description="Both ontology and branch are required."
@@ -142,6 +146,7 @@ export function BranchDiffPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full">
+        <h1 className="sr-only">Branch Diff</h1>
         <LoadingSpinner size="lg" />
       </div>
     );
@@ -150,6 +155,7 @@ export function BranchDiffPage() {
   if (error) {
     return (
       <div className="flex items-center justify-center h-full">
+        <h1 className="sr-only">Branch Diff</h1>
         <EmptyState
           title="Failed to load branch diff"
           description={String(error)}
@@ -169,6 +175,12 @@ export function BranchDiffPage() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Stable page-level heading. Visually hidden so the layout is
+          unchanged, but it gives the standalone Branch Diff route exactly one
+          <h1> (its visible title renders as an <h2>), matching the rest of the
+          app's heading structure. */}
+      <h1 className="sr-only">Branch Diff</h1>
+
       {/* Header */}
       <div className="px-6 py-4 border-b border-border shrink-0">
         <div className="flex items-center gap-2 text-xs text-text-muted mb-2">
