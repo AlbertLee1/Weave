@@ -284,6 +284,11 @@ export function Sidebar() {
           icon: 'clock',
         },
         {
+          to: '/admin/funnel-dlq',
+          label: 'Funnel DLQ',
+          icon: 'bolt',
+        },
+        {
           to: '/admin/side-effect-dlq',
           label: 'Side-Effect DLQ',
           icon: 'bolt',
@@ -319,6 +324,11 @@ export function Sidebar() {
           to: '/audit',
           label: 'Audit Report',
           icon: 'clock',
+        },
+        {
+          to: '/admin/funnel-dlq',
+          label: 'Funnel DLQ',
+          icon: 'bolt',
         },
         {
           to: '/admin/side-effect-dlq',
