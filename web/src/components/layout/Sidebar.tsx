@@ -289,6 +289,11 @@ export function Sidebar() {
           icon: 'shield',
         },
         {
+          to: '/admin/indexes',
+          label: 'Index Management',
+          icon: 'database',
+        },
+        {
           to: '/admin/tenant-quotas',
           label: 'Tenant Quotas',
           icon: 'database',
@@ -339,6 +344,11 @@ export function Sidebar() {
           to: '/admin/auth-security',
           label: 'Auth Security',
           icon: 'shield',
+        },
+        {
+          to: '/admin/indexes',
+          label: 'Index Management',
+          icon: 'database',
         },
         {
           to: '/admin/tenant-quotas',
