@@ -5,7 +5,7 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react';
-import { useParams } from 'react-router';
+import { Link, useParams } from 'react-router';
 import {
   useActionHistory,
   useActionHistoryEntry,
@@ -305,6 +305,14 @@ export function ActionHistoryPage() {
                             : 'Undo'}
                         </button>
                       )}
+                      <Link
+                        to={`/actions/${activeOntology}/impact/${entry.id}`}
+                        className="rounded-md border border-border/60 px-3 py-1 text-xs text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+                        data-testid="view-impact-link"
+                        data-log-id={entry.id}
+                      >
+                        View impact
+                      </Link>
                       <button
                         type="button"
                         onClick={() => setDetailLogId(entry.id)}

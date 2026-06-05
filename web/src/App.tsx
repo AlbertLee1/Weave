@@ -13,6 +13,7 @@ import { BrowserPage } from './components/browser/BrowserPage';
 import { InterfaceMethodsConsolePage } from './components/browser/InterfaceMethodsConsolePage';
 import { ActionConsolePage } from './components/actions/ActionConsolePage';
 import { ActionHistoryPage } from './components/actions/ActionHistoryPage';
+import { ActionImpactPage } from './components/actions/ActionImpactPage';
 import { AggregationPage } from './components/aggregation/AggregationPage';
 import { ObjectSetPage } from './components/objectsets/ObjectSetPage';
 import { ObjectSetDiffPage } from './components/objectsets/ObjectSetDiffPage';
@@ -247,6 +248,10 @@ export default function App() {
               />
               <Route path="actions/:ontology" element={<ActionConsolePage />} />
               <Route path="actions/:ontology/history" element={<ActionHistoryPage />} />
+              <Route
+                path="actions/:ontology/impact/:actionLogId"
+                element={<ActionImpactPage />}
+              />
               <Route path="actions/history" element={<ActionHistoryPage />} />
               <Route
                 path="actions/:ontology/jobs"
