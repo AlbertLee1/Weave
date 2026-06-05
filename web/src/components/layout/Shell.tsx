@@ -54,6 +54,15 @@ export function Shell() {
 
   return (
     <div className="flex h-screen bg-bg-primary text-text-primary font-sans">
+      {/* Skip to main content (WCAG 2.4.1 Bypass Blocks): first focusable
+          element so keyboard / screen-reader users can jump past the
+          Sidebar + Topbar straight to <main>. Visually hidden until focused. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-3 focus:py-2 focus:rounded focus:bg-bg-primary focus:text-text-primary focus:border focus:border-border"
+      >
+        Skip to main content
+      </a>
       {/* Top accent line: 1px gradient amber → teal → transparent */}
       <div
         className="fixed top-0 left-0 right-0 z-50 h-px"
@@ -67,6 +76,8 @@ export function Shell() {
         <OfflineIndicator />
         <Topbar />
         <main
+          id="main-content"
+          tabIndex={-1}
           className="flex-1 overflow-auto p-6"
           style={{
             background:
