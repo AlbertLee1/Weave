@@ -65,6 +65,7 @@ import { AutomationRulesPage } from './components/automation/AutomationRulesPage
 import { ProposalsPage } from './components/proposals/ProposalsPage';
 import { SecurityPoliciesPage } from './components/securityPolicies/SecurityPoliciesPage';
 import { NotFoundPage } from './components/common/NotFoundPage';
+import { RouteTitle } from './components/common/RouteTitle';
 import { VertexDiagrammingRedirect } from './vertex/VertexDiagrammingRedirect';
 // Lazy-load the Vertex workspace so the heavy Sigma + Graphology bundle
 // is split off the initial app chunk and only paid for by users who hit
@@ -142,6 +143,7 @@ export default function App() {
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <AuthProvider>
+            <RouteTitle />
             <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route
