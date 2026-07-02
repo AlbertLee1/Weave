@@ -302,10 +302,30 @@ export interface GroupByClause {
   fixedWidth?: number;
 }
 
+// RelativePointInTime is the Foundry RelativeDateRangeBound wire shape:
+// a point in time relative to query execution, truncated to the start of
+// its timeUnit period. Negative values reach into the past.
+export interface RelativePointInTime {
+  type?: 'relativePoint';
+  value: number;
+  timeUnit: 'DAY' | 'WEEK' | 'MONTH' | 'YEAR';
+}
+
 export interface WhereClause {
   type: string;
   field?: string;
-  value: unknown;
+  // Most operators carry their payload here; the Foundry `interval` and
+  // `relativeDateRange` operators use the dedicated keys below instead.
+  value?: unknown;
+  // Foundry IntervalQuery (type === 'interval'): recursive sub-rule tree
+  // (match / allOf / anyOf / prefixOnLastToken / fuzzy).
+  rule?: { type: string; [key: string]: unknown };
+  // Foundry RelativeDateRangeQuery (type === 'relativeDateRange'):
+  // inclusive start / exclusive end bounds plus the REQUIRED tz database
+  // zone used for period truncation.
+  relativeStartTime?: RelativePointInTime;
+  relativeEndTime?: RelativePointInTime;
+  timeZoneId?: string;
 }
 
 // Foundry OSv2 action apply options (mode + returnEdits).

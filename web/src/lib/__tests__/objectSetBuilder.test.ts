@@ -393,6 +393,89 @@ describe('validateNode', () => {
     ).toEqual([]);
   });
 
+  it('accepts Foundry interval filter clauses carrying a rule instead of a value', () => {
+    // BDD: Given a filter node using the backend-supported `interval`
+    // operator (pkg/oss/where/interval.go — Foundry IntervalQuery: the
+    // payload is a sub-rule tree under `rule`, there is NO `value` key),
+    // When the builder validates the tree, Then neither an "unsupported
+    // operator" nor a "requires a value" error is raised.
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Employee'),
+        where: {
+          type: 'interval',
+          field: 'description',
+          rule: { type: 'match', query: 'software engineer', ordered: true },
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('flags interval filter clauses missing their rule', () => {
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Employee'),
+        where: { type: 'interval', field: 'description' },
+      }),
+    ).toEqual(['filter where clause interval requires a rule object']);
+  });
+
+  it('accepts Foundry relativeDateRange filter clauses with relative bounds and a timeZoneId', () => {
+    // BDD: Given a filter node using the backend-supported
+    // `relativeDateRange` operator (pkg/oss/where/relative_date_range.go —
+    // Foundry RelativeDateRangeQuery: bounds live in relativeStartTime /
+    // relativeEndTime and timeZoneId is required; there is NO `value`),
+    // When the builder validates the tree, Then no error is raised.
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Employee'),
+        where: {
+          type: 'relativeDateRange',
+          field: 'hiredAt',
+          relativeStartTime: { type: 'relativePoint', value: -7, timeUnit: 'DAY' },
+          relativeEndTime: { type: 'relativePoint', value: 1, timeUnit: 'DAY' },
+          timeZoneId: 'Etc/UTC',
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('flags relativeDateRange filter clauses missing timeZoneId or both bounds', () => {
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Employee'),
+        where: {
+          type: 'relativeDateRange',
+          field: 'hiredAt',
+          relativeStartTime: { type: 'relativePoint', value: -7, timeUnit: 'DAY' },
+        },
+      }),
+    ).toEqual(['filter where clause relativeDateRange requires a timeZoneId']);
+
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Employee'),
+        where: {
+          type: 'relativeDateRange',
+          field: 'hiredAt',
+          timeZoneId: 'Etc/UTC',
+        },
+      }),
+    ).toEqual([
+      'filter where clause relativeDateRange requires at least one of relativeStartTime / relativeEndTime',
+    ]);
+  });
+
   it('flags union with fewer than 2 children', () => {
     const errs = validateNode({
       id: '1',
