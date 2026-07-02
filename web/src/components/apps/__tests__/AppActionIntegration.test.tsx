@@ -139,8 +139,8 @@ describe('US-394 preview runAction → applyAction', () => {
       edits: {
         type: 'edits',
         addedObjectCount: 1,
-        modifiedObjectCount: 0,
-        deletedObjectCount: 0,
+        modifiedObjectsCount: 0,
+        deletedObjectsCount: 0,
         addedLinksCount: 0,
         deletedLinksCount: 0,
       },

@@ -1768,8 +1768,8 @@ func TestE2E_Action_Apply_ModifyObject(t *testing.T) {
 	if edits["type"] != "edits" {
 		t.Errorf("expected edits.type=\"edits\", got %v", edits["type"])
 	}
-	if edits["modifiedObjectCount"] != float64(1) {
-		t.Errorf("expected modifiedObjectCount=1, got %v", edits["modifiedObjectCount"])
+	if edits["modifiedObjectsCount"] != float64(1) {
+		t.Errorf("expected modifiedObjectsCount=1, got %v", edits["modifiedObjectsCount"])
 	}
 }
 
@@ -1812,8 +1812,8 @@ func TestE2E_Action_Apply_DeleteObject(t *testing.T) {
 	if edits["type"] != "edits" {
 		t.Errorf("expected edits.type=\"edits\", got %v", edits["type"])
 	}
-	if edits["deletedObjectCount"] != float64(1) {
-		t.Errorf("expected deletedObjectCount=1, got %v", edits["deletedObjectCount"])
+	if edits["deletedObjectsCount"] != float64(1) {
+		t.Errorf("expected deletedObjectsCount=1, got %v", edits["deletedObjectsCount"])
 	}
 }
 

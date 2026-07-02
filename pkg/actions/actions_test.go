@@ -1996,8 +1996,8 @@ func TestCountEdits_IncludesDeletedLinks(t *testing.T) {
 		{Type: funnel.EditTypeLinkDelete, PrimaryKey: "1", LinkTypeRID: "lt-1", TargetPrimaryKey: "2"},
 	}
 	r := countEdits(edits)
-	if r.DeletedObjectCount != 1 {
-		t.Fatalf("expected deletedObjectCount=1, got %d", r.DeletedObjectCount)
+	if r.DeletedObjectsCount != 1 {
+		t.Fatalf("expected deletedObjectsCount=1, got %d", r.DeletedObjectsCount)
 	}
 	if r.DeletedLinksCount != 1 {
 		t.Fatalf("expected deletedLinksCount=1, got %d", r.DeletedLinksCount)

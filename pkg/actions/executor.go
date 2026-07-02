@@ -98,13 +98,18 @@ type ApplyResult struct {
 }
 
 // ActionResults is the Foundry OSv2 edit summary returned in response envelopes.
+//
+// Field names follow Foundry's SyncApplyActionResponseV2 exactly:
+// addedObjectCount is singular but modifiedObjectsCount / deletedObjectsCount
+// are plural ("Objects"). OSDK clients deserialize by these names, so the
+// asymmetry is load-bearing.
 type ActionResults struct {
-	Type                string `json:"type"` // always "edits"
-	AddedObjectCount    int    `json:"addedObjectCount"`
-	ModifiedObjectCount int    `json:"modifiedObjectCount"`
-	DeletedObjectCount  int    `json:"deletedObjectCount"`
-	AddedLinksCount     int    `json:"addedLinksCount"`
-	DeletedLinksCount   int    `json:"deletedLinksCount"`
+	Type                 string `json:"type"` // always "edits"
+	AddedObjectCount     int    `json:"addedObjectCount"`
+	ModifiedObjectsCount int    `json:"modifiedObjectsCount"`
+	DeletedObjectsCount  int    `json:"deletedObjectsCount"`
+	AddedLinksCount      int    `json:"addedLinksCount"`
+	DeletedLinksCount    int    `json:"deletedLinksCount"`
 }
 
 // SyncApplyActionResponseV2 is the Foundry OSv2 response envelope for single apply.
@@ -133,9 +138,9 @@ func countEdits(edits []funnel.Edit) *ActionResults {
 		case funnel.EditTypeCreate:
 			r.AddedObjectCount++
 		case funnel.EditTypeModify:
-			r.ModifiedObjectCount++
+			r.ModifiedObjectsCount++
 		case funnel.EditTypeDelete:
-			r.DeletedObjectCount++
+			r.DeletedObjectsCount++
 		case funnel.EditTypeLinkCreate:
 			r.AddedLinksCount++
 		case funnel.EditTypeLinkDelete:

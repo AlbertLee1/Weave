@@ -144,8 +144,8 @@ type ListObjectsOptions struct {
 type ActionResultsCLI struct {
 	Type                string `json:"type"`
 	AddedObjectCount    int    `json:"addedObjectCount"`
-	ModifiedObjectCount int    `json:"modifiedObjectCount"`
-	DeletedObjectCount  int    `json:"deletedObjectCount"`
+	ModifiedObjectsCount int    `json:"modifiedObjectsCount"`
+	DeletedObjectsCount  int    `json:"deletedObjectsCount"`
 	AddedLinksCount     int    `json:"addedLinksCount"`
 	DeletedLinksCount   int    `json:"deletedLinksCount"`
 }

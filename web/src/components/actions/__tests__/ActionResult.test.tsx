@@ -15,8 +15,8 @@ describe('ActionResult', () => {
           edits: {
             type: 'edits',
             addedObjectCount: 1,
-            modifiedObjectCount: 1,
-            deletedObjectCount: 0,
+            modifiedObjectsCount: 1,
+            deletedObjectsCount: 0,
             addedLinksCount: 0,
             deletedLinksCount: 0,
           },

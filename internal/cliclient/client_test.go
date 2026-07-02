@@ -271,7 +271,7 @@ func TestApplyActionPostsParameters(t *testing.T) {
 	// overridden server-side, so the client simply stops sending it.
 	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
 		"POST /api/v2/ontologies/nw/actions/createCustomer/apply": func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{"operationId":"op-123","edits":{"type":"edits","addedObjectCount":1,"modifiedObjectCount":0,"deletedObjectCount":0,"addedLinksCount":0,"deletedLinksCount":0}}`))
+			_, _ = w.Write([]byte(`{"operationId":"op-123","edits":{"type":"edits","addedObjectCount":1,"modifiedObjectsCount":0,"deletedObjectsCount":0,"addedLinksCount":0,"deletedLinksCount":0}}`))
 		},
 	})
 	c := NewClient(srv.URL, "tok")
@@ -649,7 +649,7 @@ func TestGetLinkedObject(t *testing.T) {
 func TestApplyBatch(t *testing.T) {
 	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
 		"POST /api/v2/ontologies/nw/actions/createCustomer/applyBatch": func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{"edits":{"type":"edits","addedObjectCount":3,"modifiedObjectCount":0,"deletedObjectCount":0,"addedLinksCount":0,"deletedLinksCount":0}}`))
+			_, _ = w.Write([]byte(`{"edits":{"type":"edits","addedObjectCount":3,"modifiedObjectsCount":0,"deletedObjectsCount":0,"addedLinksCount":0,"deletedLinksCount":0}}`))
 		},
 	})
 	c := NewClient(srv.URL, "tok")

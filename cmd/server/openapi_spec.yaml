@@ -2620,9 +2620,9 @@ components:
           enum: [edits]
         addedObjectCount:
           type: integer
-        modifiedObjectCount:
+        modifiedObjectsCount:
           type: integer
-        deletedObjectCount:
+        deletedObjectsCount:
           type: integer
         addedLinksCount:
           type: integer
