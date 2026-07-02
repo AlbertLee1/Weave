@@ -2171,8 +2171,8 @@ function formatRunActionResult(
   const segments: string[] = [];
   if (edits) {
     if (edits.addedObjectCount) segments.push(`+${edits.addedObjectCount}`);
-    if (edits.modifiedObjectCount) segments.push(`~${edits.modifiedObjectCount}`);
-    if (edits.deletedObjectCount) segments.push(`-${edits.deletedObjectCount}`);
+    if (edits.modifiedObjectsCount) segments.push(`~${edits.modifiedObjectsCount}`);
+    if (edits.deletedObjectsCount) segments.push(`-${edits.deletedObjectsCount}`);
     if (edits.addedLinksCount) segments.push(`+${edits.addedLinksCount} links`);
     if (edits.deletedLinksCount)
       segments.push(`-${edits.deletedLinksCount} links`);

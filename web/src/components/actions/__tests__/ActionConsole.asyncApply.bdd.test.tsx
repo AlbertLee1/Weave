@@ -123,8 +123,8 @@ describe('BDD: ActionConsolePage async single-apply with job polling', () => {
             edits: {
               type: 'edits',
               addedObjectCount: 0,
-              modifiedObjectCount: 1,
-              deletedObjectCount: 0,
+              modifiedObjectsCount: 1,
+              deletedObjectsCount: 0,
               addedLinksCount: 0,
               deletedLinksCount: 0,
             },
@@ -172,8 +172,8 @@ describe('BDD: ActionConsolePage async single-apply with job polling', () => {
       edits: {
         type: 'edits',
         addedObjectCount: 0,
-        modifiedObjectCount: 1,
-        deletedObjectCount: 0,
+        modifiedObjectsCount: 1,
+        deletedObjectsCount: 0,
         addedLinksCount: 0,
         deletedLinksCount: 0,
       },

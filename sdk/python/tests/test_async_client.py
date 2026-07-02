@@ -187,8 +187,8 @@ class AsyncActionsTests(unittest.IsolatedAsyncioTestCase):
             "edits": {
                 "type": "edits",
                 "addedObjectCount": 1,
-                "modifiedObjectCount": 0,
-                "deletedObjectCount": 0,
+                "modifiedObjectsCount": 0,
+                "deletedObjectsCount": 0,
             },
         })
         routes = {"POST /api/v2/ontologies/nw/actions/createCustomer/apply": (200, body)}

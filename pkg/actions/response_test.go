@@ -62,11 +62,11 @@ func TestHandler_Apply_ResponseEnvelope_HasEditsWithCounts(t *testing.T) {
 	if resp.Edits.AddedObjectCount != 1 {
 		t.Fatalf("expected addedObjectCount=1 for createObject, got %d", resp.Edits.AddedObjectCount)
 	}
-	if resp.Edits.ModifiedObjectCount != 0 {
-		t.Fatalf("expected modifiedObjectCount=0, got %d", resp.Edits.ModifiedObjectCount)
+	if resp.Edits.ModifiedObjectsCount != 0 {
+		t.Fatalf("expected modifiedObjectsCount=0, got %d", resp.Edits.ModifiedObjectsCount)
 	}
-	if resp.Edits.DeletedObjectCount != 0 {
-		t.Fatalf("expected deletedObjectCount=0, got %d", resp.Edits.DeletedObjectCount)
+	if resp.Edits.DeletedObjectsCount != 0 {
+		t.Fatalf("expected deletedObjectsCount=0, got %d", resp.Edits.DeletedObjectsCount)
 	}
 }
 
@@ -237,8 +237,8 @@ func TestHandler_Apply_ResponseEnvelope_ModifyObject_Counts(t *testing.T) {
 	if resp.Edits == nil {
 		t.Fatal("expected edits in response")
 	}
-	if resp.Edits.ModifiedObjectCount != 1 {
-		t.Fatalf("expected modifiedObjectCount=1, got %d", resp.Edits.ModifiedObjectCount)
+	if resp.Edits.ModifiedObjectsCount != 1 {
+		t.Fatalf("expected modifiedObjectsCount=1, got %d", resp.Edits.ModifiedObjectsCount)
 	}
 	if resp.Edits.AddedObjectCount != 0 {
 		t.Fatalf("expected addedObjectCount=0, got %d", resp.Edits.AddedObjectCount)
@@ -456,11 +456,11 @@ func TestCountEdits_MixedTypes(t *testing.T) {
 	if result.AddedObjectCount != 2 {
 		t.Fatalf("expected addedObjectCount=2, got %d", result.AddedObjectCount)
 	}
-	if result.ModifiedObjectCount != 1 {
-		t.Fatalf("expected modifiedObjectCount=1, got %d", result.ModifiedObjectCount)
+	if result.ModifiedObjectsCount != 1 {
+		t.Fatalf("expected modifiedObjectsCount=1, got %d", result.ModifiedObjectsCount)
 	}
-	if result.DeletedObjectCount != 1 {
-		t.Fatalf("expected deletedObjectCount=1, got %d", result.DeletedObjectCount)
+	if result.DeletedObjectsCount != 1 {
+		t.Fatalf("expected deletedObjectsCount=1, got %d", result.DeletedObjectsCount)
 	}
 	if result.AddedLinksCount != 0 {
 		t.Fatalf("expected addedLinksCount=0, got %d", result.AddedLinksCount)
@@ -475,7 +475,7 @@ func TestCountEdits_Empty(t *testing.T) {
 	if result.Type != "edits" {
 		t.Fatalf("expected type=\"edits\", got %q", result.Type)
 	}
-	if result.AddedObjectCount != 0 || result.ModifiedObjectCount != 0 || result.DeletedObjectCount != 0 {
+	if result.AddedObjectCount != 0 || result.ModifiedObjectsCount != 0 || result.DeletedObjectsCount != 0 {
 		t.Fatal("expected all counts to be 0 for empty edits")
 	}
 }

@@ -367,8 +367,8 @@ export interface ActionApplyResponse {
 export interface ActionResults {
   type: 'edits';
   addedObjectCount: number;
-  modifiedObjectCount: number;
-  deletedObjectCount: number;
+  modifiedObjectsCount: number;
+  deletedObjectsCount: number;
   addedLinksCount: number;
   deletedLinksCount: number;
 }

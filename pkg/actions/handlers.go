@@ -145,6 +145,16 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate returnEdits enum (Foundry OSv2). ALL and
+	// ALL_V2_WITH_DELETIONS currently behave identically — the summary
+	// counts are returned either way; per-edit detail arrays are a
+	// separate iteration.
+	if returnEdits != "ALL" && returnEdits != "ALL_V2_WITH_DELETIONS" && returnEdits != "NONE" {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidReturnEdits",
+			map[string]string{"returnEdits": returnEdits, "allowed": "ALL, ALL_V2_WITH_DELETIONS, NONE"}))
+		return
+	}
+
 	// VALIDATE_ONLY: run Prepare only, return validation result.
 	if mode == "VALIDATE_ONLY" {
 		_, err := h.executor.Prepare(r.Context(), ontologyRID, &req)

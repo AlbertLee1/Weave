@@ -18,7 +18,7 @@ export function ActionResult({ result }: ActionResultProps) {
   }
 
   const total =
-    edits.addedObjectCount + edits.modifiedObjectCount + edits.deletedObjectCount;
+    edits.addedObjectCount + edits.modifiedObjectsCount + edits.deletedObjectsCount;
 
   return (
     <div className="border border-border rounded bg-bg-tertiary">
@@ -36,20 +36,20 @@ export function ActionResult({ result }: ActionResultProps) {
             <span className="text-xs text-text-secondary">{edits.addedObjectCount}</span>
           </div>
         )}
-        {edits.modifiedObjectCount > 0 && (
+        {edits.modifiedObjectsCount > 0 && (
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/30 text-blue-400">
               modifyObject
             </span>
-            <span className="text-xs text-text-secondary">{edits.modifiedObjectCount}</span>
+            <span className="text-xs text-text-secondary">{edits.modifiedObjectsCount}</span>
           </div>
         )}
-        {edits.deletedObjectCount > 0 && (
+        {edits.deletedObjectsCount > 0 && (
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-900/30 text-red-400">
               deleteObject
             </span>
-            <span className="text-xs text-text-secondary">{edits.deletedObjectCount}</span>
+            <span className="text-xs text-text-secondary">{edits.deletedObjectsCount}</span>
           </div>
         )}
         {edits.addedLinksCount > 0 && (

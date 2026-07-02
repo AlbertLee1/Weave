@@ -77,7 +77,7 @@ func configuredCLI(t *testing.T, srv *capturingServer) string {
 
 func TestActionApply_GivenParamsKVAndReturnEdits_When_Apply_Then_RequestBodyMatchesAndOutputContainsValid_US304(t *testing.T) {
 	srv := newCapturingServer(t, func(r *http.Request) (int, string) {
-		return 200, `{"validation":{"result":"VALID"},"edits":{"type":"edits","addedObjectCount":1,"modifiedObjectCount":0,"deletedObjectCount":0}}`
+		return 200, `{"validation":{"result":"VALID"},"edits":{"type":"edits","addedObjectCount":1,"modifiedObjectsCount":0,"deletedObjectsCount":0}}`
 	})
 	tmp := configuredCLI(t, srv)
 

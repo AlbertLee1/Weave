@@ -223,8 +223,8 @@ class ActionResults(_CamelModel):
     """Foundry OSv2 edit summary (counts, not individual edits)."""
     type: str = "edits"
     added_object_count: int = Field(default=0, alias="addedObjectCount")
-    modified_object_count: int = Field(default=0, alias="modifiedObjectCount")
-    deleted_object_count: int = Field(default=0, alias="deletedObjectCount")
+    modified_objects_count: int = Field(default=0, alias="modifiedObjectsCount")
+    deleted_objects_count: int = Field(default=0, alias="deletedObjectsCount")
     added_links_count: int = Field(default=0, alias="addedLinksCount")
     deleted_links_count: int = Field(default=0, alias="deletedLinksCount")
 

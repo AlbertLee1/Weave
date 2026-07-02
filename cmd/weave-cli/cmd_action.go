@@ -97,7 +97,7 @@ func actionApply(args []string, stdout, stderr io.Writer) int {
 	}
 	if resp.Edits != nil {
 		fmt.Fprintf(stdout, "edits: added=%d modified=%d deleted=%d\n",
-			resp.Edits.AddedObjectCount, resp.Edits.ModifiedObjectCount, resp.Edits.DeletedObjectCount)
+			resp.Edits.AddedObjectCount, resp.Edits.ModifiedObjectsCount, resp.Edits.DeletedObjectsCount)
 	}
 	return 0
 }

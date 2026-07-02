@@ -23,8 +23,8 @@ describe('actions API', () => {
             edits: {
               type: 'edits',
               addedObjectCount: 1,
-              modifiedObjectCount: 0,
-              deletedObjectCount: 0,
+              modifiedObjectsCount: 0,
+              deletedObjectsCount: 0,
               addedLinksCount: 0,
               deletedLinksCount: 0,
             },
@@ -51,8 +51,8 @@ describe('actions API', () => {
             edits: {
               type: 'edits',
               addedObjectCount: 0,
-              modifiedObjectCount: 0,
-              deletedObjectCount: 0,
+              modifiedObjectsCount: 0,
+              deletedObjectsCount: 0,
               addedLinksCount: 0,
               deletedLinksCount: 0,
             },
@@ -100,8 +100,8 @@ describe('actions API', () => {
             edits: {
               type: 'edits',
               addedObjectCount: 2,
-              modifiedObjectCount: 0,
-              deletedObjectCount: 0,
+              modifiedObjectsCount: 0,
+              deletedObjectsCount: 0,
               addedLinksCount: 0,
               deletedLinksCount: 0,
             },

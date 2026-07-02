@@ -51,7 +51,7 @@ for invocations in chunk(payloads, 250):
     if edits is not None:
         print(
             f"committed +{edits.added_object_count} "
-            f"~{edits.modified_object_count} -{edits.deleted_object_count}"
+            f"~{edits.modified_objects_count} -{edits.deleted_objects_count}"
         )
 ```
 

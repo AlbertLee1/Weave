@@ -26,8 +26,8 @@ class ActionsAPITests(unittest.TestCase):
             "edits": {
                 "type": "edits",
                 "addedObjectCount": 1,
-                "modifiedObjectCount": 0,
-                "deletedObjectCount": 0,
+                "modifiedObjectsCount": 0,
+                "deletedObjectsCount": 0,
                 "addedLinksCount": 0,
                 "deletedLinksCount": 0,
             },
@@ -105,8 +105,8 @@ class ApplyWithOptionsTests(unittest.TestCase):
             "edits": {
                 "type": "edits",
                 "addedObjectCount": 2,
-                "modifiedObjectCount": 0,
-                "deletedObjectCount": 0,
+                "modifiedObjectsCount": 0,
+                "deletedObjectsCount": 0,
                 "addedLinksCount": 0,
                 "deletedLinksCount": 0,
             },
@@ -143,8 +143,8 @@ class ApplyBatchTests(unittest.TestCase):
             "edits": {
                 "type": "edits",
                 "addedObjectCount": 3,
-                "modifiedObjectCount": 0,
-                "deletedObjectCount": 0,
+                "modifiedObjectsCount": 0,
+                "deletedObjectsCount": 0,
                 "addedLinksCount": 0,
                 "deletedLinksCount": 0,
             },
