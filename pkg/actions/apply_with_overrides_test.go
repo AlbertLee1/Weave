@@ -258,7 +258,7 @@ func TestHandler_ApplyWithOverrides_ValidateOnly(t *testing.T) {
 		t.Fatalf("VALIDATE_ONLY must not publish, got %d calls", pub.calls)
 	}
 
-	var resp ValidateOnlyResponse
+	var resp SyncApplyActionResponseV2
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}

@@ -118,11 +118,19 @@ type ActionResults struct {
 // toast Undo button can POST /actions/revert with the right log id during its
 // 5-second window. Zero when the executor ran without persisting an action
 // log (no OMS repo wired, best-effort write failed, or noop empty edit set).
+//
+// Validation follows Foundry's contract: the apply response ALWAYS reports
+// the validation verdict — VALIDATE_ONLY responses carry only Validation,
+// executed responses carry Validation (result=VALID, since Prepare must
+// pass before anything publishes) alongside Edits. The field is the full
+// ValidateActionResponse shape (Foundry's ValidateActionResponseV2), not a
+// bare {result} — SDK form flows read validation.parameters off apply
+// responses exactly as they do off the dedicated /validate endpoint.
 type SyncApplyActionResponseV2 struct {
-	OperationID string            `json:"operationId,omitempty"`
-	ActionLogID int64             `json:"actionLogId,omitempty"`
-	Validation  *ValidationResult `json:"validation,omitempty"`
-	Edits       *ActionResults    `json:"edits,omitempty"`
+	OperationID string                  `json:"operationId,omitempty"`
+	ActionLogID int64                   `json:"actionLogId,omitempty"`
+	Validation  *ValidateActionResponse `json:"validation,omitempty"`
+	Edits       *ActionResults          `json:"edits,omitempty"`
 }
 
 // BatchApplyActionResponseV2 is the Foundry OSv2 response envelope for batch apply.
@@ -150,20 +158,12 @@ func countEdits(edits []funnel.Edit) *ActionResults {
 	return r
 }
 
-// ValidationResult is the response for VALIDATE_ONLY mode.
-type ValidationResult struct {
-	Result string `json:"result"` // VALID | INVALID
-	// SubmissionCriteria may carry per-criterion results in the future.
-}
-
-// ValidateOnlyResponse is the response envelope for VALIDATE_ONLY apply.
-type ValidateOnlyResponse struct {
-	Validation *ValidationResult `json:"validation"`
-}
-
-// ValidateActionResponse is the Foundry OSv2 response envelope for the
-// dedicated POST /api/v2/ontologies/{ontology}/actions/{action}/validate
-// endpoint (see pkg/actions/handler_validate_bdd_test.go and
+// ValidateActionResponse is Foundry's ValidateActionResponseV2: the response
+// envelope of the dedicated POST
+// /api/v2/ontologies/{ontology}/actions/{action}/validate endpoint AND the
+// `validation` payload embedded in SyncApplyActionResponseV2 (see
+// pkg/actions/handler_validate_bdd_test.go,
+// pkg/actions/handler_apply_validation_bdd_test.go and
 // docs/PRD-Weave-OSv2-深度复刻-V2.md). The shape intentionally mirrors
 // what Foundry SDKs (TypeScript / Python OSDK) consume on every form-field
 // change: a single overall result, a list of submissionCriteria each

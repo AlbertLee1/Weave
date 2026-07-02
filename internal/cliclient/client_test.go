@@ -299,7 +299,9 @@ func TestApplyActionPostsParameters(t *testing.T) {
 func TestApplyActionWithOptions(t *testing.T) {
 	srv, rec := newTestServer(t, map[string]http.HandlerFunc{
 		"POST /api/v2/ontologies/nw/actions/createCustomer/apply": func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{"validation":{"result":"VALID"}}`))
+			// Foundry-parity rich validation report: the server always
+			// returns result + submissionCriteria + per-parameter map.
+			_, _ = w.Write([]byte(`{"validation":{"result":"VALID","submissionCriteria":[],"parameters":{"name":{"result":"VALID","required":true,"evaluatedConstraints":[]}}}}`))
 		},
 	})
 	c := NewClient(srv.URL, "tok")
@@ -309,6 +311,19 @@ func TestApplyActionWithOptions(t *testing.T) {
 	}
 	if res.Validation == nil || res.Validation.Result != "VALID" {
 		t.Fatalf("expected validation result VALID, got %+v", res)
+	}
+	// The typed struct must not drop the rich fields — `weave-cli action
+	// apply --json` re-marshals ApplyActionResponse verbatim, so a thin
+	// {result}-only ValidationResult would silently strip
+	// submissionCriteria / parameters from the CLI's JSON output.
+	roundTrip, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, key := range []string{`"submissionCriteria"`, `"parameters"`, `"required":true`} {
+		if !strings.Contains(string(roundTrip), key) {
+			t.Fatalf("re-marshaled response must preserve %s, got %s", key, roundTrip)
+		}
 	}
 	body := (*rec)[0].body
 	if !strings.Contains(body, `"options"`) || !strings.Contains(body, `"VALIDATE_ONLY"`) {

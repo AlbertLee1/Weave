@@ -5,6 +5,7 @@ import type {
   ActionBatchApplyOptions,
   ActionBatchApplyRequest,
   BatchApplyActionResponse,
+  ValidateActionResponse,
 } from './types';
 
 // Foundry OSv2 action apply: the action API name is a path segment.
@@ -73,42 +74,17 @@ export function applyBatch(
 //
 //   POST /api/v2/ontologies/{ontology}/actions/{action}/validate
 
-// EvaluatedConstraint mirrors actions.EvaluatedConstraint — one evaluated
-// constraint on a parameter (e.g. {type:'required', result:'INVALID'}). The
-// taxonomy is forwards-compatible: switch on `type` and tolerate unknown
-// kinds.
-export interface EvaluatedConstraint {
-  type: string;
-  result: 'VALID' | 'INVALID';
-}
-
-// ParameterValidationResult mirrors actions.ParameterValidationResult — the
-// per-parameter entry in ValidateActionResponse.parameters, keyed by
-// parameter id. `result === 'INVALID'` is what a form maps to a field-level
-// (inline) error.
-export interface ParameterValidationResult {
-  result: 'VALID' | 'INVALID';
-  required: boolean;
-  evaluatedConstraints: EvaluatedConstraint[];
-}
-
-// SubmissionCriterionResult mirrors actions.SubmissionCriterionResult — one
-// submission-criteria envelope. On INVALID the server synthesizes a single
-// entry carrying the underlying validation error verbatim in
-// configuredFailureMessage, which a form renders as a form-level banner.
-export interface SubmissionCriterionResult {
-  result: 'VALID' | 'INVALID';
-  configuredFailureMessage?: string;
-}
-
-// ValidateActionResponse mirrors actions.ValidateActionResponse — the wire
-// envelope of the /validate endpoint. submissionCriteria and parameters are
-// always present ([]/{}) so callers can iterate without nil-guards.
-export interface ValidateActionResponse {
-  result: 'VALID' | 'INVALID';
-  submissionCriteria: SubmissionCriterionResult[];
-  parameters: Record<string, ParameterValidationResult>;
-}
+// The report interfaces (EvaluatedConstraint, ParameterValidationResult,
+// SubmissionCriterionResult, ValidateActionResponse) live in ./types so the
+// SyncApplyActionResponseV2 mirror (ActionApplyResponse.validation) can
+// embed the same shape without a circular import; re-exported here for the
+// existing importers of this module.
+export type {
+  EvaluatedConstraint,
+  ParameterValidationResult,
+  SubmissionCriterionResult,
+  ValidateActionResponse,
+} from './types';
 
 // validateAction POSTs the current parameter draft to the dedicated validate
 // surface and returns the structured per-parameter + form-level report. It

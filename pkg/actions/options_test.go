@@ -55,7 +55,7 @@ func TestHandler_Apply_VALIDATE_ONLY_ValidParams_ReturnsValid(t *testing.T) {
 	}
 
 	// Response must have validation.result = "VALID", no edits.
-	var resp ValidateOnlyResponse
+	var resp SyncApplyActionResponseV2
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -64,6 +64,9 @@ func TestHandler_Apply_VALIDATE_ONLY_ValidParams_ReturnsValid(t *testing.T) {
 	}
 	if resp.Validation.Result != "VALID" {
 		t.Fatalf("expected VALID, got %q", resp.Validation.Result)
+	}
+	if resp.Edits != nil {
+		t.Fatal("VALIDATE_ONLY must omit edits from SyncApplyActionResponseV2")
 	}
 }
 
@@ -107,7 +110,7 @@ func TestHandler_Apply_VALIDATE_ONLY_InvalidParams_ReturnsInvalid(t *testing.T) 
 		t.Fatalf("VALIDATE_ONLY must not publish, got %d calls", pub.calls)
 	}
 
-	var resp ValidateOnlyResponse
+	var resp SyncApplyActionResponseV2
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}

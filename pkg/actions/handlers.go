@@ -155,17 +155,21 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// VALIDATE_ONLY: run Prepare only, return validation result.
+	// VALIDATE_ONLY: run Prepare only, return the SyncApplyActionResponseV2
+	// envelope carrying just the validation report. Foundry parity: the
+	// validation payload is the full ValidateActionResponseV2 shape
+	// (result + submissionCriteria + per-parameter map), identical to what
+	// the dedicated /validate endpoint reports.
 	if mode == "VALIDATE_ONLY" {
-		_, err := h.executor.Prepare(r.Context(), ontologyRID, &req)
-		if err != nil {
-			httputil.WriteJSON(w, http.StatusOK, &ValidateOnlyResponse{
-				Validation: &ValidationResult{Result: "INVALID"},
+		paramMap := h.paramValidationRows(r.Context(), ontologyRID, action)
+		if _, err := h.executor.Prepare(r.Context(), ontologyRID, &req); err != nil {
+			httputil.WriteJSON(w, http.StatusOK, &SyncApplyActionResponseV2{
+				Validation: invalidValidationReport(paramMap, err),
 			})
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, &ValidateOnlyResponse{
-			Validation: &ValidationResult{Result: "VALID"},
+		httputil.WriteJSON(w, http.StatusOK, &SyncApplyActionResponseV2{
+			Validation: validValidationReport(paramMap),
 		})
 		return
 	}
@@ -218,10 +222,14 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build SyncApplyActionResponseV2 envelope.
+	// Build SyncApplyActionResponseV2 envelope. Foundry parity: an executed
+	// apply reports the VALID verdict Prepare already computed (an action
+	// only reaches the publish stage after validation passes) alongside the
+	// edit summary, so SDK callers see validation + edits coexist.
 	resp := &SyncApplyActionResponseV2{
 		OperationID: result.BatchID,
 		ActionLogID: result.ActionLogID,
+		Validation:  validValidationReport(h.paramValidationRows(r.Context(), ontologyRID, action)),
 	}
 	if returnEdits != "NONE" {
 		resp.Edits = countEdits(result.Edits)
@@ -268,12 +276,26 @@ func (h *Handler) Validate(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ActionType = action
 
-	// Resolve action type for per-parameter metadata (Required flags).
-	// A failure here is itself a validation outcome (stale slug), not
-	// an HTTP error — fall through with empty paramDefs and let the
-	// Prepare error bubble up into the submissionCriteria summary.
+	paramMap := h.paramValidationRows(r.Context(), ontologyRID, action)
+
+	_, prepareErr := h.executor.Prepare(r.Context(), ontologyRID, &req)
+	if prepareErr != nil {
+		httputil.WriteJSON(w, http.StatusOK, invalidValidationReport(paramMap, prepareErr))
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, validValidationReport(paramMap))
+}
+
+// paramValidationRows resolves the action type and returns the all-VALID
+// per-parameter validation map keyed by parameter id, with Required sourced
+// from the ActionType.Parameters definition. A resolution failure is itself
+// a validation outcome (stale slug), not an HTTP error — it returns an empty
+// (non-nil) map and lets the caller's Prepare error bubble up into the
+// submissionCriteria summary.
+func (h *Handler) paramValidationRows(ctx context.Context, ontologyRID, action string) map[string]ParameterValidationResult {
 	var paramDefs []ParameterDef
-	if at, resolveErr := h.executor.ResolveActionType(r.Context(), ontologyRID, action); resolveErr == nil && at != nil {
+	if at, resolveErr := h.executor.ResolveActionType(ctx, ontologyRID, action); resolveErr == nil && at != nil {
 		if defs, err := ParseParameterDefs(at.Parameters); err == nil {
 			paramDefs = defs
 		}
@@ -287,44 +309,48 @@ func (h *Handler) Validate(w http.ResponseWriter, r *http.Request) {
 			EvaluatedConstraints: []EvaluatedConstraint{},
 		}
 	}
+	return paramMap
+}
 
-	_, prepareErr := h.executor.Prepare(r.Context(), ontologyRID, &req)
-	if prepareErr != nil {
-		// Per-parameter attribution: if the Prepare error mentions a
-		// known parameter id, mark that parameter INVALID so the SDK
-		// can red-line a specific form field. Otherwise leave all
-		// parameters VALID and rely on submissionCriteria to surface
-		// the failure at form-level (e.g. unknown action, rule
-		// execution error). The id-match uses both quoted and bare
-		// forms because Prepare's wrapped errors quote ("name") but
-		// rule-engine errors may not.
-		msg := prepareErr.Error()
-		for id, pr := range paramMap {
-			if strings.Contains(msg, `"`+id+`"`) || strings.Contains(msg, " "+id+" ") {
-				pr.Result = "INVALID"
-				pr.EvaluatedConstraints = []EvaluatedConstraint{{
-					Type:   "required",
-					Result: "INVALID",
-				}}
-				paramMap[id] = pr
-			}
-		}
-		httputil.WriteJSON(w, http.StatusOK, &ValidateActionResponse{
-			Result: "INVALID",
-			SubmissionCriteria: []SubmissionCriterionResult{{
-				Result:                   "INVALID",
-				ConfiguredFailureMessage: prepareErr.Error(),
-			}},
-			Parameters: paramMap,
-		})
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, &ValidateActionResponse{
+// validValidationReport builds the Foundry ValidateActionResponseV2 shape
+// for a passed validation: overall VALID, empty submissionCriteria, and the
+// per-parameter rows exactly as resolved (all VALID).
+func validValidationReport(paramMap map[string]ParameterValidationResult) *ValidateActionResponse {
+	return &ValidateActionResponse{
 		Result:             "VALID",
 		SubmissionCriteria: []SubmissionCriterionResult{},
 		Parameters:         paramMap,
-	})
+	}
+}
+
+// invalidValidationReport builds the Foundry ValidateActionResponseV2 shape
+// for a failed Prepare. Per-parameter attribution: if the Prepare error
+// mentions a known parameter id, that parameter is marked INVALID so the SDK
+// can red-line a specific form field. Otherwise all parameters stay VALID
+// and submissionCriteria surfaces the failure at form-level (e.g. unknown
+// action, rule execution error). The id-match uses both quoted and bare
+// forms because Prepare's wrapped errors quote ("name") but rule-engine
+// errors may not. Mutates paramMap in place — callers must not reuse it.
+func invalidValidationReport(paramMap map[string]ParameterValidationResult, prepareErr error) *ValidateActionResponse {
+	msg := prepareErr.Error()
+	for id, pr := range paramMap {
+		if strings.Contains(msg, `"`+id+`"`) || strings.Contains(msg, " "+id+" ") {
+			pr.Result = "INVALID"
+			pr.EvaluatedConstraints = []EvaluatedConstraint{{
+				Type:   "required",
+				Result: "INVALID",
+			}}
+			paramMap[id] = pr
+		}
+	}
+	return &ValidateActionResponse{
+		Result: "INVALID",
+		SubmissionCriteria: []SubmissionCriterionResult{{
+			Result:                   "INVALID",
+			ConfiguredFailureMessage: msg,
+		}},
+		Parameters: paramMap,
+	}
 }
 
 // serveAsyncApply persists a PENDING ActionJob, kicks off a detached goroutine
@@ -862,15 +888,19 @@ func (h *Handler) ApplyWithOverrides(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same Foundry-parity envelope as the plain Apply path: VALIDATE_ONLY
+	// responds with SyncApplyActionResponseV2 carrying the full
+	// ValidateActionResponseV2-shaped validation report.
 	if mode == "VALIDATE_ONLY" {
+		paramMap := h.paramValidationRows(r.Context(), ontologyRID, action)
 		if _, err := h.executor.Prepare(r.Context(), ontologyRID, &req); err != nil {
-			httputil.WriteJSON(w, http.StatusOK, &ValidateOnlyResponse{
-				Validation: &ValidationResult{Result: "INVALID"},
+			httputil.WriteJSON(w, http.StatusOK, &SyncApplyActionResponseV2{
+				Validation: invalidValidationReport(paramMap, err),
 			})
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, &ValidateOnlyResponse{
-			Validation: &ValidationResult{Result: "VALID"},
+		httputil.WriteJSON(w, http.StatusOK, &SyncApplyActionResponseV2{
+			Validation: validValidationReport(paramMap),
 		})
 		return
 	}
@@ -896,6 +926,7 @@ func (h *Handler) ApplyWithOverrides(w http.ResponseWriter, r *http.Request) {
 
 	resp := &SyncApplyActionResponseV2{
 		OperationID: result.BatchID,
+		Validation:  validValidationReport(h.paramValidationRows(r.Context(), ontologyRID, action)),
 	}
 	if returnEdits != "NONE" {
 		resp.Edits = countEdits(result.Edits)
