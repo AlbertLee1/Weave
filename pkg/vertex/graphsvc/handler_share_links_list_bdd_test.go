@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -96,10 +97,18 @@ func TestBDD_ShareLinks_ListForGraph(t *testing.T) {
 					i, len(suffix))
 			}
 		}
-		// Newest-first ordering: createdAt[0] >= createdAt[1].
+		// Newest-first ordering: createdAt[0] >= createdAt[1]. Compare as
+		// parsed times, not strings — RFC3339Nano trims trailing zeros in
+		// the fractional seconds, so lexicographic order diverges from
+		// chronological order (".84629Z" sorts after ".846297Z").
 		ca0, _ := resp.ShareLinks[0]["createdAt"].(string)
 		ca1, _ := resp.ShareLinks[1]["createdAt"].(string)
-		if ca0 < ca1 {
+		t0, err0 := time.Parse(time.RFC3339Nano, ca0)
+		t1, err1 := time.Parse(time.RFC3339Nano, ca1)
+		if err0 != nil || err1 != nil {
+			t.Fatalf("unparseable createdAt timestamps: %q (%v), %q (%v)", ca0, err0, ca1, err1)
+		}
+		if t0.Before(t1) {
 			t.Errorf("ordering broken: shareLinks[0].createdAt=%s < [1].createdAt=%s",
 				ca0, ca1)
 		}
