@@ -46,6 +46,8 @@ func convertToBleveQueryUnwrapped(clause *WhereClause, opts *ConvertOptions) (qu
 	switch clause.Type {
 	case "eq":
 		return convertEqFuzzy(clause, fuzz)
+	case "in":
+		return convertIn(clause, fuzz)
 	case "gt":
 		return convertRange(clause, false, true, false, false)
 	case "gte":
@@ -126,36 +128,89 @@ func convertEq(clause *WhereClause) (query.Query, error) {
 // convertEqFuzzy handles the "eq" operator with optional fuzzy matching.
 // For strings: MatchQuery with optional fuzziness. For numbers/booleans: unchanged.
 func convertEqFuzzy(clause *WhereClause, fuzz int) (query.Query, error) {
+	q, err := convertEqValue(clause.Field, clause.Value, fuzz)
+	if err != nil {
+		return nil, fmt.Errorf("unsupported value type for eq")
+	}
+	return q, nil
+}
+
+// convertEqValue converts a single scalar JSON value into the Bleve query
+// "eq" produces for that value: numbers → inclusive NumericRangeQuery,
+// booleans → BoolFieldQuery, strings → MatchQuery (which applies the same
+// text analysis — lowercasing etc. — as indexing, honoring the field's
+// TypeClass analyzer). Shared by the "eq" and "in" operators so both stay
+// semantically identical per value.
+func convertEqValue(field string, raw json.RawMessage, fuzz int) (query.Query, error) {
 	// Try number first.
 	var numVal float64
-	if err := json.Unmarshal(clause.Value, &numVal); err == nil {
+	if err := json.Unmarshal(raw, &numVal); err == nil {
 		inclusive := true
 		q := bleve.NewNumericRangeInclusiveQuery(&numVal, &numVal, &inclusive, &inclusive)
-		q.SetField(clause.Field)
+		q.SetField(field)
 		return q, nil
 	}
 
 	// Try boolean.
 	var boolVal bool
-	if err := json.Unmarshal(clause.Value, &boolVal); err == nil {
+	if err := json.Unmarshal(raw, &boolVal); err == nil {
 		q := bleve.NewBoolFieldQuery(boolVal)
-		q.SetField(clause.Field)
+		q.SetField(field)
 		return q, nil
 	}
 
 	// Try string: use MatchQuery which applies the same text analysis (lowercasing)
 	// as indexing, so "Brazil" matches the indexed token "brazil".
 	var strVal string
-	if err := json.Unmarshal(clause.Value, &strVal); err == nil {
+	if err := json.Unmarshal(raw, &strVal); err == nil {
 		q := bleve.NewMatchQuery(strVal)
-		q.SetField(clause.Field)
+		q.SetField(field)
 		if fuzz > 0 {
 			q.SetFuzziness(fuzz)
 		}
 		return q, nil
 	}
 
-	return nil, fmt.Errorf("unsupported value type for eq")
+	return nil, fmt.Errorf("unsupported value type")
+}
+
+// convertIn handles the Foundry SearchJsonQueryV2 "in" operator:
+// {"type":"in","field":"<prop>","value":[v1,v2,...]} matches objects whose
+// field equals ANY value in the array — the exact equivalent of OR-ing one
+// "eq" clause per element. Each element goes through convertEqValue so the
+// number/boolean/string handling (and analyzer behavior) is identical to
+// "eq"; the per-element queries are OR-ed with a Bleve DisjunctionQuery.
+//
+// An empty array is a legal query that matches zero objects (Foundry's
+// empty candidate list semantics); a non-array value is a validation error
+// surfaced to the caller as HTTP 400 via ErrInvalidWhereClause.
+func convertIn(clause *WhereClause, fuzz int) (query.Query, error) {
+	var elems []json.RawMessage
+	if err := json.Unmarshal(clause.Value, &elems); err != nil {
+		return nil, fmt.Errorf("in value must be an array of property values: %w", err)
+	}
+	if elems == nil {
+		// JSON null (or an absent value) unmarshals into a nil slice without
+		// error — reject it explicitly: unlike the legal empty array, a null
+		// candidate list is a malformed clause.
+		return nil, fmt.Errorf("in value must be an array of property values, got null")
+	}
+	if len(elems) == 0 {
+		return bleve.NewMatchNoneQuery(), nil
+	}
+
+	subs := make([]query.Query, 0, len(elems))
+	for i, elem := range elems {
+		sub, err := convertEqValue(clause.Field, elem, fuzz)
+		if err != nil {
+			return nil, fmt.Errorf("in value[%d]: %w", i, err)
+		}
+		subs = append(subs, sub)
+	}
+
+	dq := bleve.NewDisjunctionQuery(subs...)
+	dq.SetMin(1)
+	return dq, nil
 }
 
 // convertRange handles gt, gte, lt, lte operators.
