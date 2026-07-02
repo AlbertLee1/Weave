@@ -379,6 +379,7 @@ export function validateDefinition(def: ObjectSetDefinition): string[] {
 
 const SUPPORTED_WHERE_OPERATORS = new Set([
   'eq',
+  'in',
   'gt',
   'gte',
   'lt',

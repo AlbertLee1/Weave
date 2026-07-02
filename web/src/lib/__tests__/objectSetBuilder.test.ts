@@ -377,6 +377,22 @@ describe('validateNode', () => {
     }
   });
 
+  it('accepts Foundry in filter clauses carrying an array of candidate values', () => {
+    // BDD: Given a filter node using the backend-supported `in` operator
+    // (pkg/oss/where/converter.go case "in" — matches objects whose field
+    // equals ANY value in the array), When the builder validates the tree,
+    // Then no "unsupported operator" error is raised so the UI stays in
+    // sync with backend capability.
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Employee'),
+        where: { type: 'in', field: 'status', value: ['active', 'pending'] },
+      }),
+    ).toEqual([]);
+  });
+
   it('flags union with fewer than 2 children', () => {
     const errs = validateNode({
       id: '1',
