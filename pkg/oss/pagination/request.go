@@ -7,8 +7,17 @@ import (
 )
 
 const (
+	// DefaultPageSize is the shared cursor page size used by ParsePageRequest
+	// and by the search / linked-object / interface list paths. Kept at 100 so
+	// those endpoints are unchanged.
 	DefaultPageSize = 100
-	MaxPageSize     = 1000
+	// ListDefaultPageSize is the Foundry list default applied ONLY by the
+	// GET .../objects/{objectType} ListObjects path when the caller sends no
+	// pageSize. Foundry's list endpoint defaults to 1000 (== MaxPageSize),
+	// whereas the shared DefaultPageSize stays 100 so other endpoints keep
+	// their smaller default (no global blast radius).
+	ListDefaultPageSize = 1000
+	MaxPageSize         = 1000
 )
 
 // PageRequest holds the parsed pagination parameters from an HTTP request.
