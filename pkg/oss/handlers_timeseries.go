@@ -1,7 +1,11 @@
 package oss
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -92,6 +96,12 @@ func (h *Handler) StreamTimeSeriesValues(w http.ResponseWriter, r *http.Request)
 // (TimeSeriesProperty) and StreamTimeSeriesValues (TimeSeriesValueBank).
 // Foundry splits these by property kind but the wire shape is identical
 // — both emit an ordered []TimeSeriesPoint and reject non-JSON formats.
+//
+// The optional request body is Foundry's StreamTimeSeriesPointsRequest:
+// {range?: TimeRange, aggregate?: AggregateTimeSeries}. `range` filters the
+// returned points to a time window (absolute ISO 8601 bounds or relative
+// offsets from now); `aggregate` downsamples into fixed-width periodic
+// buckets. An empty body streams the full series (backward compatible).
 func (h *Handler) streamTimeSeries(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format")
 	if format != "" && format != "JSON" {
@@ -105,7 +115,81 @@ func (h *Handler) streamTimeSeries(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	req, err := readStreamPointsRequest(r)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeSeriesStreamInvalidBody", map[string]string{
+			"reason": err.Error(),
+		}))
+		return
+	}
+
+	var window timeseries.TimeWindow
+	if req.Range != nil {
+		window, err = req.Range.Resolve(time.Now().UTC())
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeSeriesInvalidRange", map[string]string{
+				"reason": err.Error(),
+			}))
+			return
+		}
+	}
+
+	if req.Aggregate != nil {
+		spec, err := req.Aggregate.Resolve()
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("TimeSeriesInvalidAggregate", map[string]string{
+				"reason": err.Error(),
+			}))
+			return
+		}
+		if window.HasStart {
+			spec.Start = window.Start
+		}
+		if window.HasEnd {
+			spec.End = window.End
+		}
+		h.writeDownsampled(r.Context(), w, key, spec)
+		return
+	}
+
 	points, err := h.timeseriesStore.StreamPoints(r.Context(), key)
+	if err != nil {
+		writeTimeSeriesError(w, err)
+		return
+	}
+	if req.Range != nil {
+		points = window.Filter(points)
+	}
+	if points == nil {
+		points = []timeseries.Point{}
+	}
+	writeJSONOK(w, points)
+}
+
+// writeDownsampled resolves the aggregate request. When the store can push
+// the reduce down (implements timeseries.Downsampler) it does so — bounded
+// wire payload regardless of series cardinality (US-435). Otherwise it
+// falls back to streaming the raw points and reducing in-process.
+func (h *Handler) writeDownsampled(ctx context.Context, w http.ResponseWriter, key timeseries.SeriesKey, spec timeseries.DownsampleSpec) {
+	if downsampler, ok := h.timeseriesStore.(timeseries.Downsampler); ok {
+		points, err := downsampler.DownsamplePoints(ctx, key, spec)
+		if err != nil {
+			writeTimeSeriesError(w, err)
+			return
+		}
+		if points == nil {
+			points = []timeseries.Point{}
+		}
+		writeJSONOK(w, points)
+		return
+	}
+	raw, err := h.timeseriesStore.StreamPoints(ctx, key)
+	if err != nil {
+		writeTimeSeriesError(w, err)
+		return
+	}
+	points, err := timeseries.DownsampleInMemory(raw, spec)
 	if err != nil {
 		writeTimeSeriesError(w, err)
 		return
@@ -114,6 +198,29 @@ func (h *Handler) streamTimeSeries(w http.ResponseWriter, r *http.Request) {
 		points = []timeseries.Point{}
 	}
 	writeJSONOK(w, points)
+}
+
+// readStreamPointsRequest decodes the optional StreamTimeSeriesPointsRequest
+// body. An empty body (no bytes / whitespace only) is valid and yields a
+// zero request so the caller streams the full series.
+func readStreamPointsRequest(r *http.Request) (timeseries.StreamPointsRequest, error) {
+	var req timeseries.StreamPointsRequest
+	defer r.Body.Close()
+	raw, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, httputil.MaxBodySize))
+	if err != nil {
+		return req, err
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return req, nil
+	}
+	// Not DisallowUnknownFields: real Foundry periodic requests carry
+	// windowType / alignmentTimestamp fields this single-machine server
+	// does not act on (it aligns buckets to the UTC epoch); tolerating
+	// them keeps forward compatibility with richer clients.
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return req, err
+	}
+	return req, nil
 }
 
 // resolveTimeSeriesKey loads the addressed object (to verify it exists and
