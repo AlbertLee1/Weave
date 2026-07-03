@@ -107,8 +107,10 @@ func TestBDD_GetOutgoingLinkTypeV2(t *testing.T) {
 		if got := lt["foreignKeyPropertyApiName"]; got != "departmentId" {
 			t.Errorf("foreignKeyPropertyApiName=%v, want departmentId", got)
 		}
-		if got := lt["cardinality"]; got != "MANY_TO_ONE" {
-			t.Errorf("cardinality=%v, want MANY_TO_ONE", got)
+		// Foundry LinkTypeSideCardinality: a MANY_TO_ONE link seen from
+		// its source (outgoing) reaches ONE target.
+		if got := lt["cardinality"]; got != "ONE" {
+			t.Errorf("cardinality=%v, want ONE (Foundry ONE|MANY for the linked side)", got)
 		}
 	})
 

@@ -1879,6 +1879,14 @@ components:
           description: apiName of the object type at the linked (far) end of the link.
         cardinality:
           type: string
+          enum: [ONE, MANY]
+          description: >-
+            Foundry LinkTypeSideCardinality — the multiplicity of the
+            linked (far) side as seen from the queried object type. ONE
+            when a single object reaches at most one linked object, MANY
+            otherwise. It flips with direction: e.g. a source-to-target
+            ONE_TO_MANY link is MANY on the source's outgoingLinkTypes
+            and ONE on the target's incomingLinkTypes.
         foreignKeyPropertyApiName:
           type: string
           description: apiName of the foreign-key property backing the link. Omitted for MANY_TO_MANY links.

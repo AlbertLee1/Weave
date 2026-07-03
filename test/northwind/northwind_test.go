@@ -1489,17 +1489,23 @@ func TestNorthwind_Phase1_Schema(t *testing.T) {
 			t.Errorf("expected 3 outgoing link types for employee, got %d", len(resp.Data))
 		}
 
-		// Verify MANY_TO_MANY link exists
+		// employee-territories is a MANY_TO_MANY link. The outgoing
+		// LinkTypeSideV2 surface reports Foundry LinkTypeSideCardinality
+		// (ONE|MANY = the far/linked side's multiplicity), so an M2M link
+		// reads MANY rather than the Weave MANY_TO_MANY enum.
 		var foundM2M bool
 		for _, raw := range resp.Data {
 			var lt map[string]interface{}
 			json.Unmarshal(raw, &lt)
-			if lt["cardinality"] == "MANY_TO_MANY" {
+			if lt["apiName"] == "employee-territories" {
 				foundM2M = true
+				if lt["cardinality"] != "MANY" {
+					t.Errorf("employee-territories outgoing cardinality=%v, want MANY", lt["cardinality"])
+				}
 			}
 		}
 		if !foundM2M {
-			t.Error("expected at least one MANY_TO_MANY link type for employee")
+			t.Error("expected the employee-territories (MANY_TO_MANY) link type for employee")
 		}
 	})
 
@@ -1873,8 +1879,11 @@ func TestNorthwind_Phase6_Links(t *testing.T) {
 		if len(resp.Data) != 1 {
 			t.Fatalf("expected 1 outgoing link type for category, got %d", len(resp.Data))
 		}
-		if resp.Data[0]["cardinality"] != "ONE_TO_MANY" {
-			t.Errorf("expected cardinality=ONE_TO_MANY, got %v", resp.Data[0]["cardinality"])
+		// category-products is a ONE_TO_MANY link; on the outgoing
+		// LinkTypeSideV2 surface the far (Product) side is the "many",
+		// so Foundry LinkTypeSideCardinality is MANY.
+		if resp.Data[0]["cardinality"] != "MANY" {
+			t.Errorf("expected cardinality=MANY, got %v", resp.Data[0]["cardinality"])
 		}
 	})
 
@@ -1896,7 +1905,10 @@ func TestNorthwind_Phase6_Links(t *testing.T) {
 			if src == tgt {
 				foundSelfRef = true
 			}
-			if lt["cardinality"] == "MANY_TO_MANY" {
+			// employee-territories is MANY_TO_MANY; the outgoing
+			// LinkTypeSideV2 cardinality is the Foundry ONE|MANY far-side
+			// value (MANY), so identify the M2M link by apiName instead.
+			if lt["apiName"] == "employee-territories" {
 				foundM2M = true
 			}
 		}
