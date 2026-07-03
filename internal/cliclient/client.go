@@ -142,12 +142,12 @@ type ListObjectsOptions struct {
 
 // ActionResultsCLI mirrors the Foundry OSv2 ActionResults (edit summary).
 type ActionResultsCLI struct {
-	Type                string `json:"type"`
-	AddedObjectCount    int    `json:"addedObjectCount"`
+	Type                 string `json:"type"`
+	AddedObjectCount     int    `json:"addedObjectCount"`
 	ModifiedObjectsCount int    `json:"modifiedObjectsCount"`
 	DeletedObjectsCount  int    `json:"deletedObjectsCount"`
-	AddedLinksCount     int    `json:"addedLinksCount"`
-	DeletedLinksCount   int    `json:"deletedLinksCount"`
+	AddedLinksCount      int    `json:"addedLinksCount"`
+	DeletedLinksCount    int    `json:"deletedLinksCount"`
 }
 
 // ApplyOptions controls the behaviour of ApplyAction (validation mode, edit
@@ -157,8 +157,35 @@ type ApplyOptions struct {
 	ReturnEdits string `json:"returnEdits,omitempty"`
 }
 
-// ValidationResult mirrors the Foundry OSv2 ValidationResult envelope.
+// ValidationResult mirrors the Foundry OSv2 ValidateActionResponseV2 shape
+// used as the `validation` payload of SyncApplyActionResponseV2: overall
+// result plus form-level submissionCriteria and the per-parameter map. The
+// rich fields are kept so `weave-cli action apply --json` re-marshals the
+// server payload without dropping information.
 type ValidationResult struct {
+	Result string `json:"result"`
+	// No omitempty: the server always sends [] / {} (never null) and the
+	// CLI's --json output must round-trip that presence guarantee.
+	SubmissionCriteria []SubmissionCriterionResult          `json:"submissionCriteria"`
+	Parameters         map[string]ParameterValidationResult `json:"parameters"`
+}
+
+// SubmissionCriterionResult mirrors actions.SubmissionCriterionResult.
+type SubmissionCriterionResult struct {
+	Result                   string `json:"result"`
+	ConfiguredFailureMessage string `json:"configuredFailureMessage,omitempty"`
+}
+
+// ParameterValidationResult mirrors actions.ParameterValidationResult.
+type ParameterValidationResult struct {
+	Result               string                `json:"result"`
+	Required             bool                  `json:"required"`
+	EvaluatedConstraints []EvaluatedConstraint `json:"evaluatedConstraints"`
+}
+
+// EvaluatedConstraint mirrors actions.EvaluatedConstraint.
+type EvaluatedConstraint struct {
+	Type   string `json:"type"`
 	Result string `json:"result"`
 }
 

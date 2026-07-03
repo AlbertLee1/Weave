@@ -73,8 +73,21 @@ describe('actions API', () => {
           const body = (await req.json()) as Record<string, unknown>;
           const opts = body.options as Record<string, string>;
           expect(opts.mode).toBe('VALIDATE_ONLY');
+          // Foundry parity: apply's validation payload is the full
+          // ValidateActionResponseV2 shape (result + submissionCriteria +
+          // per-parameter map), same as the dedicated /validate endpoint.
           return HttpResponse.json({
-            validation: { result: 'VALID' },
+            validation: {
+              result: 'VALID',
+              submissionCriteria: [],
+              parameters: {
+                name: {
+                  result: 'VALID',
+                  required: true,
+                  evaluatedConstraints: [],
+                },
+              },
+            },
           });
         },
       ),
@@ -86,6 +99,9 @@ describe('actions API', () => {
     });
     expect(result.validation).toBeDefined();
     expect(result.validation!.result).toBe('VALID');
+    expect(result.validation!.submissionCriteria).toEqual([]);
+    expect(result.validation!.parameters.name.required).toBe(true);
+    expect(result.validation!.parameters.name.result).toBe('VALID');
     expect(result.edits).toBeUndefined();
   });
 

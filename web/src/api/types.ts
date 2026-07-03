@@ -352,14 +352,55 @@ export interface CountObjectsResponse {
   count: number;
 }
 
+// EvaluatedConstraint mirrors actions.EvaluatedConstraint — one evaluated
+// constraint on a parameter (e.g. {type:'required', result:'INVALID'}). The
+// taxonomy is forwards-compatible: switch on `type` and tolerate unknown
+// kinds.
+export interface EvaluatedConstraint {
+  type: string;
+  result: 'VALID' | 'INVALID';
+}
+
+// ParameterValidationResult mirrors actions.ParameterValidationResult — the
+// per-parameter entry in ValidateActionResponse.parameters, keyed by
+// parameter id. `result === 'INVALID'` is what a form maps to a field-level
+// (inline) error.
+export interface ParameterValidationResult {
+  result: 'VALID' | 'INVALID';
+  required: boolean;
+  evaluatedConstraints: EvaluatedConstraint[];
+}
+
+// SubmissionCriterionResult mirrors actions.SubmissionCriterionResult — one
+// submission-criteria envelope. On INVALID the server synthesizes a single
+// entry carrying the underlying validation error verbatim in
+// configuredFailureMessage, which a form renders as a form-level banner.
+export interface SubmissionCriterionResult {
+  result: 'VALID' | 'INVALID';
+  configuredFailureMessage?: string;
+}
+
+// ValidateActionResponse mirrors actions.ValidateActionResponse (Foundry's
+// ValidateActionResponseV2) — the wire envelope of the /validate endpoint
+// AND the `validation` payload of the apply response. submissionCriteria and
+// parameters are always present ([]/{}) so callers can iterate without
+// nil-guards.
+export interface ValidateActionResponse {
+  result: 'VALID' | 'INVALID';
+  submissionCriteria: SubmissionCriterionResult[];
+  parameters: Record<string, ParameterValidationResult>;
+}
+
 // SyncApplyActionResponseV2 — Foundry OSv2 response envelope for single apply.
 // US-319: actionLogId surfaces the persisted action_logs row id so the toast
 // Undo button can call POST /actions/revert with the right id during its
 // 5-second window.
+// Foundry parity: `validation` is always reported — VALIDATE_ONLY responses
+// carry only validation; executed responses carry validation (VALID) + edits.
 export interface ActionApplyResponse {
   operationId?: string;
   actionLogId?: number;
-  validation?: { result: string };
+  validation?: ValidateActionResponse;
   edits?: ActionResults;
 }
 
