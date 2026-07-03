@@ -36,6 +36,12 @@ type mockOmsRepo struct {
 	actionLogByID map[int64]*oms.ActionLog
 	// Round-33 side-effect DLQ rows captured by InsertSideEffectDLQRow.
 	dlqRows []*oms.SideEffectDLQRow
+	// Foundry apply-edits-detail: optional LinkType fixtures so link-edit
+	// tests can drive resolveLinkEdits enrichment (linkTypeApiNameAtoB/BtoA +
+	// aSide/bSide object types). Nil maps preserve the legacy stub behavior
+	// (GetLinkTypeByAPIName → ErrNotFound, GetLinkType → nil,nil).
+	linkTypesByAPIName map[string]*oms.LinkType
+	linkTypesByRID     map[string]*oms.LinkType
 }
 
 func (m *mockOmsRepo) CreateOntology(_ context.Context, _ *oms.Ontology) error { return nil }
@@ -74,7 +80,12 @@ func (m *mockOmsRepo) UpdateProperty(_ context.Context, _ *oms.Property) error {
 func (m *mockOmsRepo) DeleteProperty(_ context.Context, _ string) error        { return nil }
 
 func (m *mockOmsRepo) CreateLinkType(_ context.Context, _ *oms.LinkType) error { return nil }
-func (m *mockOmsRepo) GetLinkType(_ context.Context, _ string) (*oms.LinkType, error) {
+func (m *mockOmsRepo) GetLinkType(_ context.Context, rid string) (*oms.LinkType, error) {
+	if m.linkTypesByRID != nil {
+		if lt, ok := m.linkTypesByRID[rid]; ok {
+			return lt, nil
+		}
+	}
 	return nil, nil
 }
 func (m *mockOmsRepo) ListOutgoingLinkTypes(_ context.Context, _ string) ([]oms.LinkType, error) {

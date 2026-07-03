@@ -20,7 +20,12 @@ func (m *mockOmsRepo) DeleteAllLinkEdgesForSource(_ context.Context, _, _ string
 	return nil
 }
 
-func (m *mockOmsRepo) GetLinkTypeByAPIName(_ context.Context, _, _ string) (*oms.LinkType, error) {
+func (m *mockOmsRepo) GetLinkTypeByAPIName(_ context.Context, _, apiName string) (*oms.LinkType, error) {
+	if m.linkTypesByAPIName != nil {
+		if lt, ok := m.linkTypesByAPIName[apiName]; ok {
+			return lt, nil
+		}
+	}
 	return nil, oms.ErrNotFound
 }
 
