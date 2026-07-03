@@ -1,6 +1,7 @@
 package oms
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -471,7 +472,32 @@ func (h *OMSHandler) GetObjectTypeResolved(w http.ResponseWriter, r *http.Reques
 	httputil.WriteJSON(w, http.StatusOK, wire)
 }
 
+// farEndAPIName resolves the api name of the object type at the far
+// end of a link for the Foundry LinkTypeSideV2 `objectTypeApiName`
+// field. Weave canonically stores ObjectType RIDs in
+// LinkType.SourceObjectType / TargetObjectType (pkg/links resolves
+// them via GetObjectType), so the RID is looked up and its api name
+// returned; rows that carry an api name directly (legacy admin
+// writes) fall back to the stored value as-is. memo de-duplicates
+// lookups across a list response.
+func farEndAPIName(ctx context.Context, repo Repository, memo map[string]string, stored string) string {
+	if stored == "" {
+		return ""
+	}
+	if name, ok := memo[stored]; ok {
+		return name
+	}
+	name := stored
+	if ot, err := repo.GetObjectType(ctx, stored); err == nil && ot.APIName != "" {
+		name = ot.APIName
+	}
+	memo[stored] = name
+	return name
+}
+
 // ListOutgoingLinkTypes handles GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/outgoingLinkTypes.
+// Response items follow the Foundry LinkTypeSideV2 shape: `objectTypeApiName`
+// names the LINKED (target) side of each link — see LinkType.ToLinkTypeSideV2JSON.
 func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Request) {
 	repo, ok := h.resolveRepo(w, r)
 	if !ok {
@@ -499,10 +525,13 @@ func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Build wire JSON for each link type
+	// Build wire JSON for each link type. For the outgoing direction the
+	// far end is the link's target.
+	memo := make(map[string]string, len(list))
 	wireList := make([]json.RawMessage, 0, len(list))
 	for i := range list {
-		data, err := list[i].ToWireJSON()
+		linked := farEndAPIName(r.Context(), repo, memo, list[i].TargetObjectType)
+		data, err := list[i].ToLinkTypeSideV2JSON(linked)
 		if err != nil {
 			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 			return
@@ -511,6 +540,65 @@ func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Reques
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{"data": wireList})
+}
+
+// GetOutgoingLinkTypeV2 handles
+// GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/outgoingLinkTypes/{linkType}.
+//
+// Foundry single-get sibling of ListOutgoingLinkTypes: {linkType} is
+// the link api name (not the RID), mirroring the interfaceTypes
+// single-get (GetInterfaceOutgoingLinkTypeV2) and GET
+// /linkTypes/{linkType}. Returns the Foundry LinkTypeSideV2 shape;
+// 404 ObjectTypeNotFound / LinkTypeNotFound follow the list
+// endpoint's error taxonomy.
+func (h *OMSHandler) GetOutgoingLinkTypeV2(w http.ResponseWriter, r *http.Request) {
+	repo, ok := h.resolveRepo(w, r)
+	if !ok {
+		return
+	}
+	ontologyRID := chi.URLParam(r, "ontologyApiName")
+	apiName := chi.URLParam(r, "objectTypeApiName")
+	linkTypeAPIName := chi.URLParam(r, "linkType")
+
+	ot, err := repo.GetObjectTypeByAPIName(r.Context(), ontologyRID, apiName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			apierror.WriteJSON(w, apierror.NewNotFound("ObjectTypeNotFound", map[string]string{
+				"objectTypeApiName": apiName,
+			}))
+			return
+		}
+		apierror.WriteJSON(w, apierror.NewInternal("GetObjectTypeFailed", nil))
+		return
+	}
+
+	list, err := repo.ListOutgoingLinkTypes(r.Context(), ot.RID)
+	if err != nil {
+		apierror.WriteJSON(w, apierror.NewInternal("ListOutgoingLinkTypesFailed", nil))
+		return
+	}
+
+	memo := make(map[string]string, 1)
+	for i := range list {
+		if list[i].APIName != linkTypeAPIName {
+			continue
+		}
+		linked := farEndAPIName(r.Context(), repo, memo, list[i].TargetObjectType)
+		data, err := list[i].ToLinkTypeSideV2JSON(linked)
+		if err != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+		return
+	}
+
+	apierror.WriteJSON(w, apierror.NewNotFound("LinkTypeNotFound", map[string]string{
+		"objectTypeApiName": apiName,
+		"linkType":          linkTypeAPIName,
+	}))
 }
 
 // ListIncomingLinkTypes handles GET /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/incomingLinkTypes.
@@ -547,9 +635,13 @@ func (h *OMSHandler) ListIncomingLinkTypes(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Foundry LinkTypeSideV2 shape — for the incoming direction the far
+	// end (the `objectTypeApiName` side) is the link's SOURCE.
+	memo := make(map[string]string, len(list))
 	wireList := make([]json.RawMessage, 0, len(list))
 	for i := range list {
-		data, err := list[i].ToWireJSON()
+		linked := farEndAPIName(r.Context(), repo, memo, list[i].SourceObjectType)
+		data, err := list[i].ToLinkTypeSideV2JSON(linked)
 		if err != nil {
 			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 			return

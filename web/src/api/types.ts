@@ -75,6 +75,16 @@ export interface Property {
 }
 
 export interface LinkType {
+  // NOTE — the meaning of `objectTypeApiName` differs per surface:
+  //   * Admin CRUD (GET/POST /linkTypes*): objectTypeApiName = SOURCE type,
+  //     linkedObjectTypeApiName = target type (legacy Weave shape).
+  //   * Outgoing/incoming link-side reads
+  //     (GET /objectTypes/{ot}/outgoingLinkTypes[/{linkType}] and
+  //     /incomingLinkTypes): Foundry LinkTypeSideV2 semantics —
+  //     objectTypeApiName = the LINKED (far) end relative to the queried
+  //     type; `rid` / `linkedObjectTypeApiName` are deprecated aliases of
+  //     `linkTypeRid` / `objectTypeApiName` on those surfaces and new code
+  //     should read the Foundry keys.
   rid: string;
   apiName: string;
   displayName: string;
@@ -83,6 +93,11 @@ export interface LinkType {
   linkedObjectTypeApiName: string;
   cardinality: 'ONE_TO_ONE' | 'ONE_TO_MANY' | 'MANY_TO_MANY';
   required: boolean;
+  // Foundry LinkTypeSideV2 fields — present on the outgoing/incoming
+  // link-side read surfaces only (absent from admin CRUD responses).
+  linkTypeRid?: string;
+  status?: string;
+  foreignKeyPropertyApiName?: string;
   // US-261: when set, this LinkType points at its inverse LinkType (the link
   // describing the reverse direction), making the relationship bidirectional.
   // Serialised from pkg/oms LinkType.InverseLinkRID; omitted when empty.
