@@ -20,6 +20,10 @@ type ListObjectsRequest struct {
 	PageSize    int
 	PageToken   string
 	OrderBy     string // field to sort by (optional)
+	// ExcludeRID mirrors Foundry's `?excludeRid=true` query parameter. When
+	// true the reserved `__rid` key is omitted from every returned object; the
+	// default (false) keeps `__rid` so existing callers see no change.
+	ExcludeRID bool
 }
 
 // SearchObjectsRequest is the request for searching objects with a where clause.
@@ -56,6 +60,11 @@ type SearchObjectsRequest struct {
 	// OrderBy.BleveSortOrder. When non-empty it takes precedence over the
 	// legacy OrderBy string.
 	SortOrder []string
+	// ExcludeRID mirrors Foundry's SearchObjectsRequestV2.excludeRid body
+	// field. When true the reserved `__rid` key is omitted from every returned
+	// object; the default (false) keeps `__rid` so existing callers see no
+	// change.
+	ExcludeRID bool
 }
 
 // HighlightConfig configures the per-search highlighter. Style is a Bleve

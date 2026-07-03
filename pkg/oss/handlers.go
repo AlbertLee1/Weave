@@ -254,6 +254,7 @@ func (h *Handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 		PageSize:    pageSize,
 		PageToken:   r.URL.Query().Get("pageToken"),
 		OrderBy:     r.URL.Query().Get("orderBy"),
+		ExcludeRID:  parseExcludeRID(r.URL.Query().Get("excludeRid")),
 	})
 	if err != nil {
 		if errors.Is(err, oms.ErrNotFound) {
@@ -287,6 +288,10 @@ type searchRequestBody struct {
 	PageSize  int                `json:"pageSize,omitempty"`
 	PageToken string             `json:"pageToken,omitempty"`
 	OrderBy   *OrderBy           `json:"orderBy,omitempty"`
+	// ExcludeRid is Foundry's SearchObjectsRequestV2.excludeRid. When true the
+	// reserved `__rid` key is omitted from every returned object; the default
+	// (false / absent) keeps `__rid` for backward compatibility.
+	ExcludeRid bool `json:"excludeRid,omitempty"`
 }
 
 // SearchObjects handles POST /api/v2/ontologies/{ontologyApiName}/objects/{objectType}/search.
@@ -439,6 +444,7 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 		PageToken:   pageToken,
 		OrderBy:     orderBy,
 		SortOrder:   sortOrder,
+		ExcludeRID:  body.ExcludeRid,
 	})
 	if err != nil {
 		if errors.Is(err, oms.ErrNotFound) {
@@ -530,6 +536,22 @@ func splitRegexQueryParam(raw string) (field, pattern string, ok bool) {
 		return "", "", false
 	}
 	return field, pattern, true
+}
+
+// parseExcludeRID reads Foundry's `?excludeRid=true` list query parameter.
+// An absent or empty value, or any value that does not parse as a truthy
+// boolean, yields false so the default response keeps the reserved `__rid`
+// key (backward compatible). strconv.ParseBool accepts 1/t/T/TRUE/true/… so
+// both `?excludeRid=true` and `?excludeRid=1` enable the omission.
+func parseExcludeRID(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false
+	}
+	return v
 }
 
 // countRequestBody is the optional JSON body for the count endpoint.

@@ -458,6 +458,23 @@ func (s *ServiceImpl) applySelectProjection(objs []*WireObject, selected []strin
 	return objs
 }
 
+// applyExcludeRID implements Foundry's excludeRid contract by clearing the
+// reserved `__rid` key on every returned object when the caller opted in
+// (search body `excludeRid: true` / list `?excludeRid=true`). It runs as the
+// terminal read-path pass so it operates on the same freshly-built,
+// request-scoped WireObjects the security passes already mutate in place.
+// exclude=false (the default) returns the slice untouched, keeping `__rid` for
+// backward compatibility.
+func applyExcludeRID(objs []*WireObject, exclude bool) []*WireObject {
+	if !exclude {
+		return objs
+	}
+	for _, o := range objs {
+		o.OmitRID()
+	}
+	return objs
+}
+
 // GetObject retrieves a single object by its primary key.
 //
 // ABAC: when a PolicyFilter is installed, the freshly-loaded object is run
@@ -604,7 +621,10 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 	}
 	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
 	filtered = s.applyColumnMasking(ctx, ot, filtered)
-	page.Data = s.applyCellMasking(ctx, ot, filtered)
+	filtered = s.applyCellMasking(ctx, ot, filtered)
+	// Foundry excludeRid: strip __rid as the terminal pass when the caller
+	// passed ?excludeRid=true. No-op (keeps __rid) by default.
+	page.Data = applyExcludeRID(filtered, req.ExcludeRID)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -793,8 +813,12 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 
 	// Foundry select projection (applied LAST, after every security pass so it
 	// can only ever narrow — never widen — a policy-restricted view). No-op
-	// when the caller sent no select.
-	page.Data = s.applySelectProjection(filtered, req.Select, ot.PrimaryKey)
+	// when the caller sent no select. Foundry excludeRid then strips __rid as
+	// the terminal pass; both default to no-op so the wire shape is unchanged.
+	page.Data = applyExcludeRID(
+		s.applySelectProjection(filtered, req.Select, ot.PrimaryKey),
+		req.ExcludeRID,
+	)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
