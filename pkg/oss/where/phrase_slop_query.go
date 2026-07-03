@@ -25,6 +25,14 @@ type PhraseSlopQuery struct {
 	Slop     int
 	FieldVal string
 	BoostVal float64
+
+	// AnalyzeTerms runs each term through the field's analyzer at search
+	// time so the query compares against the INDEXED token form (e.g. the
+	// "en" analyzer stems "migration" → "migrat"). The legacy "phrase"
+	// operator keeps this off for backward compatibility (pre-lowercased
+	// raw terms); the Foundry "interval" operator turns it on because its
+	// contract is explicitly "the analyzed form of text fields".
+	AnalyzeTerms bool
 }
 
 // NewPhraseSlopQuery builds a phrase-with-slop query over pre-lowercased terms.
@@ -56,8 +64,18 @@ func (q *PhraseSlopQuery) Searcher(ctx context.Context, i index.IndexReader, m m
 	opts := options
 	opts.IncludeTermVectors = true
 
-	termSearchers := make([]search.Searcher, 0, len(q.Terms))
-	for _, term := range q.Terms {
+	terms := q.Terms
+	if q.AnalyzeTerms {
+		terms = analyzePhraseTerms(m, q.FieldVal, terms)
+		if len(terms) == 0 {
+			// Every term analyzed away (e.g. all stopwords): nothing can
+			// positionally match.
+			return searcher.NewMatchNoneSearcher(i)
+		}
+	}
+
+	termSearchers := make([]search.Searcher, 0, len(terms))
+	for _, term := range terms {
 		if term == "" {
 			for _, ts := range termSearchers {
 				_ = ts.Close()
@@ -88,10 +106,30 @@ func (q *PhraseSlopQuery) Searcher(ctx context.Context, i index.IndexReader, m m
 
 	return &phraseSlopSearcher{
 		inner: conj,
-		terms: append([]string(nil), q.Terms...),
+		terms: append([]string(nil), terms...),
 		slop:  q.Slop,
 		field: q.FieldVal,
 	}, nil
+}
+
+// analyzePhraseTerms maps raw query terms onto their indexed token forms
+// using the analyzer the mapping assigns to the field. Terms the analyzer
+// drops entirely (stopwords) are skipped; a term that analyzes into several
+// tokens contributes each of them in order. A nil analyzer (unknown name)
+// falls back to the raw terms so the query degrades to legacy behavior
+// instead of erroring.
+func analyzePhraseTerms(m mapping.IndexMapping, field string, terms []string) []string {
+	analyzer := m.AnalyzerNamed(m.AnalyzerNameForPath(field))
+	if analyzer == nil {
+		return terms
+	}
+	analyzed := make([]string, 0, len(terms))
+	for _, term := range terms {
+		for _, token := range analyzer.Analyze([]byte(term)) {
+			analyzed = append(analyzed, string(token.Term))
+		}
+	}
+	return analyzed
 }
 
 // phraseSlopSearcher wraps a conjunction of single-term searchers and drops

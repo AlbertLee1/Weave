@@ -384,6 +384,8 @@ const SUPPORTED_WHERE_OPERATORS = new Set([
   'gte',
   'lt',
   'lte',
+  'interval',
+  'relativeDateRange',
   'isNull',
   'contains',
   'fuzzy',
@@ -465,6 +467,39 @@ function validateWhereClause(where: WhereClause, errors: string[]): void {
   if (!where.field || where.field.trim().length === 0) {
     errors.push(`filter where clause ${type} requires a field`);
   }
+
+  // Foundry interval / relativeDateRange clauses carry their payload in
+  // dedicated keys (rule / relativeStartTime / relativeEndTime /
+  // timeZoneId) rather than `value` — validate those shapes and skip the
+  // generic value requirement.
+  if (type === 'interval') {
+    const rule = (where as { rule?: unknown }).rule;
+    if (
+      typeof rule !== 'object' ||
+      rule === null ||
+      typeof (rule as { type?: unknown }).type !== 'string'
+    ) {
+      errors.push('filter where clause interval requires a rule object');
+    }
+    return;
+  }
+  if (type === 'relativeDateRange') {
+    const { relativeStartTime, relativeEndTime, timeZoneId } = where as {
+      relativeStartTime?: unknown;
+      relativeEndTime?: unknown;
+      timeZoneId?: unknown;
+    };
+    if (typeof timeZoneId !== 'string' || timeZoneId.trim().length === 0) {
+      errors.push('filter where clause relativeDateRange requires a timeZoneId');
+    }
+    if (relativeStartTime == null && relativeEndTime == null) {
+      errors.push(
+        'filter where clause relativeDateRange requires at least one of relativeStartTime / relativeEndTime',
+      );
+    }
+    return;
+  }
+
   if (!VALUE_OPTIONAL_WHERE_OPERATORS.has(type) && valueIsBlank(where.value)) {
     errors.push(`filter where clause ${type} requires a value`);
   }

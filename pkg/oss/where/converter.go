@@ -56,6 +56,10 @@ func convertToBleveQueryUnwrapped(clause *WhereClause, opts *ConvertOptions) (qu
 		return convertRange(clause, false, false, false, true)
 	case "lte":
 		return convertRange(clause, false, false, true, true)
+	case "interval":
+		return convertInterval(clause)
+	case "relativeDateRange":
+		return convertRelativeDateRange(clause, opts)
 	case "isNull":
 		return convertIsNull(clause)
 	case "contains":

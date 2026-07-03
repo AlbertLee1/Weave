@@ -20,7 +20,7 @@ import (
 //
 // Supported operators (covering the US-056 Browser realtime filter set):
 //
-//	eq, gt, gte, lt, lte, isNull, contains, startsWith, and, or, not.
+//	eq, in, gt, gte, lt, lte, isNull, contains, startsWith, and, or, not.
 //
 // Unsupported operators (wildcard / containsAllTerms / geo / ...) fall back
 // to false. Future stories that need them should extend this switch rather
@@ -36,6 +36,8 @@ func MatchClause(clause *WhereClause, row map[string]interface{}) bool {
 	switch clause.Type {
 	case "eq":
 		return matchEq(clause, row)
+	case "in":
+		return matchIn(clause, row)
 	case "gt":
 		return matchRange(clause, row, false, true, false, false)
 	case "gte":
@@ -80,7 +82,7 @@ func ValidateMatchClauseSupported(clause *WhereClause) error {
 		return nil
 	}
 	switch clause.Type {
-	case "eq", "gt", "gte", "lt", "lte", "isNull", "contains", "containsAnyTerm", "startsWith", "containsAllTermsInOrderPrefixLastTerm", "withinPolygon", "intersectsPolygon", "doesNotIntersectPolygon", "doesNotIntersectBoundingBox":
+	case "eq", "in", "gt", "gte", "lt", "lte", "isNull", "contains", "containsAnyTerm", "startsWith", "containsAllTermsInOrderPrefixLastTerm", "withinPolygon", "intersectsPolygon", "doesNotIntersectPolygon", "doesNotIntersectBoundingBox":
 		return nil
 	case "and", "or":
 		var subs []WhereClause
@@ -113,10 +115,16 @@ func matchEq(clause *WhereClause, row map[string]interface{}) bool {
 	if !ok {
 		return false
 	}
+	return matchEqValue(clause.Value, raw)
+}
 
+// matchEqValue compares one scalar JSON candidate against a row value with
+// eq semantics. Shared by "eq" and "in" so a candidate list element matches
+// exactly when the equivalent eq clause would.
+func matchEqValue(value json.RawMessage, raw interface{}) bool {
 	// Number
 	var numVal float64
-	if err := json.Unmarshal(clause.Value, &numVal); err == nil {
+	if err := json.Unmarshal(value, &numVal); err == nil {
 		if rowNum, ok := coerceNumber(raw); ok {
 			return rowNum == numVal
 		}
@@ -128,7 +136,7 @@ func matchEq(clause *WhereClause, row map[string]interface{}) bool {
 	// because `true` and `false` are valid JSON literals that are NOT valid
 	// JSON strings.
 	var boolVal bool
-	if err := json.Unmarshal(clause.Value, &boolVal); err == nil {
+	if err := json.Unmarshal(value, &boolVal); err == nil {
 		if rowBool, ok := raw.(bool); ok {
 			return rowBool == boolVal
 		}
@@ -137,13 +145,35 @@ func matchEq(clause *WhereClause, row map[string]interface{}) bool {
 
 	// String
 	var strVal string
-	if err := json.Unmarshal(clause.Value, &strVal); err == nil {
+	if err := json.Unmarshal(value, &strVal); err == nil {
 		if rowStr, ok := raw.(string); ok {
 			return rowStr == strVal
 		}
 		return false
 	}
 
+	return false
+}
+
+// matchIn evaluates the Foundry "in" operator in-memory: the row value
+// must equal ANY candidate in the array (per-element semantics identical
+// to eq via matchEqValue). An empty candidate list matches nothing, and —
+// per the conservative MatchClause contract — malformed values (non-array
+// / null) also match nothing rather than leaking events.
+func matchIn(clause *WhereClause, row map[string]interface{}) bool {
+	raw, ok := row[clause.Field]
+	if !ok {
+		return false
+	}
+	var elems []json.RawMessage
+	if err := json.Unmarshal(clause.Value, &elems); err != nil {
+		return false
+	}
+	for _, elem := range elems {
+		if matchEqValue(elem, raw) {
+			return true
+		}
+	}
 	return false
 }
 
