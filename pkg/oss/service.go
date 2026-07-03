@@ -42,7 +42,13 @@ type SearchObjectsRequest struct {
 	Facets    []string
 	PageSize  int
 	PageToken string
-	OrderBy   string
+	// OrderBy is the legacy `?orderBy=field:desc,f2` query-param string.
+	OrderBy string
+	// SortOrder is the pre-validated Bleve sort order (e.g. ["-age","name"]
+	// or ["-_score"]) lowered from the Foundry V2 body orderBy via
+	// OrderBy.BleveSortOrder. When non-empty it takes precedence over the
+	// legacy OrderBy string.
+	SortOrder []string
 }
 
 // HighlightConfig configures the per-search highlighter. Style is a Bleve

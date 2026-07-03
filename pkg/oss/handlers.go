@@ -277,17 +277,6 @@ func (h *Handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, page)
 }
 
-// OrderBy specifies ordering for search results.
-type OrderBy struct {
-	Fields []OrderByField `json:"fields,omitempty"`
-}
-
-// OrderByField specifies a single field ordering.
-type OrderByField struct {
-	Field     string `json:"field"`
-	Direction string `json:"direction"`
-}
-
 // searchRequestBody is the JSON body for search requests.
 type searchRequestBody struct {
 	Where     *where.WhereClause `json:"where"`
@@ -335,8 +324,25 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 		pageToken = r.URL.Query().Get("pageToken")
 	}
 
-	// Read orderBy from query params (kept for backwards compat).
-	orderBy := r.URL.Query().Get("orderBy")
+	// Foundry V2: body orderBy (SearchOrderByV2) is the documented wire form
+	// and is validated strictly — unknown orderType / bad direction / empty
+	// field are 400 InvalidOrderBy, never a silent unsorted 200. When the
+	// body expresses an ordering it wins over the legacy `?orderBy=` query
+	// param, matching the body-first convention pageSize/pageToken use (the
+	// query param is Weave's pre-V2 back-compat form, unlike fuzziness/
+	// regex/facets where the query param IS the documented Foundry form).
+	sortOrder, obErr := body.OrderBy.BleveSortOrder()
+	if obErr != nil {
+		apierror.WriteJSON(w, obErr)
+		return
+	}
+
+	// Read orderBy from query params (kept for backwards compat); only
+	// consulted when the body did not express an ordering.
+	orderBy := ""
+	if len(sortOrder) == 0 {
+		orderBy = r.URL.Query().Get("orderBy")
+	}
 
 	// Read fuzziness from query params. Accepts 0/1/2; anything else is a 400.
 	// When present it REPLACES any body.Fuzzy — the query-string form is the
@@ -432,6 +438,7 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 		PageSize:    pageSize,
 		PageToken:   pageToken,
 		OrderBy:     orderBy,
+		SortOrder:   sortOrder,
 	})
 	if err != nil {
 		if errors.Is(err, oms.ErrNotFound) {

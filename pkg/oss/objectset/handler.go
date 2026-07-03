@@ -31,16 +31,14 @@ type LoadObjectSetRequest struct {
 	Snapshot  bool        `json:"snapshot,omitempty"`
 }
 
-// OrderBy specifies ordering for loaded objects.
-type OrderBy struct {
-	Fields []OrderByField `json:"fields"`
-}
+// OrderBy is the Foundry SearchOrderByV2 ordering shape. Aliased to the
+// pkg/oss definition so search and loadObjects share one validation path
+// (oss.OrderBy.BleveSortOrder).
+type OrderBy = oss.OrderBy
 
-// OrderByField specifies a single field ordering.
-type OrderByField struct {
-	Field     string `json:"field"`
-	Direction string `json:"direction"` // "asc" or "desc"
-}
+// OrderByField specifies a single field ordering ("asc"/"desc", default
+// "asc"). Aliased to the pkg/oss definition.
+type OrderByField = oss.OrderByField
 
 // LoadObjectSetResponse is the Palantir V2 response format with string totalCount.
 type LoadObjectSetResponse struct {
@@ -271,6 +269,23 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Foundry V2: honour LoadObjectSetRequestV2.orderBy (SearchOrderByV2
+	// shape). Validate before any execution so bad input fails fast.
+	// orderType "relevance" is rejected here: the executor resolves the
+	// ObjectSet to explicit primary keys, so every doc would score
+	// identically and relevance ordering would be a silent no-op.
+	if req.OrderBy.IsRelevance() {
+		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidOrderBy", map[string]string{
+			"reason": `orderType "relevance" is not supported on loadObjects: an ObjectSet resolves to explicit primary keys with uniform scores; use fields ordering instead`,
+		}))
+		return
+	}
+	sortOrder, obErr := req.OrderBy.BleveSortOrder()
+	if obErr != nil {
+		apierror.WriteJSON(w, obErr)
+		return
+	}
+
 	// Stamp the ontology scope on the context so the executor and downstream
 	// Bleve lookups use per-ontology index keys (US-044).
 	ontologyAPIName := chi.URLParam(r, "ontologyApiName")
@@ -306,6 +321,16 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 	// because composite types (filter / union / ...) need a per-instant
 	// Bleve index that we don't materialize.
 	if asOfRaw := r.URL.Query().Get("asOf"); asOfRaw != "" {
+		// The time-travel path reads object_history snapshots, not the live
+		// Bleve index, so there is nothing to push the sort down to. Reject
+		// the combination explicitly instead of silently returning PK order.
+		if len(sortOrder) > 0 {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("OrderByUnsupportedWithAsOf", map[string]string{
+				"asOf":   asOfRaw,
+				"reason": "orderBy is not supported together with asOf time-travel reads; snapshot pages are ordered by primary key",
+			}))
+			return
+		}
 		asOf, apiErr := h.resolveAsOf(ctx, asOfRaw)
 		if apiErr != nil {
 			apierror.WriteJSON(w, apiErr)
@@ -334,6 +359,24 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result.PrimaryKeys = scoped
+	}
+
+	// Foundry V2 orderBy: reorder the FULL PK set before the pagination
+	// slice below, so the ordering is global and stable across pages. The
+	// sort is pushed down to Bleve (see sortPrimaryKeys); ObjectSets larger
+	// than orderByMaxKeys get an explicit 422 rather than a silent unsorted
+	// response.
+	if len(sortOrder) > 0 && len(result.PrimaryKeys) > 1 {
+		if len(result.PrimaryKeys) > orderByMaxKeys {
+			apierror.WriteJSON(w, orderByTooLarge(len(result.PrimaryKeys)))
+			return
+		}
+		sorted, sortErr := h.sortPrimaryKeys(ctx, result.ObjectType, result.PrimaryKeys, sortOrder)
+		if sortErr != nil {
+			apierror.WriteJSON(w, apierror.NewInternal("OrderByFailed", map[string]string{"error": sortErr.Error()}))
+			return
+		}
+		result.PrimaryKeys = sorted
 	}
 
 	// Apply pagination
