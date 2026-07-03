@@ -30,7 +30,7 @@ import (
 //	      {"type":"in","field":"status","value":["SHIPPED","DELIVERED"]}
 //	  And an SSE subscriber attached to it
 //	When  funnel broadcasts orders with status SHIPPED / PENDING /
-//	      DELIVERED / CANCELLED
+//	      DELIVERED / CANCELED
 //	Then  the SSE stream delivers exactly the SHIPPED and DELIVERED
 //	      events, in publish order, and drops the other two
 func TestBDD_SSESubscribe_InWhereFilter(t *testing.T) {
@@ -117,7 +117,7 @@ func TestBDD_SSESubscribe_InWhereFilter(t *testing.T) {
 	publish("o-1", "SHIPPED")   // MATCH — in candidate list
 	publish("o-2", "PENDING")   // DROP
 	publish("o-3", "DELIVERED") // MATCH — in candidate list
-	publish("o-4", "CANCELLED") // DROP
+	publish("o-4", "CANCELED")  // DROP
 
 	first := expectEvent(t, eventsCh, 2*time.Second)
 	if pk, _ := first.Object["__primaryKey"].(string); pk != "o-1" {
@@ -132,7 +132,7 @@ func TestBDD_SSESubscribe_InWhereFilter(t *testing.T) {
 	case unexpected := <-eventsCh:
 		t.Errorf("unexpected extra event: %+v", unexpected)
 	case <-time.After(150 * time.Millisecond):
-		// good — the PENDING / CANCELLED events were dropped
+		// good — the PENDING / CANCELED events were dropped
 	}
 
 	cancel()
