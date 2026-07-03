@@ -4071,8 +4071,10 @@ func (h *OMSHandler) DeleteQueryType(w http.ResponseWriter, r *http.Request) {
 
 // ExecuteQueryType handles POST /api/v2/ontologies/{ontology}/queries/{queryApiName}/execute.
 // When the QueryType has a non-empty FunctionRID and a QueryExecutor is wired,
-// the handler dispatches execution to the backing function. Otherwise it falls
-// back to returning raw metadata for backward compatibility.
+// the handler dispatches execution to the backing function and responds with
+// the Foundry ExecuteQueryResponse envelope {value: <DataValue>} — for every
+// result shape, including struct/map values. Otherwise it falls back to
+// returning raw metadata for backward compatibility.
 func (h *OMSHandler) ExecuteQueryType(w http.ResponseWriter, r *http.Request) {
 	ontologyRID := chi.URLParam(r, "ontologyApiName")
 	queryAPIName := chi.URLParam(r, "queryApiName")
@@ -4117,7 +4119,20 @@ func (h *OMSHandler) ExecuteQueryType(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			httputil.WriteJSON(w, http.StatusOK, m)
+			// Functions following the {value: ...} convention already carry
+			// the Foundry envelope payload — re-emit it as exactly {value}.
+			if v, ok := m["value"]; ok {
+				httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+					"value": v,
+				})
+				return
+			}
+			// Bare map (struct DataValue): wrap it. Foundry's
+			// ExecuteQueryResponse is always {value: <DataValue>}, and OSDK
+			// clients unconditionally unwrap .value.
+			httputil.WriteJSON(w, http.StatusOK, map[string]interface{}{
+				"value": m,
+			})
 			return
 		}
 		// Non-map result: wrap in {value: ...}
