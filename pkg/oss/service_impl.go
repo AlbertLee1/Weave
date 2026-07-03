@@ -681,8 +681,11 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 		searchReq.AddFacet(f, bleve.NewFacetRequest(f, defaultFacetSize))
 	}
 
-	// Apply ordering if specified.
-	if req.OrderBy != "" {
+	// Apply ordering if specified. SortOrder is the pre-validated Foundry V2
+	// body form and wins; the legacy query-param string is the fallback.
+	if len(req.SortOrder) > 0 {
+		searchReq.SortBy(req.SortOrder)
+	} else if req.OrderBy != "" {
 		searchReq.SortBy(parseOrderBy(req.OrderBy))
 	}
 

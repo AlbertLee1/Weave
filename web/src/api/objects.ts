@@ -59,7 +59,21 @@ export function searchObjects(params: SearchObjectsParams): Promise<ObjectPage> 
       where: params.where,
       pageSize: params.pageSize,
       pageToken: params.pageToken,
-      orderBy: params.orderBy,
+      // Backend contract is Foundry's SearchOrderByV2:
+      // {fields: [{field, direction}]}. Lower the caller-friendly single
+      // {field, direction} param here so every call site sorts for real —
+      // the bare shape used to be dropped by the server as an empty
+      // ordering (HTTP 200, unsorted data).
+      orderBy: params.orderBy
+        ? {
+            fields: [
+              {
+                field: params.orderBy.field,
+                direction: params.orderBy.direction ?? 'asc',
+              },
+            ],
+          }
+        : undefined,
       highlight: params.highlight,
       select: params.select,
       facets: params.facets && params.facets.length > 0 ? params.facets : undefined,
