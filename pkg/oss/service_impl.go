@@ -440,6 +440,24 @@ func (s *ServiceImpl) applyPropertyVisibility(ctx context.Context, ot *oms.Objec
 	return out
 }
 
+// applySelectProjection narrows each WireObject's Properties to the caller's
+// Foundry `select` list. The primary-key field and the security _markings
+// field are always kept alongside the selected apiNames so the projection can
+// neither hide the primary key nor drop the marking metadata the non-select
+// path already carries. Runs as the FINAL read-path pass (after every policy /
+// mask filter) so a select can only ever shrink the surviving column set, and
+// mirrors the objectset loadObjects projection. A nil/empty select or empty
+// input slice is a no-op, preserving the "return everything" default.
+func (s *ServiceImpl) applySelectProjection(objs []*WireObject, selected []string, pkField string) []*WireObject {
+	if len(selected) == 0 || len(objs) == 0 {
+		return objs
+	}
+	for i, obj := range objs {
+		objs[i] = obj.ProjectProperties(selected, pkField, security.MarkingField)
+	}
+	return objs
+}
+
 // GetObject retrieves a single object by its primary key.
 //
 // ABAC: when a PolicyFilter is installed, the freshly-loaded object is run
@@ -771,7 +789,12 @@ func (s *ServiceImpl) SearchObjects(ctx context.Context, req SearchObjectsReques
 	}
 	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
 	filtered = s.applyColumnMasking(ctx, ot, filtered)
-	page.Data = s.applyCellMasking(ctx, ot, filtered)
+	filtered = s.applyCellMasking(ctx, ot, filtered)
+
+	// Foundry select projection (applied LAST, after every security pass so it
+	// can only ever narrow — never widen — a policy-restricted view). No-op
+	// when the caller sent no select.
+	page.Data = s.applySelectProjection(filtered, req.Select, ot.PrimaryKey)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize

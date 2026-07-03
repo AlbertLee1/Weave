@@ -28,6 +28,13 @@ type SearchObjectsRequest struct {
 	ObjectType  string
 	Where       *where.WhereClause
 	Fuzzy       *where.FuzzyConfig
+	// Select, when non-empty, is the Foundry SearchObjectsRequestV2.select
+	// projection: the response object retains ONLY these property apiNames
+	// (plus the primary key, the reserved __rid/__primaryKey/__apiName system
+	// keys emitted by WireObject, and the security _markings field). An empty
+	// Select is Foundry's "return everything" default and leaves the full
+	// property set untouched.
+	Select []string
 	// Highlight, when non-nil, instructs the service to attach Bleve
 	// `<mark>`-wrapped snippets to each returned object under the
 	// `_highlights` key. Fields are the specific property apiNames to
