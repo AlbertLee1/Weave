@@ -110,6 +110,46 @@ type ActionResults struct {
 	DeletedObjectsCount  int    `json:"deletedObjectsCount"`
 	AddedLinksCount      int    `json:"addedLinksCount"`
 	DeletedLinksCount    int    `json:"deletedLinksCount"`
+	// Edits is the Foundry ObjectEdits `edits[]` per-edit detail array. It is
+	// populated for returnEdits=ALL / ALL_V2_WITH_DELETIONS and omitted (nil)
+	// otherwise — the five counts above always carry the totals regardless.
+	// See buildObjectEdits for the ALL-vs-deletions rendering rules.
+	Edits []ObjectEdit `json:"edits,omitempty"`
+}
+
+// ObjectEdit is one entry in the Foundry OSv2 ObjectEdits `edits[]` detail
+// array — a discriminated union keyed by Type:
+//
+//   - addObject / modifyObject / deleteObject carry PrimaryKey + ObjectType.
+//   - addLink / deleteLink carry LinkTypeApiNameAtoB / BtoA plus the A-side
+//     and B-side LinkSideObject descriptors.
+//
+// Field JSON names mirror the Foundry wire contract exactly, including the
+// AtoB / BtoA casing (ref: osdk-ts PR #1271 and foundry-platform-python's
+// ObjectEdit / AddObject / ModifyObject / AddLink models).
+type ObjectEdit struct {
+	Type string `json:"type"`
+
+	// Object variant (addObject / modifyObject / deleteObject). PrimaryKey is
+	// Foundry's PropertyValue; Weave primary keys are always strings so it is
+	// rendered as a string.
+	PrimaryKey string `json:"primaryKey,omitempty"`
+	ObjectType string `json:"objectType,omitempty"`
+
+	// Link variant (addLink / deleteLink). The Go field names use the API
+	// initialism (LinkTypeAPINameAtoB) while the JSON tags keep Foundry's
+	// linkTypeApiNameAtoB / BtoA wire casing.
+	LinkTypeAPINameAtoB string          `json:"linkTypeApiNameAtoB,omitempty"`
+	LinkTypeAPINameBtoA string          `json:"linkTypeApiNameBtoA,omitempty"`
+	ASideObject         *LinkSideObject `json:"aSideObject,omitempty"`
+	BSideObject         *LinkSideObject `json:"bSideObject,omitempty"`
+}
+
+// LinkSideObject identifies one endpoint of a link edit (Foundry's
+// LinkSideObject: {objectType, primaryKey}).
+type LinkSideObject struct {
+	PrimaryKey string `json:"primaryKey"`
+	ObjectType string `json:"objectType"`
 }
 
 // SyncApplyActionResponseV2 is the Foundry OSv2 response envelope for single apply.
@@ -156,6 +196,89 @@ func countEdits(edits []funnel.Edit) *ActionResults {
 		}
 	}
 	return r
+}
+
+// buildActionResults produces the Foundry ActionResults edit summary: the five
+// counts (via countEdits) plus the ObjectEdits `edits[]` detail array.
+// returnEdits selects deletion rendering: ALL_V2_WITH_DELETIONS renders every
+// variant, ALL renders only the non-deletion variants (deletedObjectsCount /
+// deletedLinksCount still carry the totals). Callers gate the whole
+// ActionResults on returnEdits=NONE upstream, so this never sees NONE.
+func buildActionResults(edits []funnel.Edit, returnEdits string) *ActionResults {
+	r := countEdits(edits)
+	r.Edits = buildObjectEdits(edits, returnEdits == "ALL_V2_WITH_DELETIONS")
+	return r
+}
+
+// foundryEditVariant maps a funnel.EditType to its Foundry ObjectEdit `type`
+// discriminator, reporting whether the variant is a deletion (deleteObject /
+// deleteLink). Deletions only appear in the `edits[]` detail array under
+// returnEdits=ALL_V2_WITH_DELETIONS (osdk-ts #1271). An unrecognized edit type
+// yields an empty variant so callers can skip it.
+func foundryEditVariant(t funnel.EditType) (variant string, isDeletion bool) {
+	switch t {
+	case funnel.EditTypeCreate:
+		return "addObject", false
+	case funnel.EditTypeModify:
+		return "modifyObject", false
+	case funnel.EditTypeDelete:
+		return "deleteObject", true
+	case funnel.EditTypeLinkCreate:
+		return "addLink", false
+	case funnel.EditTypeLinkDelete:
+		return "deleteLink", true
+	default:
+		return "", false
+	}
+}
+
+// buildObjectEdits renders the Foundry ObjectEdits `edits[]` detail array from
+// the applied edits. When includeDeletions is false (returnEdits=ALL) the
+// deleteObject / deleteLink variants are dropped while their counts remain in
+// ActionResults; when true (ALL_V2_WITH_DELETIONS) every edit is rendered.
+// Returns nil (→ omitted on the wire) when nothing is rendered.
+func buildObjectEdits(edits []funnel.Edit, includeDeletions bool) []ObjectEdit {
+	out := make([]ObjectEdit, 0, len(edits))
+	for i := range edits {
+		variant, isDeletion := foundryEditVariant(edits[i].Type)
+		if variant == "" || (isDeletion && !includeDeletions) {
+			continue
+		}
+		out = append(out, objectEditFromEdit(&edits[i], variant))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// objectEditFromEdit converts a single funnel.Edit into its Foundry ObjectEdit
+// union member. Link edits (addLink / deleteLink) emit the aSide/bSide
+// descriptors from the enrichment resolveLinkEdits stamped on the edit; object
+// edits emit the primaryKey + objectType pair.
+func objectEditFromEdit(e *funnel.Edit, variant string) ObjectEdit {
+	switch e.Type {
+	case funnel.EditTypeLinkCreate, funnel.EditTypeLinkDelete:
+		return ObjectEdit{
+			Type:                variant,
+			LinkTypeAPINameAtoB: e.LinkTypeAPINameAtoB,
+			LinkTypeAPINameBtoA: e.LinkTypeAPINameBtoA,
+			ASideObject: &LinkSideObject{
+				PrimaryKey: e.PrimaryKey,
+				ObjectType: e.LinkSourceObjectType,
+			},
+			BSideObject: &LinkSideObject{
+				PrimaryKey: e.TargetPrimaryKey,
+				ObjectType: e.LinkTargetObjectType,
+			},
+		}
+	default:
+		return ObjectEdit{
+			Type:       variant,
+			PrimaryKey: e.PrimaryKey,
+			ObjectType: e.ObjectType,
+		}
+	}
 }
 
 // ValidateActionResponse is Foundry's ValidateActionResponseV2: the response
@@ -624,9 +747,36 @@ func (e *Executor) resolveLinkEdits(ctx context.Context, ontologyRID string, edi
 			continue
 		}
 		lt, err := e.omsRepo.GetLinkTypeByAPIName(ctx, ontologyRID, apiName)
-		if err == nil && lt != nil {
-			edits[i].LinkTypeRID = lt.RID
+		if err != nil || lt == nil {
+			continue
 		}
+		// Capture the Foundry ObjectEdit link-variant metadata BEFORE
+		// overwriting LinkTypeRID — the forward api name lives in the current
+		// LinkTypeRID field and would otherwise be lost.
+		e.enrichLinkEdit(ctx, &edits[i], lt)
+		edits[i].LinkTypeRID = lt.RID
+	}
+}
+
+// enrichLinkEdit stamps the Foundry ObjectEdit link-variant metadata onto a
+// LINK_CREATE / LINK_DELETE edit from its resolved LinkType: the forward
+// (AtoB) api name, the A-side / B-side object type api names, and — when the
+// LinkType declares an inverse partner — the reverse (BtoA) api name. Foundry's
+// direction convention maps the LinkType's source object to the A side and the
+// target object to the B side, so the forward LinkType api name is AtoB and its
+// inverse partner's api name is BtoA. The BtoA name degrades to "" when no
+// InverseLinkRID is configured or the partner lookup fails; the rest of the
+// variant is still emitted so SDK clients get the aSide / bSide objects and the
+// forward name.
+func (e *Executor) enrichLinkEdit(ctx context.Context, edit *funnel.Edit, lt *oms.LinkType) {
+	edit.LinkTypeAPINameAtoB = lt.APIName
+	edit.LinkSourceObjectType = lt.SourceObjectType
+	edit.LinkTargetObjectType = lt.TargetObjectType
+	if lt.InverseLinkRID == "" {
+		return
+	}
+	if inv, err := e.omsRepo.GetLinkType(ctx, lt.InverseLinkRID); err == nil && inv != nil {
+		edit.LinkTypeAPINameBtoA = inv.APIName
 	}
 }
 

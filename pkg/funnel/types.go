@@ -56,6 +56,21 @@ type Edit struct {
 	// pre-US-471 wire shapes. omitempty so legacy consumers and replay
 	// streams keep decoding cleanly.
 	EditVersion int64 `json:"editVersion,omitempty"`
+	// Foundry ObjectEdit link-variant metadata (apply-response
+	// `edits.edits[]` addLink / deleteLink shape). The action executor
+	// stamps these onto LINK_CREATE / LINK_DELETE edits in resolveLinkEdits
+	// — captured from the resolved LinkType BEFORE LinkTypeRID is overwritten
+	// from api name to RID — so the HTTP layer can render Foundry's
+	// linkTypeApiNameAtoB / BtoA + aSide / bSide descriptors without a second
+	// OMS round-trip. AtoB is the forward (source→target) link api name;
+	// BtoA is the inverse partner's api name ("" when the LinkType declares
+	// no inverse). LinkSourceObjectType / LinkTargetObjectType are the A-side
+	// / B-side object type api names. All omitempty — object edits and
+	// pre-parity wire shapes leave them blank.
+	LinkTypeAPINameAtoB  string `json:"linkTypeApiNameAtoB,omitempty"`
+	LinkTypeAPINameBtoA  string `json:"linkTypeApiNameBtoA,omitempty"`
+	LinkSourceObjectType string `json:"linkSourceObjectType,omitempty"`
+	LinkTargetObjectType string `json:"linkTargetObjectType,omitempty"`
 }
 
 // EditBatch represents a batch of edits to be applied atomically.

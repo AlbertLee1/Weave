@@ -146,9 +146,10 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate returnEdits enum (Foundry OSv2). ALL and
-	// ALL_V2_WITH_DELETIONS currently behave identically — the summary
-	// counts are returned either way; per-edit detail arrays are a
-	// separate iteration.
+	// ALL_V2_WITH_DELETIONS both return the summary counts and the
+	// `edits[]` detail array; they differ only in whether the detail array
+	// includes deleteObject / deleteLink variants (ALL_V2_WITH_DELETIONS does,
+	// ALL does not — see buildObjectEdits).
 	if returnEdits != "ALL" && returnEdits != "ALL_V2_WITH_DELETIONS" && returnEdits != "NONE" {
 		apierror.WriteJSON(w, apierror.NewInvalidParameter("InvalidReturnEdits",
 			map[string]string{"returnEdits": returnEdits, "allowed": "ALL, ALL_V2_WITH_DELETIONS, NONE"}))
@@ -232,7 +233,7 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		Validation:  validValidationReport(h.paramValidationRows(r.Context(), ontologyRID, action)),
 	}
 	if returnEdits != "NONE" {
-		resp.Edits = countEdits(result.Edits)
+		resp.Edits = buildActionResults(result.Edits, returnEdits)
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, resp)
@@ -436,7 +437,7 @@ func runAsyncApply(ctx context.Context, exec *Executor, store ActionJobStore, jo
 	// to the sync path once the job completes.
 	resp := &SyncApplyActionResponseV2{OperationID: result.BatchID}
 	if returnEdits != "NONE" {
-		resp.Edits = countEdits(result.Edits)
+		resp.Edits = buildActionResults(result.Edits, returnEdits)
 	}
 	resultJSON, _ := json.Marshal(resp)
 
@@ -552,7 +553,7 @@ func runAsyncApplyBatch(ctx context.Context, exec *Executor, store ActionJobStor
 		// Empty batch is a no-op success.
 		resp := &BatchApplyActionResponseV2{}
 		if returnEdits != "NONE" {
-			resp.Edits = countEdits(nil)
+			resp.Edits = buildActionResults(nil, returnEdits)
 		}
 		resultJSON, _ := json.Marshal(resp)
 		doneProg := 100
@@ -624,7 +625,11 @@ func runAsyncApplyBatch(ctx context.Context, exec *Executor, store ActionJobStor
 
 	resp := &BatchApplyActionResponseV2{}
 	if returnEdits != "NONE" {
-		resp.Edits = &ActionResults{Type: "edits"}
+		// Async batch applies actions one-by-one and does not accumulate the
+		// per-action edits into a combined summary, so the completed job
+		// reports an empty ActionResults (zero counts + no detail array) —
+		// pre-existing behavior, unchanged by the detail-array work.
+		resp.Edits = buildActionResults(nil, returnEdits)
 	}
 	resultJSON, _ := json.Marshal(resp)
 	doneProg := 100
@@ -929,7 +934,7 @@ func (h *Handler) ApplyWithOverrides(w http.ResponseWriter, r *http.Request) {
 		Validation:  validValidationReport(h.paramValidationRows(r.Context(), ontologyRID, action)),
 	}
 	if returnEdits != "NONE" {
-		resp.Edits = countEdits(result.Edits)
+		resp.Edits = buildActionResults(result.Edits, returnEdits)
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, resp)
@@ -1032,7 +1037,7 @@ func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		resp := &BatchApplyActionResponseV2{}
 		if returnEdits != "NONE" {
-			resp.Edits = countEdits(sagaResult.AppliedEdits)
+			resp.Edits = buildActionResults(sagaResult.AppliedEdits, returnEdits)
 		}
 		httputil.WriteJSON(w, http.StatusOK, resp)
 		return
@@ -1068,7 +1073,7 @@ func (h *Handler) ApplyBatch(w http.ResponseWriter, r *http.Request) {
 	// Build BatchApplyActionResponseV2 envelope.
 	resp := &BatchApplyActionResponseV2{}
 	if returnEdits != "NONE" {
-		resp.Edits = countEdits(result.AppliedEdits)
+		resp.Edits = buildActionResults(result.AppliedEdits, returnEdits)
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, resp)
@@ -1148,9 +1153,12 @@ func (h *Handler) Revert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Revert has no returnEdits knob; surface the full detail (including
+	// deletion variants, which reverting a CREATE naturally produces) so the
+	// Undo toast can render exactly what was undone.
 	resp := &SyncApplyActionResponseV2{
 		OperationID: result.BatchID,
-		Edits:       countEdits(result.Edits),
+		Edits:       buildActionResults(result.Edits, "ALL_V2_WITH_DELETIONS"),
 	}
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
