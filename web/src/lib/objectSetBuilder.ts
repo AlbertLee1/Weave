@@ -407,6 +407,7 @@ const SUPPORTED_WHERE_OPERATORS = new Set([
   'doesNotIntersectPolygon',
   'doesNotIntersectBoundingBox',
   'withinDistanceOf',
+  'geoShapeV2',
 ]);
 
 const VALUE_OPTIONAL_WHERE_OPERATORS = new Set(['isNull']);
@@ -495,6 +496,33 @@ function validateWhereClause(where: WhereClause, errors: string[]): void {
     if (relativeStartTime == null && relativeEndTime == null) {
       errors.push(
         'filter where clause relativeDateRange requires at least one of relativeStartTime / relativeEndTime',
+      );
+    }
+    return;
+  }
+
+  // Foundry GeoShapeV2Query (type === 'geoShapeV2') carries its payload in
+  // `geometry` (an "envelope" bounding box or a "geoJson" GeoJSON geometry
+  // string) and `spatialFilterMode` rather than `value` — validate those and
+  // skip the generic value requirement.
+  if (type === 'geoShapeV2') {
+    const { geometry, spatialFilterMode } = where as {
+      geometry?: { type?: unknown };
+      spatialFilterMode?: unknown;
+    };
+    if (
+      typeof geometry !== 'object' ||
+      geometry === null ||
+      typeof geometry.type !== 'string'
+    ) {
+      errors.push('filter where clause geoShapeV2 requires a geometry object');
+    }
+    if (
+      typeof spatialFilterMode !== 'string' ||
+      !['INTERSECTS', 'DISJOINT', 'WITHIN', 'CONTAINS'].includes(spatialFilterMode)
+    ) {
+      errors.push(
+        'filter where clause geoShapeV2 requires a spatialFilterMode of INTERSECTS/DISJOINT/WITHIN/CONTAINS',
       );
     }
     return;
