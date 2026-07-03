@@ -48,7 +48,8 @@ export function AttachmentLink({
     property,
   );
   const filename = meta.data?.filename || 'Download';
-  const size = meta.data ? formatBytes(meta.data.sizeBytes) : '';
+  // sizeBytes is a SafeLong string on the wire; coerce before formatting.
+  const size = meta.data ? formatBytes(Number(meta.data.sizeBytes)) : '';
 
   return (
     <div className="flex items-center gap-2">

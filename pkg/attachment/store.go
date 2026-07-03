@@ -16,10 +16,15 @@ import (
 
 // Attachment is the wire-compatible Foundry AttachmentV2 record plus a few
 // server-internal fields (CreatedAt, Linked) that do not leak to clients.
+//
+// SizeBytes carries the `,string` json option because Foundry models
+// AttachmentV2.sizeBytes as a SafeLong, which serializes on the wire as a JSON
+// string (e.g. "1024") rather than a bare number. The tag makes encoding emit
+// a quoted string and decoding accept one, matching Foundry's AttachmentsAPI.
 type Attachment struct {
 	RID       string    `json:"rid"`
 	Filename  string    `json:"filename"`
-	SizeBytes int64     `json:"sizeBytes"`
+	SizeBytes int64     `json:"sizeBytes,string"`
 	MediaType string    `json:"mediaType"`
 	CreatedAt time.Time `json:"-"`
 	Linked    bool      `json:"-"`

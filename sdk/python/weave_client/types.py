@@ -312,6 +312,10 @@ class Attachment(_CamelModel):
     property value on a persisted object — a GC pass can safely
     delete orphan blobs without losing user uploads that just
     haven't been wired to an object yet.
+
+    ``size_bytes`` is a Foundry SafeLong: the server serializes it on the
+    wire as a decimal string (e.g. ``"1024"``), which Pydantic coerces back
+    to ``int`` here so callers keep numeric ergonomics.
     """
     rid: str
     filename: str = ""
