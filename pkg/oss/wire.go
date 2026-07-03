@@ -193,6 +193,20 @@ func FormatObject(objectType string, primaryKey string, properties map[string]in
 	}
 }
 
+// OmitRID clears the WireObject's RID so MarshalJSON drops the reserved
+// `__rid` key, implementing Foundry's excludeRid=true contract. The receiver
+// is mutated in place and returned for chaining; the read paths only invoke it
+// on freshly-built, request-scoped objects that are never shared across
+// goroutines. A nil receiver is a no-op. The `__primaryKey` / `__apiName`
+// reserved keys and every property field are untouched.
+func (wo *WireObject) OmitRID() *WireObject {
+	if wo == nil {
+		return nil
+	}
+	wo.RID = ""
+	return wo
+}
+
 // ObjectPage is a paginated list of objects.
 type ObjectPage struct {
 	Data          []*WireObject `json:"data"`
