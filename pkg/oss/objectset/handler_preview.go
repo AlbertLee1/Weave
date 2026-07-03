@@ -24,6 +24,12 @@ type LoadObjectSetV2MultipleObjectTypesResponse struct {
 	NextPageToken      string                   `json:"nextPageToken,omitempty"`
 	TotalCount         string                   `json:"totalCount,omitempty"`
 	TotalCountAccuracy string                   `json:"totalCountAccuracy,omitempty"`
+	// InterfaceToObjectTypeMappings mirrors Foundry's interfaceToObjectTypeMappings:
+	// interfaceApiName -> objectTypeApiName -> {sharedPropertyTypeApiName: localPropertyApiName}.
+	// It is populated only when the returned object set's type scope includes
+	// interfaces (an interfaceBase somewhere in the ObjectSet); a plain
+	// object-type type scope omits it, matching Foundry.
+	InterfaceToObjectTypeMappings map[string]map[string]map[string]string `json:"interfaceToObjectTypeMappings,omitempty"`
 }
 
 // LoadObjectsMultipleObjectTypes handles
@@ -98,6 +104,12 @@ func (h *Handler) loadPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Foundry interfaceToObjectTypeMappings: when the ObjectSet's type scope
+	// includes any interface (an interfaceBase node), resolve the per-object-type
+	// SharedPropertyType -> local property mapping so polymorphic OSDK clients can
+	// rehydrate interface properties. Omitted for a pure object-type type scope.
+	ifaceMappings := h.interfaceToObjectTypeMappings(ctx, req.ObjectSet)
+
 	offset := 0
 	if req.PageToken != "" {
 		if cursor, err := pagination.DecodeCursor(req.PageToken); err == nil {
@@ -145,9 +157,10 @@ func (h *Handler) loadPreview(w http.ResponseWriter, r *http.Request) {
 		accuracy = "APPROXIMATE"
 	}
 	resp := &LoadObjectSetV2MultipleObjectTypesResponse{
-		Data:               data,
-		TotalCount:         strconv.Itoa(totalCount),
-		TotalCountAccuracy: accuracy,
+		Data:                          data,
+		TotalCount:                    strconv.Itoa(totalCount),
+		TotalCountAccuracy:            accuracy,
+		InterfaceToObjectTypeMappings: ifaceMappings,
 	}
 	if end < totalCount {
 		nextCursor := &pagination.Cursor{Offset: end}
@@ -155,6 +168,24 @@ func (h *Handler) loadPreview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// interfaceToObjectTypeMappings resolves the Foundry interfaceToObjectTypeMappings
+// wire field for the given ObjectSet definition. It collects the interface
+// apiNames in the definition's type scope and, if the executor's InterfaceResolver
+// also satisfies InterfacePropertyMappingResolver, assembles the
+// interface -> objectType -> {SPT -> localProperty} mapping. Returns nil (field
+// omitted) for a pure object-type type scope or when no resolver is wired.
+func (h *Handler) interfaceToObjectTypeMappings(ctx context.Context, def *Definition) map[string]map[string]map[string]string {
+	ifaceNames := collectInterfaceTypes(def)
+	if len(ifaceNames) == 0 {
+		return nil
+	}
+	resolver, ok := h.executor.interfaceResol.(InterfacePropertyMappingResolver)
+	if !ok {
+		return nil
+	}
+	return buildInterfaceToObjectTypeMappings(ctx, resolver, ifaceNames)
 }
 
 // writePreviewInterfacePage paginates a polymorphic interfaceBase Result using
@@ -282,10 +313,14 @@ func (h *Handler) writePreviewInterfacePage(w http.ResponseWriter, ctx context.C
 	if result.Truncated {
 		accuracy = "APPROXIMATE"
 	}
+	// Foundry interfaceToObjectTypeMappings: the interface type scope maps each
+	// interface's SharedPropertyTypes back to per-object-type local properties.
+	ifaceMappings := h.interfaceToObjectTypeMappings(ctx, req.ObjectSet)
 	resp := &LoadObjectSetV2MultipleObjectTypesResponse{
-		Data:               data,
-		TotalCount:         strconv.Itoa(totalCount),
-		TotalCountAccuracy: accuracy,
+		Data:                          data,
+		TotalCount:                    strconv.Itoa(totalCount),
+		TotalCountAccuracy:            accuracy,
+		InterfaceToObjectTypeMappings: ifaceMappings,
 	}
 
 	// Emit a MultiTypeCursor containing only the non-exhausted sub-cursors.
