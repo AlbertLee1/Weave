@@ -254,6 +254,7 @@ func (h *Handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 		PageSize:    pageSize,
 		PageToken:   r.URL.Query().Get("pageToken"),
 		OrderBy:     r.URL.Query().Get("orderBy"),
+		Select:      parseSelectQueryParam(r.URL.Query()["select"]),
 		ExcludeRID:  parseExcludeRID(r.URL.Query().Get("excludeRid")),
 	})
 	if err != nil {
@@ -536,6 +537,30 @@ func splitRegexQueryParam(raw string) (field, pattern string, ok bool) {
 		return "", "", false
 	}
 	return field, pattern, true
+}
+
+// parseSelectQueryParam reads Foundry's `?select=` list projection query
+// parameter. Foundry models select as an array, so both the repeated form
+// (`?select=a&select=b`) and the CSV shorthand (`?select=a,b`) are accepted;
+// each value is split on commas and trimmed. An absent parameter (or one that
+// resolves to no non-empty names) returns nil so the service keeps the
+// "return everything" default. Mirrors the search-body select projection.
+func parseSelectQueryParam(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			if p := strings.TrimSpace(part); p != "" {
+				out = append(out, p)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // parseExcludeRID reads Foundry's `?excludeRid=true` list query parameter.

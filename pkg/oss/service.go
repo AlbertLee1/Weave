@@ -19,7 +19,19 @@ type ListObjectsRequest struct {
 	ObjectType  string
 	PageSize    int
 	PageToken   string
-	OrderBy     string // field to sort by (optional)
+	// OrderBy is the `?orderBy=` query-param string. It accepts both the
+	// Foundry list form `properties.{apiName}:{asc|desc}` and the legacy bare
+	// `{field}:{asc|desc}` form; parseOrderBy strips the optional `properties.`
+	// prefix so both resolve to the same Bleve sort field (optional).
+	OrderBy string
+	// Select, when non-empty, is the Foundry `?select=` list projection: the
+	// response object retains ONLY these property apiNames (plus the primary
+	// key field and the security _markings field, mirroring the search-body
+	// select). An empty Select is Foundry's "return everything" default and
+	// leaves the full property set untouched. The projection is applied in the
+	// service after every security pass so it can never widen a
+	// policy-restricted view.
+	Select []string
 	// ExcludeRID mirrors Foundry's `?excludeRid=true` query parameter. When
 	// true the reserved `__rid` key is omitted from every returned object; the
 	// default (false) keeps `__rid` so existing callers see no change.

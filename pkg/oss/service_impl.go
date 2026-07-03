@@ -566,9 +566,13 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 		return nil, err
 	}
 
+	// Foundry's list endpoint defaults to 1000, unlike the shared 100 default
+	// the search / linked-object / interface paths keep. ListDefaultPageSize is
+	// a list-local override so this larger default never leaks into those other
+	// endpoints. MaxPageSize (1000) still caps oversized explicit requests.
 	pageSize := req.PageSize
 	if pageSize <= 0 {
-		pageSize = pagination.DefaultPageSize
+		pageSize = pagination.ListDefaultPageSize
 	}
 	if pageSize > pagination.MaxPageSize {
 		pageSize = pagination.MaxPageSize
@@ -622,9 +626,14 @@ func (s *ServiceImpl) ListObjects(ctx context.Context, req ListObjectsRequest) (
 	filtered = s.applyPropertyVisibility(ctx, ot, filtered)
 	filtered = s.applyColumnMasking(ctx, ot, filtered)
 	filtered = s.applyCellMasking(ctx, ot, filtered)
-	// Foundry excludeRid: strip __rid as the terminal pass when the caller
-	// passed ?excludeRid=true. No-op (keeps __rid) by default.
-	page.Data = applyExcludeRID(filtered, req.ExcludeRID)
+	// Foundry select projection (applied LAST, after every security pass so it
+	// can only ever narrow — never widen — a policy-restricted view). No-op when
+	// the caller sent no ?select. Foundry excludeRid then strips __rid as the
+	// terminal pass; both default to no-op so the wire shape is unchanged.
+	page.Data = applyExcludeRID(
+		s.applySelectProjection(filtered, req.Select, ot.PrimaryKey),
+		req.ExcludeRID,
+	)
 
 	// Set next page token if there are more results
 	nextOffset := cursor.Offset + pageSize
@@ -953,6 +962,12 @@ func collectFacetBuckets(result *bleve.SearchResult, field string) []FacetBucket
 // parseOrderBy converts an orderBy string like "field:asc" or "field:desc" into
 // a Bleve sort order slice. Bleve uses "-field" for descending, "field" for ascending.
 // Multiple fields can be comma-separated: "field1:asc,field2:desc".
+//
+// Each field accepts both the Foundry list form "properties.{apiName}:{dir}"
+// and the legacy bare "{field}:{dir}" form: an optional leading "properties."
+// prefix is stripped so both resolve to the same Bleve sort field (properties
+// are indexed flat under their apiName). Stripping is purely additive — bare
+// fields keep working unchanged.
 func parseOrderBy(orderBy string) []string {
 	parts := strings.Split(orderBy, ",")
 	result := make([]string, 0, len(parts))
@@ -964,6 +979,7 @@ func parseOrderBy(orderBy string) []string {
 		// Split on ":" to separate field and direction.
 		fieldDir := strings.SplitN(part, ":", 2)
 		field := strings.TrimSpace(fieldDir[0])
+		field = strings.TrimPrefix(field, "properties.")
 		if field == "" {
 			continue
 		}
