@@ -531,7 +531,7 @@ func (h *OMSHandler) ListOutgoingLinkTypes(w http.ResponseWriter, r *http.Reques
 	wireList := make([]json.RawMessage, 0, len(list))
 	for i := range list {
 		linked := farEndAPIName(r.Context(), repo, memo, list[i].TargetObjectType)
-		data, err := list[i].ToLinkTypeSideV2JSON(linked)
+		data, err := list[i].ToLinkTypeSideV2JSON(linked, OutgoingLinkSide)
 		if err != nil {
 			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 			return
@@ -584,7 +584,7 @@ func (h *OMSHandler) GetOutgoingLinkTypeV2(w http.ResponseWriter, r *http.Reques
 			continue
 		}
 		linked := farEndAPIName(r.Context(), repo, memo, list[i].TargetObjectType)
-		data, err := list[i].ToLinkTypeSideV2JSON(linked)
+		data, err := list[i].ToLinkTypeSideV2JSON(linked, OutgoingLinkSide)
 		if err != nil {
 			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 			return
@@ -641,7 +641,7 @@ func (h *OMSHandler) ListIncomingLinkTypes(w http.ResponseWriter, r *http.Reques
 	wireList := make([]json.RawMessage, 0, len(list))
 	for i := range list {
 		linked := farEndAPIName(r.Context(), repo, memo, list[i].SourceObjectType)
-		data, err := list[i].ToLinkTypeSideV2JSON(linked)
+		data, err := list[i].ToLinkTypeSideV2JSON(linked, IncomingLinkSide)
 		if err != nil {
 			apierror.WriteJSON(w, apierror.NewInternal("SerializationFailed", nil))
 			return

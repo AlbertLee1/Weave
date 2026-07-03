@@ -426,13 +426,77 @@ func (lt *LinkType) ForeignKeyPropertyAPIName() string {
 	return cfg.SourceProperty
 }
 
+// LinkSideDirection selects which end of a LinkType a LinkTypeSideV2
+// serialization describes. It lets ToLinkTypeSideV2JSON map the stored
+// Weave cardinality to the Foundry LinkTypeSideCardinality (ONE | MANY)
+// value that reflects the FAR (linked) side's multiplicity as seen from
+// the queried object type.
+type LinkSideDirection int
+
+const (
+	// OutgoingLinkSide describes a link from its SOURCE object type
+	// (GET /objectTypes/{ot}/outgoingLinkTypes): the far/linked end is
+	// the link's TARGET.
+	OutgoingLinkSide LinkSideDirection = iota
+	// IncomingLinkSide describes a link from its TARGET object type
+	// (GET /objectTypes/{ot}/incomingLinkTypes): the far/linked end is
+	// the link's SOURCE.
+	IncomingLinkSide
+)
+
+// splitWeaveCardinality decomposes a Weave SOURCE_TO_TARGET cardinality
+// into its per-side Foundry tokens (ONE | MANY). ok is false for values
+// that are not one of the four recognized Weave cardinalities.
+func splitWeaveCardinality(weaveCardinality string) (source, target string, ok bool) {
+	switch weaveCardinality {
+	case "ONE_TO_ONE":
+		return "ONE", "ONE", true
+	case "ONE_TO_MANY":
+		return "ONE", "MANY", true
+	case "MANY_TO_ONE":
+		return "MANY", "ONE", true
+	case "MANY_TO_MANY":
+		return "MANY", "MANY", true
+	default:
+		return "", "", false
+	}
+}
+
+// foundryLinkSideCardinality maps a Weave SOURCE_TO_TARGET cardinality
+// (ONE_TO_ONE / ONE_TO_MANY / MANY_TO_ONE / MANY_TO_MANY) to the Foundry
+// LinkTypeSideCardinality (ONE | MANY). Foundry's
+// LinkTypeSideV2.cardinality answers "how many objects of the LINKED
+// (far) side does a single object on the queried side reach", so it
+// takes the multiplicity of the far end:
+//
+//   - OutgoingLinkSide (queried = source, far = target): the TARGET token.
+//     ONE_TO_ONE→ONE, ONE_TO_MANY→MANY, MANY_TO_ONE→ONE, MANY_TO_MANY→MANY.
+//   - IncomingLinkSide (queried = target, far = source): the SOURCE token.
+//     ONE_TO_ONE→ONE, ONE_TO_MANY→ONE, MANY_TO_ONE→MANY, MANY_TO_MANY→MANY.
+//
+// Values that are already in ONE|MANY form, or otherwise unrecognized,
+// pass through unchanged so a malformed row never loses information.
+func foundryLinkSideCardinality(weaveCardinality string, dir LinkSideDirection) string {
+	source, target, ok := splitWeaveCardinality(weaveCardinality)
+	if !ok {
+		return weaveCardinality
+	}
+	if dir == IncomingLinkSide {
+		return source
+	}
+	return target
+}
+
 // ToLinkTypeSideV2JSON returns the Foundry LinkTypeSideV2 wire format
 // used by the outgoing/incoming link-type read surfaces
 // (GET /objectTypes/{ot}/outgoingLinkTypes[/{linkType}] and
 // /incomingLinkTypes). linkedObjectTypeAPIName is the api name of the
 // object type at the FAR end of the link relative to the queried
 // object type (Foundry semantics: `objectTypeApiName` names the
-// linked side, NOT the side you asked from).
+// linked side, NOT the side you asked from). dir selects that far end
+// (OutgoingLinkSide → target, IncomingLinkSide → source) so cardinality
+// is emitted as the Foundry LinkTypeSideCardinality (ONE | MANY) for the
+// linked side — see foundryLinkSideCardinality.
 //
 // Contract fields: apiName, displayName, status, objectTypeApiName,
 // cardinality, foreignKeyPropertyApiName (FK links only), linkTypeRid.
@@ -451,13 +515,13 @@ func (lt *LinkType) ForeignKeyPropertyAPIName() string {
 // legacy ToWireJSON/struct-tag shape where objectTypeApiName is the
 // SOURCE — this serializer is intentionally scoped to the per-object-
 // type link-side surfaces.
-func (lt *LinkType) ToLinkTypeSideV2JSON(linkedObjectTypeAPIName string) ([]byte, error) {
+func (lt *LinkType) ToLinkTypeSideV2JSON(linkedObjectTypeAPIName string, dir LinkSideDirection) ([]byte, error) {
 	wire := map[string]interface{}{
 		"apiName":           lt.APIName,
 		"displayName":       lt.DisplayName,
 		"status":            "ACTIVE",
 		"objectTypeApiName": linkedObjectTypeAPIName,
-		"cardinality":       lt.Cardinality,
+		"cardinality":       foundryLinkSideCardinality(lt.Cardinality, dir),
 		"linkTypeRid":       lt.RID,
 		// Deprecated aliases — see doc comment.
 		"rid":                     lt.RID,

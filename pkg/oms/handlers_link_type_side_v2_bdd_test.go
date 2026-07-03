@@ -147,6 +147,15 @@ func TestBDD_OutgoingLinkTypes_LinkTypeSideV2(t *testing.T) {
 		if got := assignedTo["objectTypeApiName"]; got != "Project" {
 			t.Errorf("assignedTo objectTypeApiName=%v, want Project", got)
 		}
+		// Foundry LinkTypeSideCardinality (ONE | MANY) for the linked side:
+		// worksIn is MANY_TO_ONE, so from its source (outgoing) it reaches
+		// ONE Department; assignedTo is MANY_TO_MANY, so it reaches MANY.
+		if got := worksIn["cardinality"]; got != "ONE" {
+			t.Errorf("outgoing worksIn cardinality=%v, want ONE", got)
+		}
+		if got := assignedTo["cardinality"]; got != "MANY" {
+			t.Errorf("outgoing assignedTo cardinality=%v, want MANY", got)
+		}
 	})
 
 	t.Run("FK link exposes foreignKeyPropertyApiName; M2M omits it", func(t *testing.T) {
@@ -206,5 +215,114 @@ func TestBDD_OutgoingLinkTypes_LinkTypeSideV2(t *testing.T) {
 		if got := worksIn["status"]; got != "ACTIVE" {
 			t.Errorf("incoming worksIn status=%v, want ACTIVE", got)
 		}
+		// Direction flips the far end: worksIn is MANY_TO_ONE, so from its
+		// target (incoming, Department) it is reached by MANY Employees.
+		if got := worksIn["cardinality"]; got != "MANY" {
+			t.Errorf("incoming worksIn cardinality=%v, want MANY", got)
+		}
+	})
+}
+
+// TestBDD_LinkTypeSideV2_CardinalityOneMany locks the Foundry
+// LinkTypeSideCardinality (ONE | MANY) mapping onto the
+// outgoing/incoming link-side HTTP surfaces for the two most common
+// Weave cardinalities: ONE_TO_MANY and MANY_TO_MANY. Foundry's
+// LinkTypeSideV2.cardinality names the multiplicity of the LINKED (far)
+// side relative to the queried object type, so it flips with direction:
+//
+//   - ONE_TO_MANY Category--hasProducts-->Product:
+//     outgoing (from Category, far = Product) → MANY;
+//     incoming (from Product, far = Category) → ONE.
+//   - MANY_TO_MANY Order--orderProducts-->Product:
+//     outgoing → MANY; incoming → MANY.
+func TestBDD_LinkTypeSideV2_CardinalityOneMany(t *testing.T) {
+	const (
+		ontRID  = "ri.ontology.main.ontology.1"
+		otCat   = "ri.ontology.main.object-type.cat"
+		otProd  = "ri.ontology.main.object-type.prod"
+		otOrder = "ri.ontology.main.object-type.order"
+		ltHasP  = "ri.ontology.main.link-type.hasProducts"
+		ltOrdP  = "ri.ontology.main.link-type.orderProducts"
+	)
+
+	newServer := func(t *testing.T) *chi.Mux {
+		t.Helper()
+		repo := &mockRepo{}
+		repo.ontologies = append(repo.ontologies, oms.Ontology{
+			RID: ontRID, APIName: "shop", DisplayName: "Shop",
+		})
+		repo.objectTypes = append(repo.objectTypes,
+			oms.ObjectType{RID: otCat, OntologyRID: ontRID, APIName: "Category", PrimaryKey: "id"},
+			oms.ObjectType{RID: otProd, OntologyRID: ontRID, APIName: "Product", PrimaryKey: "id"},
+			oms.ObjectType{RID: otOrder, OntologyRID: ontRID, APIName: "Order", PrimaryKey: "id"},
+		)
+		repo.linkTypes = append(repo.linkTypes,
+			oms.LinkType{
+				RID: ltHasP, OntologyRID: ontRID, APIName: "hasProducts",
+				DisplayName:      "Has Products",
+				SourceObjectType: otCat, TargetObjectType: otProd,
+				Cardinality: "ONE_TO_MANY",
+			},
+			oms.LinkType{
+				RID: ltOrdP, OntologyRID: ontRID, APIName: "orderProducts",
+				DisplayName:      "Order Products",
+				SourceObjectType: otOrder, TargetObjectType: otProd,
+				Cardinality:     "MANY_TO_MANY",
+				JoinTableConfig: json.RawMessage(`{"table":"order_product"}`),
+			},
+		)
+		handler := oms.NewOMSHandler(repo)
+		r := chi.NewRouter()
+		r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/outgoingLinkTypes",
+			handler.ListOutgoingLinkTypes)
+		r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/incomingLinkTypes",
+			handler.ListIncomingLinkTypes)
+		return r
+	}
+
+	listLinks := func(t *testing.T, r *chi.Mux, otAPIName, direction string) map[string]map[string]interface{} {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/v2/ontologies/"+ontRID+"/objectTypes/"+otAPIName+"/"+direction, nil)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Data []map[string]interface{} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v; body=%s", err, rec.Body.String())
+		}
+		byAPIName := make(map[string]map[string]interface{}, len(resp.Data))
+		for _, lt := range resp.Data {
+			name, _ := lt["apiName"].(string)
+			byAPIName[name] = lt
+		}
+		return byAPIName
+	}
+
+	assertCard := func(t *testing.T, links map[string]map[string]interface{}, apiName, want string) {
+		t.Helper()
+		lt, ok := links[apiName]
+		if !ok {
+			t.Fatalf("%s missing from response: %v", apiName, links)
+		}
+		if got := lt["cardinality"]; got != want {
+			t.Errorf("%s cardinality=%v, want %s", apiName, got, want)
+		}
+	}
+
+	t.Run("ONE_TO_MANY outgoing reports MANY, incoming reports ONE", func(t *testing.T) {
+		r := newServer(t)
+		assertCard(t, listLinks(t, r, "Category", "outgoingLinkTypes"), "hasProducts", "MANY")
+		assertCard(t, listLinks(t, r, "Product", "incomingLinkTypes"), "hasProducts", "ONE")
+	})
+
+	t.Run("MANY_TO_MANY reports MANY in both directions", func(t *testing.T) {
+		r := newServer(t)
+		assertCard(t, listLinks(t, r, "Order", "outgoingLinkTypes"), "orderProducts", "MANY")
+		assertCard(t, listLinks(t, r, "Product", "incomingLinkTypes"), "orderProducts", "MANY")
 	})
 }

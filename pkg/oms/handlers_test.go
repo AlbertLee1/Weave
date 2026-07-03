@@ -1297,8 +1297,10 @@ func TestListOutgoingLinkTypes_WithData(t *testing.T) {
 	if lt["apiName"] != "employeeDept" {
 		t.Errorf("expected apiName 'employeeDept', got %v", lt["apiName"])
 	}
-	if lt["cardinality"] != "MANY_TO_ONE" {
-		t.Errorf("expected cardinality 'MANY_TO_ONE', got %v", lt["cardinality"])
+	// Foundry LinkTypeSideCardinality (ONE | MANY) for the linked side:
+	// a MANY_TO_ONE link seen from its source (outgoing) reaches ONE target.
+	if lt["cardinality"] != "ONE" {
+		t.Errorf("expected cardinality 'ONE', got %v", lt["cardinality"])
 	}
 }
 
