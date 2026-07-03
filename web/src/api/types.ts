@@ -341,6 +341,11 @@ export interface WhereClause {
   relativeStartTime?: RelativePointInTime;
   relativeEndTime?: RelativePointInTime;
   timeZoneId?: string;
+  // Foundry GeoShapeV2Query (type === 'geoShapeV2'): the payload lives in
+  // `geometry` (an "envelope" bounding box or a "geoJson" GeoJSON geometry
+  // string) and `spatialFilterMode`, not `value`.
+  geometry?: { type: string; [key: string]: unknown };
+  spatialFilterMode?: 'INTERSECTS' | 'DISJOINT' | 'WITHIN' | 'CONTAINS';
 }
 
 // Foundry OSv2 action apply options (mode + returnEdits).

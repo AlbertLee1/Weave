@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/geo"
 	"github.com/blevesearch/bleve/v2/search/query"
 )
 
@@ -102,6 +103,8 @@ func convertToBleveQueryUnwrapped(clause *WhereClause, opts *ConvertOptions) (qu
 		return convertDoesNotIntersectBoundingBox(clause)
 	case "withinDistanceOf":
 		return convertWithinDistanceOf(clause)
+	case "geoShapeV2":
+		return convertGeoShapeV2(clause)
 	default:
 		return nil, fmt.Errorf("unsupported where clause type: %q", clause.Type)
 	}
@@ -656,15 +659,13 @@ func convertDoesNotIntersectPolygon(clause *WhereClause) (query.Query, error) {
 	return bq, nil
 }
 
-// convertDoesNotIntersectBoundingBox handles the "doesNotIntersectBoundingBox" operator.
-// Uses GeoShapeQuery with a rectangular polygon so it works on both geopoint and geoshape fields.
-func convertDoesNotIntersectBoundingBox(clause *WhereClause) (query.Query, error) {
-	var bb BoundingBox
-	if err := json.Unmarshal(clause.Value, &bb); err != nil {
-		return nil, fmt.Errorf("doesNotIntersectBoundingBox value: %w", err)
-	}
-	// Convert bounding box to a rectangular polygon (counter-clockwise)
-	rectPolygon := [][][][]float64{{
+// boundingBoxRectPolygon converts a BoundingBox into the counter-clockwise
+// rectangular polygon (closed ring) that bleve.NewGeoShapeQuery expects. The
+// ring is expressed in [ring][point][lon,lat] order wrapped once more for the
+// [][][][]float64 polygon coordinate shape. Shared by the bounding-box
+// GeoShapeQuery paths (doesNotIntersectBoundingBox, geoShapeV2 envelope).
+func boundingBoxRectPolygon(bb BoundingBox) [][][][]float64 {
+	return [][][][]float64{{
 		{
 			{bb.TopLeft.Longitude, bb.BottomRight.Latitude},
 			{bb.BottomRight.Longitude, bb.BottomRight.Latitude},
@@ -673,7 +674,16 @@ func convertDoesNotIntersectBoundingBox(clause *WhereClause) (query.Query, error
 			{bb.TopLeft.Longitude, bb.BottomRight.Latitude},
 		},
 	}}
-	inner, err := bleve.NewGeoShapeQuery(rectPolygon, "polygon", "intersects")
+}
+
+// convertDoesNotIntersectBoundingBox handles the "doesNotIntersectBoundingBox" operator.
+// Uses GeoShapeQuery with a rectangular polygon so it works on both geopoint and geoshape fields.
+func convertDoesNotIntersectBoundingBox(clause *WhereClause) (query.Query, error) {
+	var bb BoundingBox
+	if err := json.Unmarshal(clause.Value, &bb); err != nil {
+		return nil, fmt.Errorf("doesNotIntersectBoundingBox value: %w", err)
+	}
+	inner, err := bleve.NewGeoShapeQuery(boundingBoxRectPolygon(bb), "polygon", "intersects")
 	if err != nil {
 		return nil, fmt.Errorf("doesNotIntersectBoundingBox: %w", err)
 	}
@@ -682,6 +692,147 @@ func convertDoesNotIntersectBoundingBox(clause *WhereClause) (query.Query, error
 	bq.AddMust(bleve.NewMatchAllQuery())
 	bq.AddMustNot(inner)
 	return bq, nil
+}
+
+// convertGeoShapeV2 handles the Foundry "geoShapeV2" operator (GeoShapeV2Query,
+// foundry-platform-python docs/v2/Ontologies/models/GeoShapeV2Query.md):
+//
+//	{"type":"geoShapeV2","field":"<prop>",
+//	 "geometry":{...GeoShapeV2Geometry...},
+//	 "spatialFilterMode":"INTERSECTS"|"DISJOINT"|"WITHIN"|"CONTAINS"}
+//
+// The geometry is the GeoShapeV2Geometry discriminated union: an "envelope"
+// bounding box (BoundingBoxValue) or a "geoJson" GeoJSON geometry string
+// (GeoJsonString — Point/MultiPoint/LineString/MultiLineString/Polygon/
+// MultiPolygon/GeometryCollection). Both compile to a Bleve GeoShapeQuery
+// over the field.
+//
+// spatialFilterMode (Foundry SpatialFilterMode) maps to Bleve GeoShapeQuery
+// relations: INTERSECTS→intersects, WITHIN→within, CONTAINS→contains.
+// DISJOINT has NO safe native Bleve equivalent: bleve's "disjoint" relation
+// only filters within the candidate set built from the query shape's S2
+// cover, so truly-disjoint (far-away) documents never enter that set and
+// would be silently dropped. DISJOINT is therefore expressed as
+// MatchAll MUST + intersects MUST_NOT — the same proven negation the sibling
+// doesNotIntersectPolygon / doesNotIntersectBoundingBox operators use.
+//
+// Note: like every GeoShapeQuery-backed operator in this package, geoShapeV2
+// matches geoshape-indexed fields; geopoint fields are matched by the
+// GeoBoundingBoxQuery/GeoDistanceQuery operators instead.
+func convertGeoShapeV2(clause *WhereClause) (query.Query, error) {
+	relation, negate, err := spatialFilterModeToRelation(clause.SpatialFilterMode)
+	if err != nil {
+		return nil, err
+	}
+
+	shapeQuery, err := buildGeoShapeV2GeometryQuery(clause.Geometry, relation, clause.Field)
+	if err != nil {
+		return nil, err
+	}
+
+	if negate {
+		bq := bleve.NewBooleanQuery()
+		bq.AddMust(bleve.NewMatchAllQuery())
+		bq.AddMustNot(shapeQuery)
+		return bq, nil
+	}
+	return shapeQuery, nil
+}
+
+// spatialFilterModeToRelation maps a Foundry SpatialFilterMode to the Bleve
+// GeoShapeQuery relation string and whether the resulting query must be
+// negated (DISJOINT). Unknown / empty modes are rejected as invalid input.
+func spatialFilterModeToRelation(mode string) (relation string, negate bool, err error) {
+	switch mode {
+	case "INTERSECTS":
+		return "intersects", false, nil
+	case "WITHIN":
+		return "within", false, nil
+	case "CONTAINS":
+		return "contains", false, nil
+	case "DISJOINT":
+		// Negated intersects — see convertGeoShapeV2 for why native
+		// "disjoint" cannot be used.
+		return "intersects", true, nil
+	case "":
+		return "", false, fmt.Errorf("geoShapeV2 requires a spatialFilterMode (INTERSECTS/DISJOINT/WITHIN/CONTAINS)")
+	default:
+		return "", false, fmt.Errorf("geoShapeV2 spatialFilterMode %q is not one of INTERSECTS/DISJOINT/WITHIN/CONTAINS", mode)
+	}
+}
+
+// buildGeoShapeV2GeometryQuery compiles the GeoShapeV2Geometry union into a
+// Bleve GeoShapeQuery with the given relation over the field.
+func buildGeoShapeV2GeometryQuery(rawGeometry json.RawMessage, relation, field string) (query.Query, error) {
+	if len(rawGeometry) == 0 {
+		return nil, fmt.Errorf("geoShapeV2 requires a geometry")
+	}
+	var disc struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(rawGeometry, &disc); err != nil {
+		return nil, fmt.Errorf("geoShapeV2 geometry: %w", err)
+	}
+	switch disc.Type {
+	case "envelope":
+		return buildGeoShapeV2Envelope(rawGeometry, relation, field)
+	case "geoJson":
+		return buildGeoShapeV2GeoJSON(rawGeometry, relation, field)
+	case "":
+		return nil, fmt.Errorf("geoShapeV2 geometry requires a type (envelope/geoJson)")
+	default:
+		return nil, fmt.Errorf("geoShapeV2 geometry type %q is not one of envelope/geoJson", disc.Type)
+	}
+}
+
+// buildGeoShapeV2Envelope compiles a GeoShapeV2Geometry "envelope"
+// (BoundingBoxValue) into a rectangular-polygon GeoShapeQuery.
+func buildGeoShapeV2Envelope(raw json.RawMessage, relation, field string) (query.Query, error) {
+	var bb BoundingBox
+	if err := json.Unmarshal(raw, &bb); err != nil {
+		return nil, fmt.Errorf("geoShapeV2 envelope geometry: %w", err)
+	}
+	q, err := bleve.NewGeoShapeQuery(boundingBoxRectPolygon(bb), "polygon", relation)
+	if err != nil {
+		return nil, fmt.Errorf("geoShapeV2 envelope geometry: %w", err)
+	}
+	q.SetField(field)
+	return q, nil
+}
+
+// buildGeoShapeV2GeoJSON compiles a GeoShapeV2Geometry "geoJson"
+// (GeoJsonString) into a GeoShapeQuery. Foundry's GeoJsonString.geoJson is a
+// STRING holding a serialized GeoJSON geometry; we also accept a raw JSON
+// geometry object for JSON-native clients.
+func buildGeoShapeV2GeoJSON(raw json.RawMessage, relation, field string) (query.Query, error) {
+	var wrapper struct {
+		GeoJSON json.RawMessage `json:"geoJson"`
+	}
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
+		return nil, fmt.Errorf("geoShapeV2 geoJson geometry: %w", err)
+	}
+	if len(wrapper.GeoJSON) == 0 {
+		return nil, fmt.Errorf("geoShapeV2 geoJson geometry requires a geometry")
+	}
+
+	// Unwrap the Foundry-canonical serialized-string form; fall back to the
+	// raw object form for JSON-native callers.
+	geometryBytes := wrapper.GeoJSON
+	var asString string
+	if err := json.Unmarshal(wrapper.GeoJSON, &asString); err == nil {
+		if strings.TrimSpace(asString) == "" {
+			return nil, fmt.Errorf("geoShapeV2 geoJson geometry requires a geometry")
+		}
+		geometryBytes = json.RawMessage(asString)
+	}
+
+	shape, err := geo.ParseGeoJSONShape(geometryBytes)
+	if err != nil {
+		return nil, fmt.Errorf("geoShapeV2 geoJson geometry: %w", err)
+	}
+	q := &query.GeoShapeQuery{Geometry: query.Geometry{Shape: shape, Relation: relation}}
+	q.SetField(field)
+	return q, nil
 }
 
 // convertNot handles the "not" logical operator (non-opts).

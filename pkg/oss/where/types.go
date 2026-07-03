@@ -34,6 +34,17 @@ type WhereClause struct {
 	// "America/New_York") used to truncate relativeDateRange bounds to
 	// the start of their timeUnit period.
 	TimeZoneID string `json:"timeZoneId,omitempty"`
+
+	// Geometry is the GeoShapeV2Geometry union for type=="geoShapeV2"
+	// (Foundry GeoShapeV2Query). Kept raw because the union is
+	// discriminated on its own nested "type": either an "envelope"
+	// bounding box (BoundingBoxValue: topLeft/bottomRight) or a
+	// "geoJson" GeoJSON geometry string (GeoJsonString).
+	Geometry json.RawMessage `json:"geometry,omitempty"`
+
+	// SpatialFilterMode is the GeoShapeV2Query spatial relation operator
+	// for type=="geoShapeV2": INTERSECTS / DISJOINT / WITHIN / CONTAINS.
+	SpatialFilterMode string `json:"spatialFilterMode,omitempty"`
 }
 
 // RelativePointInTime is the Foundry RelativeDateRangeBound wire shape:

@@ -476,6 +476,78 @@ describe('validateNode', () => {
     ]);
   });
 
+  it('accepts Foundry geoShapeV2 filter clauses carrying geometry + spatialFilterMode instead of a value', () => {
+    // BDD: Given a filter node using the backend-supported `geoShapeV2`
+    // operator (pkg/oss/where/converter.go case "geoShapeV2" — Foundry
+    // GeoShapeV2Query: the payload is a `geometry` union + `spatialFilterMode`,
+    // there is NO `value` key), When the builder validates the tree, Then
+    // neither an "unsupported operator" nor a "requires a value" error is
+    // raised so the UI stays in sync with backend capability.
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Store'),
+        where: {
+          type: 'geoShapeV2',
+          field: 'location',
+          geometry: {
+            type: 'geoJson',
+            geoJson:
+              '{"type":"Polygon","coordinates":[[[-80,35],[-70,35],[-70,45],[-80,45],[-80,35]]]}',
+          },
+          spatialFilterMode: 'WITHIN',
+        },
+      }),
+    ).toEqual([]);
+
+    // The envelope geometry variant is equally valid.
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Store'),
+        where: {
+          type: 'geoShapeV2',
+          field: 'location',
+          geometry: {
+            type: 'envelope',
+            topLeft: { latitude: 45, longitude: -80 },
+            bottomRight: { latitude: 35, longitude: -70 },
+          },
+          spatialFilterMode: 'INTERSECTS',
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('flags geoShapeV2 filter clauses missing geometry or with an invalid spatialFilterMode', () => {
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Store'),
+        where: { type: 'geoShapeV2', field: 'location', spatialFilterMode: 'WITHIN' },
+      }),
+    ).toEqual(['filter where clause geoShapeV2 requires a geometry object']);
+
+    expect(
+      validateNode({
+        id: '1',
+        type: 'filter',
+        objectSet: emptyBase('Store'),
+        where: {
+          type: 'geoShapeV2',
+          field: 'location',
+          geometry: { type: 'envelope' },
+          spatialFilterMode: 'OVERLAPS' as never,
+        },
+      }),
+    ).toEqual([
+      'filter where clause geoShapeV2 requires a spatialFilterMode of INTERSECTS/DISJOINT/WITHIN/CONTAINS',
+    ]);
+  });
+
   it('flags union with fewer than 2 children', () => {
     const errs = validateNode({
       id: '1',
