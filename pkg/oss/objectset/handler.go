@@ -269,7 +269,7 @@ func (h *Handler) LoadObjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Foundry V2: honour LoadObjectSetRequestV2.orderBy (SearchOrderByV2
+	// Foundry V2: honor LoadObjectSetRequestV2.orderBy (SearchOrderByV2
 	// shape). Validate before any execution so bad input fails fast.
 	// orderType "relevance" is rejected here: the executor resolves the
 	// ObjectSet to explicit primary keys, so every doc would score

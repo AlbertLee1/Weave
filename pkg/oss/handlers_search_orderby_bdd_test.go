@@ -22,7 +22,7 @@ import (
 //
 // direction defaults to "asc" when omitted. Before this change the handler
 // parsed body.orderBy into a struct and then never read it — only the legacy
-// `?orderBy=field:desc` query param was honoured — so official OSDK /
+// `?orderBy=field:desc` query param was honored — so official OSDK /
 // foundry-platform-python clients got HTTP 200 with UNSORTED data and no way
 // to notice (the silent-correctness bug class).
 //
