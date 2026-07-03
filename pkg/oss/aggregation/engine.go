@@ -1,6 +1,7 @@
 package aggregation
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -10,6 +11,22 @@ import (
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/liyang/weave/pkg/oss/where"
 )
+
+// ErrAccuracyNotGuaranteed is returned by AggregateWithQuery when the caller
+// demanded accuracy=REQUIRE_ACCURATE but the engine could only produce an
+// APPROXIMATE result — because the scan was truncated by MaxDocScanSize, the
+// scanned-row count crossed the APPROXIMATE threshold, or a sub-aggregation hit
+// either condition.
+//
+// Foundry parity: REQUIRE_ACCURATE means "fail when exactness cannot be
+// guaranteed", NOT "silently downgrade the response accuracy badge to
+// APPROXIMATE". The HTTP layer maps this sentinel to a 4xx (errorName
+// AccuracyNotGuaranteed) via errors.Is. Note the engine still transparently
+// promotes approximate-by-default algorithms (HLL distinct, t-digest
+// percentile) to their exact counterparts under REQUIRE_ACCURATE — that
+// superset-of-spec behavior is intentionally preserved; this error only fires
+// when the *scan* itself cannot see every matching document.
+var ErrAccuracyNotGuaranteed = errors.New("aggregation accuracy not guaranteed: REQUIRE_ACCURATE requested but the result can only be APPROXIMATE (scan truncated or scanned rows exceeded the approximate threshold)")
 
 // AggregationRequest represents a Palantir V2 aggregation request.
 type AggregationRequest struct {
@@ -296,6 +313,15 @@ func (e *Engine) AggregateWithQuery(idx bleve.Index, baseQuery query.Query, req 
 	if resp.Accuracy == "" {
 		resp.Accuracy = "ACCURATE"
 	}
+
+	// Foundry parity: when the caller demanded REQUIRE_ACCURATE but the result
+	// can only be APPROXIMATE (scan truncated by MaxDocScanSize or scanned rows
+	// crossed the approximate threshold), fail instead of returning a 200 with
+	// an APPROXIMATE badge. ALLOW_APPROXIMATE (the default) is unaffected.
+	if requireAccurate(req.Accuracy) && resp.Accuracy == "APPROXIMATE" {
+		return nil, ErrAccuracyNotGuaranteed
+	}
+
 	resp.ExcludedItems = excludedCount
 	resp.ComputeUsage = &ComputeUsage{
 		ScannedRows: scannedRows,
