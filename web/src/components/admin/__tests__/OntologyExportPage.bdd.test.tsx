@@ -79,10 +79,12 @@ const server = setupServer(
         { status: 400 },
       );
     }
-    const zip = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], {
-      type: 'application/zip',
-    });
-    return new HttpResponse(zip, {
+    // Return the zip payload as a Uint8Array, not a jsdom Blob. undici's fetch
+    // body extraction (Node 20 CI) calls `.stream()` on the body object, and a
+    // jsdom Blob's stream interop throws `object.stream is not a function`
+    // there — a TypedArray is a natively-supported BodyInit on every Node
+    // version, and the app still reads it back via res.blob() unchanged.
+    return new HttpResponse(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
       status: 200,
       headers: {
         'Content-Type': 'application/zip',
