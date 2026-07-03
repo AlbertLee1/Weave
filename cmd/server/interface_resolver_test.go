@@ -19,6 +19,10 @@ type stubInterfaceRepo struct {
 	lookupIfaceRID   string
 	implementingList []oms.ObjectType
 	implementingErr  error
+	// otInterfaces maps an objectTypeRID to the ObjectTypeInterface rows the
+	// repo would return for it (each carrying a PropertyMapping).
+	otInterfaces    map[string][]oms.ObjectTypeInterface
+	otInterfacesErr error
 }
 
 func (s *stubInterfaceRepo) GetOntology(_ context.Context, ridOrApiName string) (*oms.Ontology, error) {
@@ -43,6 +47,13 @@ func (s *stubInterfaceRepo) ListInterfaceObjectTypes(_ context.Context, interfac
 		return nil, s.implementingErr
 	}
 	return s.implementingList, nil
+}
+
+func (s *stubInterfaceRepo) ListObjectTypeInterfaces(_ context.Context, objectTypeRID string) ([]oms.ObjectTypeInterface, error) {
+	if s.otInterfacesErr != nil {
+		return nil, s.otInterfacesErr
+	}
+	return s.otInterfaces[objectTypeRID], nil
 }
 
 func TestPGInterfaceResolver_ResolveInterfaceObjectTypes(t *testing.T) {
@@ -100,5 +111,72 @@ func TestPGInterfaceResolver_InterfaceLookupError(t *testing.T) {
 	ctx := index.WithOntologyScope(context.Background(), "northwind")
 	if _, err := r.ResolveInterfaceObjectTypes(ctx, "HasOwner"); err == nil {
 		t.Fatal("expected interface lookup error to propagate, got nil")
+	}
+}
+
+func TestPGInterfaceResolver_ResolveInterfacePropertyMappings(t *testing.T) {
+	const ifaceRID = "ri.ontology.main.interface.HasOwner"
+	repo := &stubInterfaceRepo{
+		ont:   &oms.Ontology{RID: "ri.ontology.main.ontology.northwind", APIName: "northwind"},
+		iface: &oms.Interface{RID: ifaceRID, APIName: "HasOwner"},
+		implementingList: []oms.ObjectType{
+			{RID: "ri.ot.employee", APIName: "employee"},
+			{RID: "ri.ot.vehicle", APIName: "vehicle"},
+		},
+		otInterfaces: map[string][]oms.ObjectTypeInterface{
+			"ri.ot.employee": {
+				// An unrelated interface implemented by the same object type must be
+				// filtered out by interface RID.
+				{ObjectTypeRID: "ri.ot.employee", InterfaceRID: "ri.other", PropertyMapping: []byte(`{"x":"y"}`)},
+				{ObjectTypeRID: "ri.ot.employee", InterfaceRID: ifaceRID, PropertyMapping: []byte(`{"ownerName":"manager","ownerId":"empId"}`)},
+			},
+			"ri.ot.vehicle": {
+				{ObjectTypeRID: "ri.ot.vehicle", InterfaceRID: ifaceRID, PropertyMapping: []byte(`{"ownerName":"driver","ownerId":"vin"}`)},
+			},
+		},
+	}
+	r := newPGInterfaceResolver(repo)
+	ctx := index.WithOntologyScope(context.Background(), "northwind")
+
+	got, err := r.ResolveInterfacePropertyMappings(ctx, "HasOwner")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected mappings for 2 object types, got %d: %v", len(got), got)
+	}
+	if got["employee"]["ownerName"] != "manager" || got["employee"]["ownerId"] != "empId" {
+		t.Errorf("employee mapping wrong: %v", got["employee"])
+	}
+	if got["vehicle"]["ownerName"] != "driver" || got["vehicle"]["ownerId"] != "vin" {
+		t.Errorf("vehicle mapping wrong: %v", got["vehicle"])
+	}
+}
+
+func TestPGInterfaceResolver_ResolveInterfacePropertyMappings_EmptyMapping(t *testing.T) {
+	const ifaceRID = "ri.ontology.main.interface.HasOwner"
+	repo := &stubInterfaceRepo{
+		ont:              &oms.Ontology{RID: "ri.ontology.main.ontology.nw", APIName: "nw"},
+		iface:            &oms.Interface{RID: ifaceRID, APIName: "HasOwner"},
+		implementingList: []oms.ObjectType{{RID: "ri.ot.employee", APIName: "employee"}},
+		otInterfaces: map[string][]oms.ObjectTypeInterface{
+			"ri.ot.employee": {
+				{ObjectTypeRID: "ri.ot.employee", InterfaceRID: ifaceRID, PropertyMapping: []byte(`{}`)},
+			},
+		},
+	}
+	r := newPGInterfaceResolver(repo)
+	ctx := index.WithOntologyScope(context.Background(), "nw")
+
+	got, err := r.ResolveInterfacePropertyMappings(ctx, "HasOwner")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	empMap, ok := got["employee"]
+	if !ok {
+		t.Fatalf("expected employee key present with empty mapping, got %v", got)
+	}
+	if len(empMap) != 0 {
+		t.Errorf("expected empty mapping for employee, got %v", empMap)
 	}
 }
