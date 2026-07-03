@@ -23,6 +23,9 @@ func RegisterRoutes(r chi.Router, omsHandler *oms.OMSHandler) {
 	// + outgoing links merged (child overrides on api_name match).
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/resolved", omsHandler.GetObjectTypeResolved)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/outgoingLinkTypes", omsHandler.ListOutgoingLinkTypes)
+	// Foundry single-get sibling of the outgoing list: {linkType} is the
+	// link api name; response is the LinkTypeSideV2 shape.
+	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/outgoingLinkTypes/{linkType}", omsHandler.GetOutgoingLinkTypeV2)
 	r.Get("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/incomingLinkTypes", omsHandler.ListIncomingLinkTypes)
 	r.Post("/api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/editsHistory", omsHandler.PostObjectTypeEditsHistoryV2)
 	// Property admin CRUD (US-147)

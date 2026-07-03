@@ -408,6 +408,80 @@ func (lt *LinkType) ToWireJSON() ([]byte, error) {
 	return json.Marshal(wire)
 }
 
+// ForeignKeyPropertyAPIName returns the api name of the foreign-key
+// property that implements this LinkType (the `sourceProperty` of the
+// foreignKeyConfig, i.e. the FK column on the link's source type).
+// Returns "" for MANY_TO_MANY / unconfigured links or when the config
+// cannot be parsed — callers omit the wire field in that case.
+func (lt *LinkType) ForeignKeyPropertyAPIName() string {
+	if len(lt.ForeignKeyConfig) == 0 {
+		return ""
+	}
+	var cfg struct {
+		SourceProperty string `json:"sourceProperty"`
+	}
+	if err := json.Unmarshal(lt.ForeignKeyConfig, &cfg); err != nil {
+		return ""
+	}
+	return cfg.SourceProperty
+}
+
+// ToLinkTypeSideV2JSON returns the Foundry LinkTypeSideV2 wire format
+// used by the outgoing/incoming link-type read surfaces
+// (GET /objectTypes/{ot}/outgoingLinkTypes[/{linkType}] and
+// /incomingLinkTypes). linkedObjectTypeAPIName is the api name of the
+// object type at the FAR end of the link relative to the queried
+// object type (Foundry semantics: `objectTypeApiName` names the
+// linked side, NOT the side you asked from).
+//
+// Contract fields: apiName, displayName, status, objectTypeApiName,
+// cardinality, foreignKeyPropertyApiName (FK links only), linkTypeRid.
+// LinkType carries no release-status column, so status is always
+// "ACTIVE" today.
+//
+// Deprecated transition aliases (kept so existing web consumers keep
+// rendering while they migrate; scheduled for removal once the web
+// client reads the Foundry keys): `rid` mirrors `linkTypeRid` and
+// `linkedObjectTypeApiName` mirrors `objectTypeApiName`. `required`,
+// `description`, `inverseLinkRid`, `propagateMarkings` and
+// `typeClasses` are Weave extensions preserved from the previous
+// shape.
+//
+// Admin CRUD (/linkTypes*) and the byRid batch endpoint keep the
+// legacy ToWireJSON/struct-tag shape where objectTypeApiName is the
+// SOURCE — this serializer is intentionally scoped to the per-object-
+// type link-side surfaces.
+func (lt *LinkType) ToLinkTypeSideV2JSON(linkedObjectTypeAPIName string) ([]byte, error) {
+	wire := map[string]interface{}{
+		"apiName":           lt.APIName,
+		"displayName":       lt.DisplayName,
+		"status":            "ACTIVE",
+		"objectTypeApiName": linkedObjectTypeAPIName,
+		"cardinality":       lt.Cardinality,
+		"linkTypeRid":       lt.RID,
+		// Deprecated aliases — see doc comment.
+		"rid":                     lt.RID,
+		"linkedObjectTypeApiName": linkedObjectTypeAPIName,
+		"required":                lt.IsRequired,
+	}
+	if fk := lt.ForeignKeyPropertyAPIName(); fk != "" {
+		wire["foreignKeyPropertyApiName"] = fk
+	}
+	if lt.Description != "" {
+		wire["description"] = lt.Description
+	}
+	if lt.InverseLinkRID != "" {
+		wire["inverseLinkRid"] = lt.InverseLinkRID
+	}
+	if lt.PropagateMarkings {
+		wire["propagateMarkings"] = true
+	}
+	if len(lt.TypeClasses) > 0 {
+		wire["typeClasses"] = lt.TypeClasses
+	}
+	return json.Marshal(wire)
+}
+
 // ActionType defines an action that can be performed.
 type ActionType struct {
 	RID                string          `json:"rid"`

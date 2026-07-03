@@ -1855,6 +1855,62 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/LinkType"
+    LinkTypeSideV2:
+      type: object
+      description: |
+        Foundry LinkTypeSideV2 — one side of a link as seen from a
+        queried object type. `objectTypeApiName` names the object
+        type at the FAR (linked) end of the link relative to the
+        queried type. `rid` and `linkedObjectTypeApiName` are
+        deprecated Weave aliases of `linkTypeRid` /
+        `objectTypeApiName` kept for the migration window; `required`
+        and the remaining optional keys are Weave extensions.
+      required: [apiName, displayName, status, objectTypeApiName, cardinality, linkTypeRid]
+      properties:
+        apiName:
+          type: string
+        displayName:
+          type: string
+        status:
+          type: string
+          description: Release status. Always ACTIVE today (LinkType carries no status column).
+        objectTypeApiName:
+          type: string
+          description: apiName of the object type at the linked (far) end of the link.
+        cardinality:
+          type: string
+        foreignKeyPropertyApiName:
+          type: string
+          description: apiName of the foreign-key property backing the link. Omitted for MANY_TO_MANY links.
+        linkTypeRid:
+          type: string
+        rid:
+          type: string
+          deprecated: true
+          description: Deprecated alias of linkTypeRid.
+        linkedObjectTypeApiName:
+          type: string
+          deprecated: true
+          description: Deprecated alias of objectTypeApiName.
+        required:
+          type: boolean
+        description:
+          type: string
+        inverseLinkRid:
+          type: string
+        propagateMarkings:
+          type: boolean
+        typeClasses:
+          type: array
+          items:
+            type: string
+    LinkTypeSideListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkTypeSideV2"
     ActionTypeListResponse:
       type: object
       properties:
@@ -6425,17 +6481,58 @@ paths:
     get:
       operationId: listOutgoingLinkTypes
       summary: List outgoing link types for an object type
+      description: |
+        Items follow the Foundry LinkTypeSideV2 shape:
+        `objectTypeApiName` names the LINKED (target) side of each
+        link, `linkTypeRid` carries the link RID, `status` the
+        release status and FK-backed links expose
+        `foreignKeyPropertyApiName`. The legacy `rid` /
+        `linkedObjectTypeApiName` keys are deprecated aliases of
+        `linkTypeRid` / `objectTypeApiName` kept for the migration
+        window.
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
         - $ref: "#/components/parameters/ObjectTypeApiName"
       responses:
         "200":
-          description: Link type list.
+          description: Link type side list.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/LinkTypeListResponse"
+                $ref: "#/components/schemas/LinkTypeSideListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /api/v2/ontologies/{ontologyApiName}/objectTypes/{objectTypeApiName}/outgoingLinkTypes/{linkType}:
+    get:
+      operationId: getOutgoingLinkType
+      summary: Get a single outgoing link type for an object type
+      description: |
+        Foundry single-get sibling of listOutgoingLinkTypes.
+        {linkType} is the link api name (bare slug, not the RID),
+        mirroring GET /linkTypes/{linkType} and the interfaceTypes
+        outgoingLinkTypes single-get. Returns the Foundry
+        LinkTypeSideV2 shape where `objectTypeApiName` names the
+        LINKED (target) side.
+      tags: [Metadata]
+      parameters:
+        - $ref: "#/components/parameters/OntologyApiName"
+        - $ref: "#/components/parameters/ObjectTypeApiName"
+        - in: path
+          name: linkType
+          required: true
+          description: API name of the outgoing link type.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Link type side.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTypeSideV2"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":
@@ -6451,17 +6548,21 @@ paths:
         symmetry gap so the ObjectType detail page can render
         "incoming links" without scanning every ObjectType in the
         ontology and calling outgoingLinkTypes N times.
+
+        Items follow the Foundry LinkTypeSideV2 shape; for the
+        incoming direction the far end is the link's SOURCE, so
+        `objectTypeApiName` names the source side.
       tags: [Metadata]
       parameters:
         - $ref: "#/components/parameters/OntologyApiName"
         - $ref: "#/components/parameters/ObjectTypeApiName"
       responses:
         "200":
-          description: Incoming link type list.
+          description: Incoming link type side list.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/LinkTypeListResponse"
+                $ref: "#/components/schemas/LinkTypeSideListResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedError"
         "404":
