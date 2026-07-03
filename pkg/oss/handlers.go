@@ -302,13 +302,12 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Foundry V2: select is REQUIRED
-	if len(body.Select) == 0 {
-		apierror.WriteJSON(w, apierror.NewInvalidParameter("SelectRequired", map[string]string{
-			"reason": "SearchObjectsRequestV2.select is required and must be a non-empty array of property apiNames",
-		}))
-		return
-	}
+	// Foundry V2: select is OPTIONAL. When present it is a projection —
+	// the response object retains only the named property apiNames (plus the
+	// primary key and reserved system keys). When absent / empty the full
+	// property set is returned, matching Foundry's default. The projection
+	// itself is applied in the service after every security pass so it can
+	// never widen a policy-restricted view.
 
 	// Read pageSize from body first, fall back to query params.
 	pageSize := body.PageSize
@@ -433,6 +432,7 @@ func (h *Handler) SearchObjects(w http.ResponseWriter, r *http.Request) {
 		ObjectType:  objectType,
 		Where:       whereClause,
 		Fuzzy:       fuzzy,
+		Select:      body.Select,
 		Highlight:   highlight,
 		Facets:      facets,
 		PageSize:    pageSize,

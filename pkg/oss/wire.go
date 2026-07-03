@@ -138,6 +138,51 @@ func (wo *WireObject) FilterProperties(allowed []string) *WireObject {
 	}
 }
 
+// ProjectProperties returns a copy of the WireObject whose Properties map is
+// narrowed to the Foundry `select` projection: only keys in `selected`, plus
+// any `keepAlways` names (the primary key field and the security _markings
+// field), survive. The reserved __rid / __primaryKey / __apiName keys are
+// always emitted by MarshalJSON regardless of the projection, so the primary
+// key is never hidden.
+//
+// Semantics mirror FilterProperties:
+//
+//   - selected empty → no projection requested, the same WireObject pointer is
+//     returned unchanged so the "return everything" default stays zero-cost.
+//   - a name in selected / keepAlways that the object does not carry is
+//     silently skipped — projecting to an unknown apiName never materializes a
+//     null key or errors.
+//
+// The original WireObject is never mutated, so callers may share read-only
+// objects across goroutines.
+func (wo *WireObject) ProjectProperties(selected []string, keepAlways ...string) *WireObject {
+	if wo == nil || len(selected) == 0 {
+		return wo
+	}
+	keep := make(map[string]struct{}, len(selected)+len(keepAlways))
+	for _, k := range selected {
+		keep[k] = struct{}{}
+	}
+	for _, k := range keepAlways {
+		if k != "" {
+			keep[k] = struct{}{}
+		}
+	}
+	filtered := make(map[string]interface{}, len(keep))
+	for k, v := range wo.Properties {
+		if _, ok := keep[k]; ok {
+			filtered[k] = v
+		}
+	}
+	return &WireObject{
+		RID:        wo.RID,
+		PrimaryKey: wo.PrimaryKey,
+		APIName:    wo.APIName,
+		Properties: filtered,
+		Highlights: wo.Highlights,
+	}
+}
+
 // FormatObject creates a WireObject from raw index data.
 func FormatObject(objectType string, primaryKey string, properties map[string]interface{}) *WireObject {
 	return &WireObject{
