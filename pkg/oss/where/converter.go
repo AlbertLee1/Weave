@@ -92,7 +92,7 @@ func convertToBleveQueryUnwrapped(clause *WhereClause, opts *ConvertOptions) (qu
 	case "withinBoundingBox":
 		return convertWithinBoundingBox(clause)
 	case "intersectsBoundingBox":
-		return convertWithinBoundingBox(clause)
+		return convertIntersectsBoundingBox(clause)
 	case "withinPolygon":
 		return convertWithinPolygon(clause)
 	case "intersectsPolygon":
@@ -567,7 +567,9 @@ type DistanceQuery struct {
 	Distance string   `json:"distance"` // e.g., "10km"
 }
 
-// convertWithinBoundingBox handles the "withinBoundingBox" and "intersectsBoundingBox" operators.
+// convertWithinBoundingBox handles the "withinBoundingBox" operator: an object
+// matches only when it is fully CONTAINED by the box. It uses the point-oriented
+// GeoBoundingBoxQuery.
 func convertWithinBoundingBox(clause *WhereClause) (query.Query, error) {
 	var bb BoundingBox
 	if err := json.Unmarshal(clause.Value, &bb); err != nil {
@@ -577,6 +579,26 @@ func convertWithinBoundingBox(clause *WhereClause) (query.Query, error) {
 		bb.TopLeft.Longitude, bb.TopLeft.Latitude,
 		bb.BottomRight.Longitude, bb.BottomRight.Latitude,
 	)
+	q.SetField(clause.Field)
+	return q, nil
+}
+
+// convertIntersectsBoundingBox handles the "intersectsBoundingBox" operator: an
+// object matches when it OVERLAPS the box, including shapes that merely straddle
+// its boundary. Unlike withinBoundingBox (full containment), it uses a GeoShape
+// "intersects" query over the box's rectangular polygon — the same shape and
+// relation its own negation doesNotIntersectBoundingBox uses, so the two
+// operators stay a consistent partition. GeoShapeQuery matches geoshape-indexed
+// fields.
+func convertIntersectsBoundingBox(clause *WhereClause) (query.Query, error) {
+	var bb BoundingBox
+	if err := json.Unmarshal(clause.Value, &bb); err != nil {
+		return nil, fmt.Errorf("intersectsBoundingBox value: %w", err)
+	}
+	q, err := bleve.NewGeoShapeQuery(boundingBoxRectPolygon(bb), "polygon", "intersects")
+	if err != nil {
+		return nil, fmt.Errorf("intersectsBoundingBox: %w", err)
+	}
 	q.SetField(clause.Field)
 	return q, nil
 }
