@@ -14,6 +14,7 @@ import (
 	"github.com/liyang/weave/pkg/apierror"
 	"github.com/liyang/weave/pkg/httputil"
 	"github.com/liyang/weave/pkg/rid"
+	"github.com/liyang/weave/pkg/types"
 )
 
 // --- Branch overlay helpers ---
@@ -4100,6 +4101,17 @@ func (h *OMSHandler) ExecuteQueryType(w http.ResponseWriter, r *http.Request) {
 		inputParams = nested
 	}
 
+	// Foundry validates the supplied parameters against the QueryType's
+	// declared Parameters BEFORE execution: a missing required parameter
+	// surfaces as MissingParameter and a value that doesn't satisfy the
+	// declared base type surfaces as InvalidParameterValue — both 400. This
+	// runs ahead of dispatch so callers get a precise contract error instead
+	// of an opaque JS-runtime QueryExecutionFailed.
+	if apiErr := validateQueryParameters(qt.Parameters, inputParams); apiErr != nil {
+		apierror.WriteJSON(w, apiErr)
+		return
+	}
+
 	// If the query has a backing function and an executor is wired, dispatch.
 	if qt.FunctionRID != "" && h.queryExecutor != nil {
 		result, err := h.queryExecutor.Execute(r.Context(), qt, inputParams)
@@ -4149,4 +4161,106 @@ func (h *OMSHandler) ExecuteQueryType(w http.ResponseWriter, r *http.Request) {
 		"query":        qt.Query,
 		"parameters":   inputParams,
 	})
+}
+
+// queryParamDef is a lenient view over a single QueryType parameter
+// declaration. QueryType.Parameters is stored as a raw JSON array of objects
+// and different writers use slightly different shapes: the identifier is either
+// `id` or `name`, and the base type is either a top-level `type` string or a
+// nested `dataType` (which may itself be a bare string or `{"type": "..."}`).
+// The decoder tolerates all of them so validation applies regardless of which
+// authoring path produced the row.
+type queryParamDef struct {
+	ID       string          `json:"id"`
+	Name     string          `json:"name"`
+	Type     string          `json:"type"`
+	DataType json.RawMessage `json:"dataType"`
+	Required *bool           `json:"required"`
+	Optional *bool           `json:"optional"`
+}
+
+// identifier returns the parameter key callers must supply, preferring `id`.
+func (d queryParamDef) identifier() string {
+	if d.ID != "" {
+		return d.ID
+	}
+	return d.Name
+}
+
+// baseType returns the declared base type name, unwrapping the `dataType`
+// alternatives. Empty means "unspecified" — the caller then skips type checking.
+func (d queryParamDef) baseType() string {
+	if d.Type != "" {
+		return d.Type
+	}
+	if len(d.DataType) == 0 || string(d.DataType) == "null" {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(d.DataType, &s); err == nil {
+		return s
+	}
+	var obj struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(d.DataType, &obj); err == nil {
+		return obj.Type
+	}
+	return ""
+}
+
+// isRequired reports whether the parameter must be supplied. Foundry query
+// parameters are required by default; an explicit `required:false` (or
+// `optional:true`) opts out.
+func (d queryParamDef) isRequired() bool {
+	if d.Required != nil {
+		return *d.Required
+	}
+	if d.Optional != nil {
+		return !*d.Optional
+	}
+	return true
+}
+
+// validateQueryParameters enforces the QueryType parameter contract before
+// execution, mirroring Foundry: a missing required parameter yields a 400
+// MissingParameter and a value that violates the declared base type yields a
+// 400 InvalidParameterValue, each naming the offending parameter. It returns
+// nil (validation inapplicable) when the schema is empty or unparseable so
+// legacy QueryTypes keep executing unchanged.
+func validateQueryParameters(raw json.RawMessage, params map[string]interface{}) *apierror.APIError {
+	if len(raw) == 0 || string(raw) == "null" || string(raw) == "[]" {
+		return nil
+	}
+	var defs []queryParamDef
+	if err := json.Unmarshal(raw, &defs); err != nil {
+		return nil
+	}
+	for _, def := range defs {
+		id := def.identifier()
+		if id == "" {
+			continue
+		}
+		val, present := params[id]
+		if def.isRequired() && (!present || val == nil) {
+			return apierror.NewInvalidParameter("MissingParameter", map[string]string{
+				"parameter": id,
+			})
+		}
+		if !present || val == nil {
+			continue
+		}
+		bt := def.baseType()
+		if bt == "" {
+			continue
+		}
+		dt := types.DataType{Type: types.BaseType(bt)}
+		if err := types.Validate(val, dt, !def.isRequired()); err != nil {
+			return apierror.NewInvalidParameter("InvalidParameterValue", map[string]string{
+				"parameter": id,
+				"reason":    err.Error(),
+			})
+		}
+	}
+	return nil
 }
