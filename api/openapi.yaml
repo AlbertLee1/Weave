@@ -3165,9 +3165,12 @@ components:
           type: string
           description: Original filename supplied by the uploader.
         sizeBytes:
-          type: integer
-          format: int64
-          description: Blob size in bytes.
+          type: string
+          description: |
+            Blob size in bytes. Modeled as a Foundry SafeLong, so it is
+            serialized on the wire as a decimal string (e.g. "1024") rather
+            than a JSON number.
+          example: "1024"
         mediaType:
           type: string
           description: IANA media type of the blob.

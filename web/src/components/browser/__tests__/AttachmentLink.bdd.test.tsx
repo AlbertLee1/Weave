@@ -14,7 +14,8 @@ const server = setupServer(
       rid: 'ri.attachment.main.attachment.abc',
       filename: 'invoice.pdf',
       mediaType: 'application/pdf',
-      sizeBytes: 2048,
+      // Foundry SafeLong: sizeBytes is a decimal string on the wire.
+      sizeBytes: '2048',
     }),
   ),
 );
@@ -46,6 +47,9 @@ describe('BDD: AttachmentLink (object attachment download)', () => {
     // The link renders immediately; its label resolves to the filename once
     // the metadata query settles.
     await screen.findByText('invoice.pdf');
+    // The SafeLong string sizeBytes ("2048") is parsed and rendered as a
+    // human-readable size — proves the string wire value is coerced.
+    await screen.findByText('2.0 KB');
     const link = screen.getByTestId('attachment-download-invoice');
     expect(link).toHaveAttribute(
       'href',

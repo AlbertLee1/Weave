@@ -4,11 +4,15 @@ import type { ApiError } from './types';
 
 // AttachmentMetadata mirrors pkg/attachment store metadata (diskMeta) —
 // the descriptor for a file held by an object's attachment-typed property.
+//
+// sizeBytes is a Foundry SafeLong, so the server serializes it as a decimal
+// string (e.g. "1024"), not a JSON number. Parse with Number(...) before
+// doing arithmetic.
 export interface AttachmentMetadata {
   rid: string;
   filename: string;
   mediaType: string;
-  sizeBytes: number;
+  sizeBytes: string;
   createdAt?: string;
 }
 

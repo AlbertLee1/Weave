@@ -27,7 +27,8 @@ const server = setupServer(
     return HttpResponse.json({
       rid: 'ri.attachments.main.attachment.abc123',
       filename,
-      sizeBytes: 11,
+      // Foundry SafeLong: sizeBytes is a decimal string on the wire.
+      sizeBytes: '11',
       mediaType: 'text/plain',
     });
   }),

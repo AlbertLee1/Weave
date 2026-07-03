@@ -102,7 +102,7 @@ class AttachmentsGlobalEndpointTests(unittest.TestCase):
         att_payload = {
             "rid": "ri.attachments.main.attachment.abc",
             "filename": "incident.pdf",
-            "sizeBytes": 9,
+            "sizeBytes": "9",  # Foundry SafeLong wire shape (decimal string)
             "mediaType": "application/pdf",
             "createdAt": "2026-04-01T00:00:00Z",
             "linked": False,
@@ -119,6 +119,8 @@ class AttachmentsGlobalEndpointTests(unittest.TestCase):
             )
         self.assertIsInstance(att, Attachment)
         self.assertEqual(att.rid, "ri.attachments.main.attachment.abc")
+        # SafeLong string wire value is coerced to a numeric int.
+        self.assertIsInstance(att.size_bytes, int)
         self.assertEqual(att.size_bytes, 9)
         sent = srv.requests[0]
         # Server must have received the raw bytes verbatim (no UTF-8
@@ -131,7 +133,7 @@ class AttachmentsGlobalEndpointTests(unittest.TestCase):
         att_payload = {
             "rid": "ri.attachments.main.attachment.fixed-id",
             "filename": "f.bin",
-            "sizeBytes": 4,
+            "sizeBytes": "4",  # Foundry SafeLong wire shape (decimal string)
             "mediaType": "application/octet-stream",
             "createdAt": "2026-04-01T00:00:00Z",
             "linked": False,
@@ -157,7 +159,7 @@ class AttachmentsGlobalEndpointTests(unittest.TestCase):
         att_payload = {
             "rid": "ri.attachments.main.attachment.x",
             "filename": "report.csv",
-            "sizeBytes": 42,
+            "sizeBytes": "42",  # Foundry SafeLong wire shape (decimal string)
             "mediaType": "text/csv",
             "createdAt": "2026-04-01T00:00:00Z",
             "linked": True,
@@ -194,7 +196,7 @@ class AttachmentsPropertyEndpointTests(unittest.TestCase):
         att_payload = {
             "rid": "ri.attachments.main.attachment.linked",
             "filename": "evidence.png",
-            "sizeBytes": 100,
+            "sizeBytes": "100",  # Foundry SafeLong wire shape (decimal string)
             "mediaType": "image/png",
             "createdAt": "2026-04-01T00:00:00Z",
             "linked": True,
@@ -228,7 +230,7 @@ class AttachmentsPropertyEndpointTests(unittest.TestCase):
         att_payload = {
             "rid": "ri.attachments.main.attachment.specific",
             "filename": "v2.png",
-            "sizeBytes": 200,
+            "sizeBytes": "200",  # Foundry SafeLong wire shape (decimal string)
             "mediaType": "image/png",
             "createdAt": "2026-04-02T00:00:00Z",
             "linked": True,
