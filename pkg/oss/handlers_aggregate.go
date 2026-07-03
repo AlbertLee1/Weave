@@ -3,6 +3,7 @@ package oss
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 
@@ -308,6 +309,16 @@ func (h *Handler) AggregateObjects(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.aggEngine.AggregateWithQuery(idx, baseQuery, &req)
 	if err != nil {
+		// Foundry parity: accuracy=REQUIRE_ACCURATE that cannot be satisfied
+		// (scan truncated / scanned rows over the approximate threshold) is a
+		// client-visible 4xx, not an opaque 500. errors.Is unwraps the
+		// sub-aggregation wrapping so a truncated child still maps here.
+		if errors.Is(err, aggregation.ErrAccuracyNotGuaranteed) {
+			apierror.WriteJSON(w, apierror.NewInvalidParameter("AccuracyNotGuaranteed", map[string]string{
+				"reason": err.Error(),
+			}))
+			return
+		}
 		apierror.WriteJSON(w, apierror.NewInternal("AggregationFailed", map[string]string{
 			"reason": err.Error(),
 		}))
